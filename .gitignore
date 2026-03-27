@@ -24,9 +24,12 @@ dist/
 *.tsbuildinfo
 next-env.d.ts
 
-# Drizzle (SQL migrations under ./drizzle are committed; ignore local DB files if any)
+# Drizzle / local DB files
 *.db
 *.db-journal
+# Prisma (ignore local DB if present)
+prisma/*.db
+prisma/*.db-journal
 
 # Testing / coverage
 coverage/
