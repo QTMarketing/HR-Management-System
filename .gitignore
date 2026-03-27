@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+
+# Python (local tooling, e.g. pypdf)
+.venv/
+
+# Next.js
+.next/
+out/
+
+# Production / build
+build/
+dist/
+
+# Environment & secrets (never commit real credentials)
+.env
+.env.*
+!.env.example
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Drizzle (SQL migrations under ./drizzle are committed; ignore local DB files if any)
+*.db
+*.db-journal
+
+# Testing / coverage
+coverage/
+.nyc_output/
+
+# Debug / logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE / editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Misc
+*.pem
+*.local

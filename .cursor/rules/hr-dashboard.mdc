@@ -1,0 +1,84 @@
+---
+description: Multi-location retail HR dashboard — stack, domain, data, and UI rules
+globs: app/**
+alwaysApply: false
+---
+
+# HR Management System — Cursor Rules
+
+## Authoritative docs (read when unsure)
+
+- **Product scope & requirements:** `Project-PRD.md` (source of truth for features and out-of-scope items).
+- **Visual design:** `design-language.md` (palette: **white / orange / black** only §3; **fluid color** §3.3).
+- **Layout & shell:** `layout-proposal.md` (**fluid** shell — flex/grid, sticky chrome; not rigid fixed sidebars by default).
+- **Next.js in this repo:** `AGENTS.md` — this Next.js may differ from generic training data; check `node_modules/next/dist/docs/` before using APIs.
+
+## Project identity
+
+Build a **production-ready internal HR tool** (calm, clear, fast) — **not** a marketing site. Organize by **user goals and decisions**, reduce cognitive load, use **progressive disclosure**, and favor **perceived performance** (skeletons, optimistic updates where safe).
+
+## Domain (non-negotiable)
+
+- **Multi-location:** Employees, schedules, time entries, and labor metrics are tied to **store locations** (e.g. Store LP, Store 18). UI reflects **location context** (switcher for managers).
+- **RBAC:** Respect personas and permissions — Super Admin, Regional Manager, Store Manager, Shift Lead, Employee (see PRD). Enforce at API and UI.
+- **Time clock:** GPS/geofencing, early clock-in window, auto clock-out rules, **job codes** for labor allocation (Cashier, Kitchen, etc.).
+- **v1 out of scope:** No ATS, L&D, performance reviews, engagement, or heavy benefits — unless PRD is explicitly updated.
+
+## Tech stack (use unless impossible)
+
+| Layer | Choice |
+|--------|--------|
+| Framework | **Next.js 16** (App Router) + **React 19** + **TypeScript** |
+| Styling | **Tailwind CSS v4** (`@import "tailwindcss"` / `@theme` as in repo) |
+| Database | **PostgreSQL** via **`DATABASE_URL`** (e.g. **Supabase** hosted Postgres) |
+| ORM | **Drizzle ORM** + **Drizzle Kit** (`db/schema.ts`, `drizzle.config.ts`) — not Prisma |
+| DB client | `pg` — use `@/db` (`db` from `db/index.ts`) in **Node** server contexts (Route Handlers, Server Actions) |
+| Supabase HTTP API | **`@supabase/ssr`** — `lib/supabase/client.ts` (`createSupabaseBrowserClient`) + `lib/supabase/server.ts` (`createSupabaseServerClient`); `NEXT_PUBLIC_SUPABASE_URL` + **`NEXT_PUBLIC_SUPABASE_ANON_KEY`** (PostgREST, Auth, Storage, Realtime — not a substitute for `DATABASE_URL` / Drizzle SQL) |
+| Auth | **Supabase Auth** via clients above and/or **Auth.js** when implemented — align with PRD |
+| Validation / forms | **Zod** + **React Hook Form** when adding forms |
+| Client server state | **TanStack Query v5** for client cache; server cache via Next patterns where appropriate |
+| Tables / dense data | **TanStack Table v8** for user lists, logs, analytics grids |
+| UI primitives | **shadcn/ui** (Radix) when adding a component layer — match `design-language.md` tokens |
+| AI (optional) | **Vercel AI SDK** only if building AI features — not required for core HR |
+
+## App architecture
+
+- **Single source of truth:** Data lives in Postgres; UI reads via **typed APIs + cache**, not ad-hoc duplicated global state.
+- **Separate concerns:** server/async data (Route Handlers, Server Components, TanStack Query) vs **local UI state** vs **form state** (React Hook Form).
+- **App Router:** `app/(dashboard)/...` layout with **persistent sidebar** + route-level **loading.tsx** / **error.tsx**; prefer Server Components by default, `"use client"` only for interactivity.
+- **Data flow:** `DB (Drizzle) → API / Server Action → client fetcher → component`. JSON shapes stay consistent and documented.
+
+## UI & visual rules
+
+- Apply **fluid layout** and **fluid color** per `design-language.md` §3.3 and `layout-proposal.md`: gradients/backdrop/blur allowed for chrome; **semantic** colors (success/warning/error) stay unambiguous for status.
+- **Anchor tokens:** **`app/globals.css`** — **~60%** white; **~30%** **orange** (gradients, charts, nav active tint, focus rings); **~10%** matte black (`--accent`) for **primary CTAs**; **no teal**; `emerald` / `amber` / `red` **only** for status/alerts; see `design-language.md` §3.
+- **Typography:** Inter (or Geist where configured); clear hierarchy (headings vs body vs labels).
+- **Density:** Prefer a **strict grid** and consistent spacing for **dashboard content**; avoid decorative noise; every control should earn its place.
+
+## Dashboard structure skill (when building pages)
+
+1. **Hierarchy:** Top → KPIs (3–6) → trends/charts → tables/detail → filters/actions in header or side.
+2. **Group** related metrics; don’t mix unrelated data in one card.
+3. **Cap complexity:** ~5–7 sections per page; avoid deep nesting.
+4. **Flow:** Most important info and primary actions first.
+
+## Data visualization skill
+
+- **Trend** → line; **comparison** → bar; **part-to-whole** → doughnut; **detail** → table.
+- Use **project palette** in charts; keep charts simple and labeled; avoid misleading axes.
+
+## Implementation checklist
+
+- **Reusable components** with typed props; colocate feature UI under `app/` or `components/`.
+- **States:** loading (skeleton), empty, and error for data-heavy views.
+- **Performance:** avoid unnecessary client re-renders; lazy-load heavy dashboard widgets where useful.
+
+## Security & compliance
+
+- Follow **OWASP** habits: validate inputs (Zod), parameterized queries (Drizzle), least-privilege RBAC, protect sensitive fields (pay, tax) per PRD.
+- **Rate-limit** auth and high-risk/API routes when exposed (e.g. Upstash) — especially if AI endpoints are added later.
+- **Audit trail** for significant actions when backend exists (PRD NFR).
+
+## Review bar
+
+Before shipping a screen: Is hierarchy obvious? Is navigation predictable? Any clutter or redundant chrome? Does it match **design-language** + **layout-proposal**?

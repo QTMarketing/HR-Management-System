@@ -1,0 +1,606 @@
+"use client";
+
+import { ChevronDown, Search, SlidersHorizontal, Upload } from "lucide-react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { AddUsersBulkModal } from "@/components/users/add-users-bulk-modal";
+import {
+  PromoteAdminModal,
+  usersTabPromoteCandidates,
+} from "@/components/users/promote-admin-modal";
+import { PRIMARY_ORANGE_CTA } from "@/lib/ui/primary-orange-cta";
+import {
+  type DirectoryEmployee,
+  type DirectoryTab,
+  bucketForEmployee,
+  displayFirst,
+  displayLast,
+  initialsFor,
+} from "@/lib/users/directory-buckets";
+
+function fmtDate(s: string | null | undefined): string {
+  if (!s) return "—";
+  try {
+    return new Date(s).toLocaleDateString(undefined, {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  } catch {
+    return "—";
+  }
+}
+
+function fmtDateAdded(s: string): string {
+  try {
+    return new Date(s).toLocaleDateString(undefined, {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  } catch {
+    return "—";
+  }
+}
+
+function fmtLogin(s: string | null | undefined): string {
+  if (!s) return "Never logged in";
+  try {
+    return new Date(s).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
+function Avatar({ e }: { e: DirectoryEmployee }) {
+  return (
+    <span
+      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-orange-100 text-xs font-semibold text-orange-950 ring-1 ring-orange-200/80"
+      title={e.full_name}
+    >
+      {initialsFor(e)}
+    </span>
+  );
+}
+
+function AdminToggle({ enabled }: { enabled: boolean }) {
+  return (
+    <button
+      type="button"
+      disabled
+      className="relative h-6 w-11 shrink-0 cursor-not-allowed rounded-full opacity-80"
+      aria-label={enabled ? "Admin tab on" : "Admin tab off"}
+    >
+      <span
+        className={`block h-full w-full rounded-full transition-colors ${
+          enabled ? "bg-orange-500" : "bg-slate-200"
+        }`}
+      />
+      <span
+        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+          enabled ? "left-5" : "left-0.5"
+        }`}
+      />
+    </button>
+  );
+}
+
+/** Checkbox column — stays fixed while the grid scrolls horizontally. */
+const stickyHeadCb =
+  "sticky left-0 z-30 w-12 min-w-12 border-r border-slate-200 bg-slate-50 px-3 py-3.5 shadow-[4px_0_12px_-6px_rgba(15,23,42,0.12)]";
+const stickyBodyCb =
+  "sticky left-0 z-20 w-12 min-w-12 border-r border-slate-200 bg-inherit px-3 py-3 align-middle shadow-[4px_0_12px_-6px_rgba(15,23,42,0.08)]";
+
+/** First name (+ avatar) — second sticky band; `left-12` matches checkbox column width. */
+const stickyHeadName =
+  "sticky left-12 z-30 min-w-[15rem] border-r border-slate-200 bg-slate-50 px-3 py-3.5 shadow-[4px_0_12px_-6px_rgba(15,23,42,0.12)]";
+const stickyBodyName =
+  "sticky left-12 z-20 min-w-[15rem] border-r border-slate-200 bg-inherit px-3 py-3 align-middle shadow-[4px_0_12px_-6px_rgba(15,23,42,0.08)]";
+
+const cell = "px-4 py-3 align-middle";
+const cellNowrap = "whitespace-nowrap px-4 py-3 align-middle";
+
+type Props = {
+  employees: DirectoryEmployee[];
+  locationLabel: string;
+};
+
+export function UsersDirectory({ employees, locationLabel }: Props) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [pending, startTransition] = useTransition();
+  const [query, setQuery] = useState("");
+  const [addUsersOpen, setAddUsersOpen] = useState(false);
+  const [addUsersModalKey, setAddUsersModalKey] = useState(0);
+  const [addUsersBulkMode, setAddUsersBulkMode] = useState<"default" | "admin_create">("default");
+  const [adminAddMenuOpen, setAdminAddMenuOpen] = useState(false);
+  const [promoteAdminOpen, setPromoteAdminOpen] = useState(false);
+  const adminAddMenuRef = useRef<HTMLDivElement>(null);
+
+  const promoteCandidates = useMemo(() => usersTabPromoteCandidates(employees), [employees]);
+
+  useEffect(() => {
+    if (!adminAddMenuOpen) return;
+    const onPointer = (e: MouseEvent) => {
+      if (adminAddMenuRef.current && !adminAddMenuRef.current.contains(e.target as Node)) {
+        setAdminAddMenuOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onPointer);
+    return () => window.removeEventListener("mousedown", onPointer);
+  }, [adminAddMenuOpen]);
+
+  const tabParam = searchParams.get("tab");
+  const tab: DirectoryTab =
+    tabParam === "admins" ? "admins" : tabParam === "archived" ? "archived" : "users";
+
+  const counts = useMemo(() => {
+    let users = 0;
+    let admins = 0;
+    let archived = 0;
+    for (const e of employees) {
+      const b = bucketForEmployee(e);
+      if (b === "users") users += 1;
+      else if (b === "admins") admins += 1;
+      else archived += 1;
+    }
+    return { users, admins, archived };
+  }, [employees]);
+
+  const rowsForTab = useMemo(
+    () => employees.filter((e) => bucketForEmployee(e) === tab),
+    [employees, tab],
+  );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rowsForTab;
+    return rowsForTab.filter((e) => {
+      const hay = [
+        displayFirst(e),
+        displayLast(e),
+        e.email,
+        e.role,
+        e.title,
+        e.team,
+        e.department,
+        e.kiosk_code,
+        e.added_by,
+        e.access_level,
+        e.managed_groups,
+        e.permissions_label,
+        e.locationName,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [rowsForTab, query]);
+
+  const setTab = useCallback(
+    (next: DirectoryTab) => {
+      startTransition(() => {
+        const q = new URLSearchParams(searchParams.toString());
+        if (next === "users") q.delete("tab");
+        else q.set("tab", next);
+        const s = q.toString();
+        router.push(s ? `/users?${s}` : "/users");
+      });
+    },
+    [router, searchParams],
+  );
+
+  const theadUsers = (
+    <tr className="border-b border-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+      <th className={stickyHeadCb}>
+        <input type="checkbox" disabled className="rounded border-slate-300" aria-label="Select all" />
+      </th>
+      <th className={`${stickyHeadName} whitespace-normal`}>First name</th>
+      <th className={`${cell} min-w-[7.5rem]`}>Last name</th>
+      <th className={`${cell} min-w-[10rem]`}>Title</th>
+      <th className={`${cellNowrap} min-w-[11rem]`}>Employment start date</th>
+      <th className={`${cell} min-w-[8rem]`}>Team</th>
+      <th className={`${cell} min-w-[9rem]`}>Department</th>
+      <th className={`${cell} min-w-[6.5rem]`}>Kiosk code</th>
+      <th className={`${cellNowrap} min-w-[9rem]`}>Date added</th>
+      <th className={`${cellNowrap} min-w-[11rem]`}>Last login</th>
+      <th className={`${cell} min-w-[8rem]`}>Added by</th>
+      <th className={`w-12 min-w-12 px-3 py-3.5 text-right`} aria-label="Column settings">
+        <span className="text-slate-400">▤</span>
+      </th>
+    </tr>
+  );
+
+  const theadAdmins = (
+    <tr className="border-b border-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+      <th className={stickyHeadCb}>
+        <input type="checkbox" disabled className="rounded border-slate-300" aria-label="Select all" />
+      </th>
+      <th className={`${stickyHeadName} whitespace-normal`}>First name</th>
+      <th className={`${cell} min-w-[7.5rem]`}>Last name</th>
+      <th className={`${cell} min-w-[10rem]`}>Access level</th>
+      <th className={`${cell} min-w-[10rem]`}>Managed groups</th>
+      <th className={`${cell} min-w-[10rem]`}>Permissions</th>
+      <th className={`${cell} min-w-[7rem]`}>Admin tab</th>
+      <th className={`${cellNowrap} min-w-[11rem]`}>Last login</th>
+      <th className={`${cell} min-w-[8rem]`}>Added by</th>
+      <th className={`w-12 min-w-12 px-3 py-3.5 text-right`} aria-label="Column settings">
+        <span className="text-slate-400">▤</span>
+      </th>
+    </tr>
+  );
+
+  const theadArchived = (
+    <tr className="border-b border-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+      <th className={stickyHeadCb}>
+        <input type="checkbox" disabled className="rounded border-slate-300" aria-label="Select all" />
+      </th>
+      <th className={`${stickyHeadName} whitespace-normal`}>First name</th>
+      <th className={`${cell} min-w-[7.5rem]`}>Last name</th>
+      <th className={`${cell} min-w-[10rem]`}>Title</th>
+      <th className={`${cellNowrap} min-w-[11rem]`}>Employment start date</th>
+      <th className={`${cell} min-w-[8rem]`}>Team</th>
+      <th className={`${cell} min-w-[9rem]`}>Department</th>
+      <th className={`${cell} min-w-[6.5rem]`}>Kiosk code</th>
+      <th className={`${cellNowrap} min-w-[9rem]`}>Date added</th>
+      <th className={`${cellNowrap} min-w-[11rem]`}>Last login</th>
+      <th className={`${cell} min-w-[8rem]`}>Added by</th>
+      <th className={`${cellNowrap} min-w-[9rem]`}>Archived at</th>
+      <th className={`${cell} min-w-[8rem]`}>Archived by</th>
+      <th className={`w-12 min-w-12 px-3 py-3.5 text-right`} aria-label="Column settings">
+        <span className="text-slate-400">▤</span>
+      </th>
+    </tr>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Users</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Directory scoped to <span className="font-medium text-slate-700">{locationLabel}</span>.
+          Structure mirrors{" "}
+          <Link
+            href="https://app.connecteam.com/#/index/users/users?activeTab=0"
+            className="font-medium text-orange-700 hover:text-orange-900"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Connecteam Users
+          </Link>{" "}
+          — tabs, toolbar, and column sets per audience.
+        </p>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+        <div className="border-b border-slate-200 px-4 pt-4">
+          <nav className="flex gap-8" aria-label="User categories">
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => setTab("users")}
+              className={`border-b-2 pb-3 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                tab === "users"
+                  ? "border-orange-500 text-orange-900"
+                  : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              Users ({counts.users})
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => setTab("admins")}
+              className={`border-b-2 pb-3 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                tab === "admins"
+                  ? "border-orange-500 text-orange-900"
+                  : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              Admins ({counts.admins})
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => setTab("archived")}
+              className={`border-b-2 pb-3 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                tab === "archived"
+                  ? "border-orange-500 text-orange-900"
+                  : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              Archived ({counts.archived})
+            </button>
+          </nav>
+        </div>
+
+        <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-1 flex-wrap items-center gap-2">
+            <div className="relative min-w-[200px] max-w-md flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                placeholder="Search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-10 pr-3 text-sm text-slate-800 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+              />
+            </div>
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              disabled
+              title="Filters — connect when requirements are defined."
+            >
+              <SlidersHorizontal className="h-4 w-4 text-slate-400" />
+              Filter
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+              disabled
+              title="Export"
+              aria-label="Export"
+            >
+              <Upload className="h-4 w-4" />
+            </button>
+            {tab === "admins" ? (
+              <div className="relative" ref={adminAddMenuRef}>
+                <button
+                  type="button"
+                  className={`${PRIMARY_ORANGE_CTA} inline-flex items-center gap-1.5 px-4 py-2.5 text-sm`}
+                  aria-expanded={adminAddMenuOpen}
+                  aria-haspopup="menu"
+                  onClick={() => setAdminAddMenuOpen((v) => !v)}
+                  title="Add admins"
+                >
+                  Add admins
+                  <ChevronDown className="h-4 w-4 opacity-90" />
+                </button>
+                {adminAddMenuOpen ? (
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-full z-50 mt-1.5 min-w-[14rem] rounded-md border border-slate-200 bg-white py-1 shadow-lg"
+                  >
+                    <button
+                      role="menuitem"
+                      type="button"
+                      className="block w-full px-4 py-2.5 text-left text-sm text-slate-800 hover:bg-slate-50"
+                      onClick={() => {
+                        setAdminAddMenuOpen(false);
+                        setPromoteAdminOpen(true);
+                      }}
+                    >
+                      Promote existing user
+                    </button>
+                    <button
+                      role="menuitem"
+                      type="button"
+                      className="block w-full px-4 py-2.5 text-left text-sm text-slate-800 hover:bg-slate-50"
+                      onClick={() => {
+                        setAdminAddMenuOpen(false);
+                        setAddUsersBulkMode("admin_create");
+                        setAddUsersModalKey((k) => k + 1);
+                        setAddUsersOpen(true);
+                      }}
+                    >
+                      Create new user
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <button
+                type="button"
+                className={`${PRIMARY_ORANGE_CTA} inline-flex px-4 py-2.5 text-sm`}
+                onClick={() => {
+                  setAddUsersBulkMode("default");
+                  setAddUsersModalKey((k) => k + 1);
+                  setAddUsersOpen(true);
+                }}
+                title="Add multiple users (Connecteam-style bulk form)."
+              >
+                Add users
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div
+          className="overflow-x-auto overscroll-x-contain scroll-smooth"
+          role="region"
+          aria-label="User directory table"
+        >
+          {tab === "users" && (
+            <table className="min-w-[1620px] w-full table-auto text-left text-sm">
+              <thead>{theadUsers}</thead>
+              <tbody className="text-slate-800">
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
+                      No users in this tab. Run migration{" "}
+                      <code className="rounded bg-slate-100 px-1">009_employees_directory_connecteam.sql</code>{" "}
+                      for full columns.
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((e, i) => (
+                    <tr
+                      key={e.id}
+                      className={`border-b border-slate-100 ${
+                        i % 2 === 1 ? "bg-slate-50/80" : "bg-white"
+                      }`}
+                    >
+                      <td className={stickyBodyCb}>
+                        <input type="checkbox" disabled className="rounded border-slate-300" />
+                      </td>
+                      <td className={stickyBodyName}>
+                        <div className="flex items-center gap-2">
+                          <Avatar e={e} />
+                          <span className="font-medium">{displayFirst(e)}</span>
+                        </div>
+                      </td>
+                      <td className={`${cell} text-slate-800`}>{displayLast(e)}</td>
+                      <td className={`${cell} text-slate-700`}>{e.title ?? e.role}</td>
+                      <td className={`${cellNowrap} text-slate-600`}>
+                        {fmtDate(e.employment_start_date)}
+                      </td>
+                      <td className={`${cell} text-slate-600`}>{e.team ?? "—"}</td>
+                      <td className={`${cell} text-slate-600`}>{e.department ?? "—"}</td>
+                      <td className={`${cell} font-mono text-xs text-slate-600`}>
+                        {e.kiosk_code ?? "—"}
+                      </td>
+                      <td className={`${cellNowrap} text-slate-600`}>{fmtDateAdded(e.created_at)}</td>
+                      <td className={`${cellNowrap} text-slate-600`}>{fmtLogin(e.last_login)}</td>
+                      <td className={`${cell} text-slate-600`}>{e.added_by ?? "—"}</td>
+                      <td className={`${cell} w-12 min-w-12`} />
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
+
+          {tab === "admins" && (
+            <table className="min-w-[1280px] w-full table-auto text-left text-sm">
+              <thead>{theadAdmins}</thead>
+              <tbody className="text-slate-800">
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} className="px-4 py-12 text-center text-slate-500">
+                      No admins in this scope. Store Manager roles appear here.
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((e, i) => (
+                    <tr
+                      key={e.id}
+                      className={`border-b border-slate-100 ${
+                        i % 2 === 1 ? "bg-slate-50/80" : "bg-white"
+                      }`}
+                    >
+                      <td className={stickyBodyCb}>
+                        <input type="checkbox" disabled className="rounded border-slate-300" />
+                      </td>
+                      <td className={stickyBodyName}>
+                        <div className="flex items-center gap-2">
+                          <Avatar e={e} />
+                          <span className="font-medium">{displayFirst(e)}</span>
+                        </div>
+                      </td>
+                      <td className={`${cell} text-slate-800`}>{displayLast(e)}</td>
+                      <td className={cell}>
+                        <button
+                          type="button"
+                          disabled
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+                          title="Access level — editable when backend is connected."
+                        >
+                          {e.access_level ?? "Store admin"}
+                          <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
+                        </button>
+                      </td>
+                      <td className={`${cell} text-slate-600`}>{e.managed_groups ?? "—"}</td>
+                      <td className={`${cell} text-slate-600`}>{e.permissions_label ?? "—"}</td>
+                      <td className={cell}>
+                        <AdminToggle enabled={Boolean(e.admin_tab_enabled)} />
+                      </td>
+                      <td className={`${cellNowrap} text-slate-600`}>{fmtLogin(e.last_login)}</td>
+                      <td className={`${cell} text-slate-600`}>{e.added_by ?? "—"}</td>
+                      <td className={`${cell} w-12 min-w-12`} />
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
+
+          {tab === "archived" && (
+            <table className="min-w-[1780px] w-full table-auto text-left text-sm">
+              <thead>{theadArchived}</thead>
+              <tbody className="text-slate-800">
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={14} className="px-4 py-12 text-center text-slate-500">
+                      No archived people. Mark rows as archived in the database (
+                      <code className="rounded bg-slate-100 px-1">status = archived</code>
+                      ) or move inactive profiles here.
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((e, i) => (
+                    <tr
+                      key={e.id}
+                      className={`border-b border-slate-100 ${
+                        i % 2 === 1 ? "bg-slate-50/80" : "bg-white"
+                      }`}
+                    >
+                      <td className={stickyBodyCb}>
+                        <input type="checkbox" disabled className="rounded border-slate-300" />
+                      </td>
+                      <td className={stickyBodyName}>
+                        <div className="flex items-center gap-2">
+                          <Avatar e={e} />
+                          <span className="font-medium">{displayFirst(e)}</span>
+                        </div>
+                      </td>
+                      <td className={`${cell} text-slate-800`}>{displayLast(e)}</td>
+                      <td className={`${cell} text-slate-700`}>{e.title ?? e.role}</td>
+                      <td className={`${cellNowrap} text-slate-600`}>
+                        {fmtDate(e.employment_start_date)}
+                      </td>
+                      <td className={`${cell} text-slate-600`}>{e.team ?? "—"}</td>
+                      <td className={`${cell} text-slate-600`}>{e.department ?? "—"}</td>
+                      <td className={`${cell} font-mono text-xs text-slate-600`}>
+                        {e.kiosk_code ?? "—"}
+                      </td>
+                      <td className={`${cellNowrap} text-slate-600`}>{fmtDateAdded(e.created_at)}</td>
+                      <td className={`${cellNowrap} text-slate-600`}>{fmtLogin(e.last_login)}</td>
+                      <td className={`${cell} text-slate-600`}>{e.added_by ?? "—"}</td>
+                      <td className={`${cellNowrap} text-slate-600`}>{fmtDate(e.archived_at)}</td>
+                      <td className={`${cell} text-slate-600`}>{e.archived_by ?? "—"}</td>
+                      <td className={`${cell} w-12 min-w-12`} />
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      <p className="text-xs text-slate-500">
+        RBAC still maps <code className="rounded bg-slate-100 px-1">employees.role</code> via{" "}
+        <code className="rounded bg-slate-100 px-1">lib/rbac/matrix.ts</code>. Admins tab lists active
+        Store Managers; user fields come from migration 009 once applied.
+      </p>
+
+      <AddUsersBulkModal
+        key={addUsersModalKey}
+        open={addUsersOpen}
+        onOpenChange={(open) => {
+          setAddUsersOpen(open);
+          if (!open) setAddUsersBulkMode("default");
+        }}
+        employees={employees}
+        mode={addUsersBulkMode}
+      />
+
+      <PromoteAdminModal
+        open={promoteAdminOpen}
+        onOpenChange={setPromoteAdminOpen}
+        candidates={promoteCandidates}
+      />
+    </div>
+  );
+}

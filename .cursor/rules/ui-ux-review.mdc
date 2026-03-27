@@ -1,0 +1,97 @@
+---
+description: UI/navigation and trust review — data-first hierarchy (Retail HR; aligns with design-language + PRD)
+globs: app/**,components/**
+alwaysApply: false
+---
+
+# UI & UX review (Retail HR dashboard)
+
+Use this when **reviewing or refining** existing screens—not when inventing new PRD scope. Prefer **@** mentioning this rule for a focused pass.
+
+## Authoritative docs (do not contradict)
+
+- **Product scope & features:** `Project-PRD.md`
+- **Visual design:** `design-language.md` (light-first, **60-30-10**: white / orange / matte black; semantics for alerts only)
+- **Shell & layout:** `layout-proposal.md` (fluid layout, sticky chrome)
+- **Implementation norms:** `.cursor/rules/hr-dashboard.mdc`
+
+## Goal
+
+Strengthen **hierarchy**, **focus**, and **navigation** so **data and operational decisions** stay primary; chrome **frames** the work without competing. **Trust** through clear intent, feedback, and consistent behavior.
+
+**Core principle:** The UI should **point to** operational truth (people, time, schedules, locations)—not decorate around it.
+
+---
+
+## Part A — UI focus & navigation
+
+### 1. Primary focus
+
+For each screen, name the **single** operational insight or decision it supports (e.g. today’s labor vs schedule, who’s late, coverage gap). Make that **visually dominant** on first glance. Everything else supports or defers.
+
+### 2. Sidebar & shell (critical)
+
+Audit **global** navigation (e.g. module routes under the dashboard layout):
+
+- **Classify** each area: global module nav, location/context, utilities (search, notifications, profile). Flag mixed concerns without a clear reason.
+- **Reduce competing weight** with the main canvas: calmer density and readable labels—but **keep** active-state treatment consistent with `design-language.md` (**orange** nav/chart/hero; **matte black** primary buttons; avoid huge colored slabs).
+- **Priority:** Align nav items with **PRD modules** and personas; do **not** recommend removing core modules without mapping to PRD/RBAC. Prefer **grouping** and **order** over deletion when in doubt.
+- **Current location:** Clear at a glance but must **not** steal attention from KPIs/charts—subtle highlight + consistent icon/text.
+- **Discoverability:** Prefer **progressive disclosure** for rare actions; justify anything always visible (e.g. **location switcher** for multi-store managers).
+
+Respect **fluid layout** from `layout-proposal.md`: avoid rigid chrome that fights content width and scrolling.
+
+### 3. Navigation discipline
+
+Separate **global** (module) navigation from **page-local** filters/tabs. Navigation should **orient** (where am I, which store), not compete with tables and metrics.
+
+### 4. Color & focus
+
+Follow `design-language.md`: **mostly white** surfaces; **orange** for brand structure (charts, snapshot, nav active, focus); **matte black** for primary CTAs; **emerald/amber/red** only for status/alerts on **small** UI. **No teal** in brand chrome. Accents **sparingly**—not full-screen color blocks.
+
+### 5. Visual restraint
+
+Flag decoration that doesn’t improve understanding of schedules, attendance, labor, or people. Secondary information: smaller, lower contrast, more spacing—not extra widgets.
+
+### 6. Outcome test (3 seconds)
+
+User knows: what matters most on this screen, where to look next, and what action fits their **role** (within RBAC).
+
+---
+
+## Part B — Dynamics & trust
+
+**Core principle:** Trust through clear intent, immediate feedback, and **consistent** behavior across Users, Time clock, Schedule, and **location** context.
+
+### 1. Interaction intent
+
+For filters, sorting, bulk actions, clock actions, approvals: state **what** happens, **when**, and **undo/reversibility** where applicable. Flag ambiguous or irreversible actions without confirmation.
+
+### 2. Filters, sorting & bulk
+
+Active filters must be obvious; scope of data clear; results update predictably. Bulk actions: confirm **count + scope**; guard destructive paths; clear success/failure feedback.
+
+### 3. Modals vs popovers
+
+Match interruption weight to risk (destructive / multi-step → modal; quick edits → inline/popover). Flag misuse.
+
+### 4. Feedback & system states
+
+Loading (skeletons / short waits), toasts (outcome-focused), errors (what failed + **what to do next**; never blame the user). Align with `loading.tsx` / `error.tsx` patterns where relevant.
+
+### 5. Speed & consistency
+
+Same patterns for similar actions across modules; no silent failures; no long delays without feedback.
+
+### 6. Trust test
+
+After interactions: the user should feel understood, clearly responded to, and that behavior will repeat predictably.
+
+---
+
+## Output format
+
+- Bullet list of **specific** UI/navigation/interaction improvements to **existing** patterns.
+- For each item: **why** it improves hierarchy or trust.
+- **Do not** propose new PRD features—refinement and consistency only.
+- Call out conflicts with `design-language.md`, `layout-proposal.md`, or PRD if the screen diverges.

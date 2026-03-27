@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+/**
+ * 60-30-10 — white / orange / black only (see design-language.md §3).
+ * 60% — white (surfaces)
+ * 30% — orange gradient (brand, charts, hero cards, active nav tint)
+ * 10% — matte black (primary CTAs)
+ * Exceptions: emerald / amber / red for status & alerts only.
+ */
+:root {
+  --background: #ffffff;
+  --foreground: #334155;
+  --structure-from: #fb923c;
+  --structure-via: #f97316;
+  --structure-to: #ea580c;
+  --accent: #0a0a0a;
+  --accent-hover: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
