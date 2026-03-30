@@ -39,3 +39,20 @@ export function hoursBetween(isoStart: string, isoEnd: string): number {
   if (Number.isNaN(a) || Number.isNaN(b) || b <= a) return 0;
   return (b - a) / 3600000;
 }
+
+/** Overlap of [segmentStart, segmentEnd) with [windowStart, windowEnd), in hours. */
+export function hoursInWindow(
+  segmentStart: Date,
+  segmentEnd: Date,
+  windowStart: Date,
+  windowEnd: Date,
+): number {
+  const a = segmentStart.getTime();
+  const b = segmentEnd.getTime();
+  const ws = windowStart.getTime();
+  const we = windowEnd.getTime();
+  const s0 = Math.max(a, ws);
+  const s1 = Math.min(b, we);
+  if (s1 <= s0) return 0;
+  return (s1 - s0) / 3600000;
+}

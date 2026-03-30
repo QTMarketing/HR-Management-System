@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export function LaborSummaryCard() {
   return (
     <div className="rounded-2xl border border-white/10 bg-black p-5 shadow-sm">
@@ -5,12 +7,12 @@ export function LaborSummaryCard() {
       <p className="mt-1 text-xs text-white/75">
         Hours and attendance rollup for this location.
       </p>
-      <button
-        type="button"
-        className="mt-4 w-full rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-black shadow-sm transition-colors hover:bg-neutral-100"
+      <Link
+        href="/reports/labor"
+        className="mt-4 flex w-full items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-black shadow-sm transition-colors hover:bg-neutral-100"
       >
         View report
-      </button>
+      </Link>
     </div>
   );
 }

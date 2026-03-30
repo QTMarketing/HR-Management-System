@@ -55,10 +55,17 @@ export default async function DashboardLayout({
       ? "Your account isn’t linked to an employee profile yet. Ask an admin to add your work email in the directory."
       : null;
 
+  const mvpDemoRibbon = process.env.NEXT_PUBLIC_MVP_DEMO === "true";
+
   return (
     <div className="flex min-h-screen bg-slate-50">
       <AppSidebar navItems={navItems} />
       <div className="flex min-w-0 flex-1 flex-col">
+        {mvpDemoRibbon ? (
+          <div className="border-b border-amber-500/50 bg-amber-950 px-4 py-1.5 text-center text-[11px] font-semibold tracking-wide text-amber-50">
+            MVP demo build — relaxed RBAC/RLS; not for production or sensitive data
+          </div>
+        ) : null}
         <AppHeader
           userEmail={user?.email ?? ""}
           displayName={displayName}

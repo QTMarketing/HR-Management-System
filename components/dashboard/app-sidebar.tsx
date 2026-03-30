@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
   Activity,
+  BarChart2,
   CalendarRange,
   Clock,
   LayoutDashboard,
@@ -21,6 +22,7 @@ const ICONS = {
   "/activity": Activity,
   "/time-clock": Clock,
   "/schedule": CalendarRange,
+  "/reports/labor": BarChart2,
 } as const;
 
 type NavLink = { href: string; label: string; group?: "main" | "operations" };
@@ -32,6 +34,7 @@ const defaultNav: NavLink[] = [
   { href: "/activity", label: "Activity", group: "operations" },
   { href: "/time-clock", label: "Time Clock", group: "operations" },
   { href: "/schedule", label: "Schedule", group: "operations" },
+  { href: "/reports/labor", label: "Labor report", group: "operations" },
 ];
 
 function activePath(pathname: string, href: string) {

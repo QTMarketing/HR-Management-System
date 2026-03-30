@@ -31,6 +31,12 @@ export const DASHBOARD_NAV: NavItemWithGroup[] = [
   },
   { href: "/time-clock", label: "Time Clock", permission: PERMISSIONS.TIME_CLOCK_VIEW, group: "operations" },
   { href: "/schedule", label: "Schedule", permission: PERMISSIONS.SCHEDULE_VIEW, group: "operations" },
+  {
+    href: "/reports/labor",
+    label: "Labor report",
+    permission: PERMISSIONS.DASHBOARD_VIEW,
+    group: "operations",
+  },
 ];
 
 export function filterNavForRbac(ctx: RbacContext, items: NavItemWithGroup[]): NavItemWithGroup[] {

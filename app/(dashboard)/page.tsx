@@ -50,7 +50,7 @@ type MetricsRow = {
 const forceMock = process.env.NEXT_PUBLIC_USE_MOCK_DATA === "true";
 
 const sqlHint =
-  "Run Supabase SQL migrations in order (001 → … → 007) for chains, locations, time clocks, dashboard, and schedule data.";
+  "Run Supabase SQL migrations in order (001 → … → 013) for locations, time clocks, dashboard, schedule jobs/groups, and shift layers.";
 
 export default async function DashboardPage() {
   await requirePermission(PERMISSIONS.DASHBOARD_VIEW);
