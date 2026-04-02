@@ -13,8 +13,17 @@ import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { loadSmartGroupsPayload } from "@/lib/smart-groups/load-data";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-export default async function SmartGroupsPage() {
-  await requirePermission(PERMISSIONS.USERS_VIEW);
+type PageProps = {
+  searchParams: Promise<{ timeClock?: string }>;
+};
+
+export default async function SmartGroupsPage({ searchParams }: PageProps) {
+  const sp = await searchParams;
+  const focusTimeClockId =
+    typeof sp.timeClock === "string" && /^[0-9a-f-]{36}$/i.test(sp.timeClock.trim())
+      ? sp.timeClock.trim()
+      : null;
+  await requirePermission(PERMISSIONS.USERS_GROUPS_VIEW);
 
   const supabase = await createSupabaseServerClient();
 
@@ -63,9 +72,17 @@ export default async function SmartGroupsPage() {
         }}
         canManage={canManage}
         dbError={error ?? "Failed to load smart groups."}
+        focusTimeClockId={focusTimeClockId}
       />
     );
   }
 
-  return <SmartGroupsClient payload={payload} canManage={canManage} dbError={null} />;
+  return (
+    <SmartGroupsClient
+      payload={payload}
+      canManage={canManage}
+      dbError={null}
+      focusTimeClockId={focusTimeClockId}
+    />
+  );
 }

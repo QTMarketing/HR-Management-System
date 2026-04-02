@@ -1,8 +1,8 @@
 "use client";
 
-import { Bell, ChevronDown, Search } from "lucide-react";
+import { Bell, Search } from "lucide-react";
+import { AccountMenu } from "@/components/dashboard/account-menu";
 import { LocationSwitcher } from "@/components/dashboard/location-switcher";
-import { SignOutButton } from "@/components/dashboard/sign-out-button";
 import type { LocationRow } from "@/lib/dashboard/resolve-location";
 
 type Props = {
@@ -10,8 +10,12 @@ type Props = {
   displayName: string;
   locations: LocationRow[];
   selectedLocationId: string;
-  /** Hidden when no one is signed in (auth disabled / anon browsing). */
-  showSignOut?: boolean;
+  /** Show account menu with log out when a session exists. */
+  signedIn?: boolean;
+  /** `/users/[id]` when session is linked to an employee row (email match). */
+  myProfileHref?: string | null;
+  /** Signed in with email but no employee row matches (case-insensitive). */
+  profileUnlinked?: boolean;
   /** RBAC: signed in but no employees row for this email */
   rbacProfileHint?: string | null;
 };
@@ -21,11 +25,11 @@ export function AppHeader({
   displayName,
   locations,
   selectedLocationId,
-  showSignOut = false,
+  signedIn = false,
+  myProfileHref = null,
+  profileUnlinked = false,
   rbacProfileHint = null,
 }: Props) {
-  const initial = displayName.charAt(0).toUpperCase() || userEmail.charAt(0).toUpperCase() || "?";
-
   return (
     <header className="sticky top-0 z-20 shrink-0 border-b border-slate-200 bg-white">
       {rbacProfileHint ? (
@@ -58,23 +62,13 @@ export function AppHeader({
           <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-orange-500 ring-2 ring-white" />
         </button>
 
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            title={userEmail || undefined}
-            className="flex items-center gap-2 rounded-lg py-1.5 pl-1 pr-2 hover:bg-slate-50"
-            aria-label="Account menu"
-          >
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-orange-600 text-xs font-semibold text-white shadow-sm">
-              {initial}
-            </span>
-            <span className="hidden max-w-[140px] truncate text-left text-sm font-medium text-slate-800 md:block">
-              {displayName}
-            </span>
-            <ChevronDown className="hidden h-4 w-4 text-slate-400 md:block" />
-          </button>
-          {showSignOut ? <SignOutButton /> : null}
-        </div>
+        <AccountMenu
+          displayName={displayName}
+          userEmail={userEmail}
+          signedIn={signedIn}
+          myProfileHref={myProfileHref}
+          profileUnlinked={profileUnlinked}
+        />
       </div>
     </header>
   );

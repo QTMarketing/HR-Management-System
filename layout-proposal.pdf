@@ -1,0 +1,127 @@
+Layout Proposal: Dashboard Overview, Daily Activity, and Sidebar
+
+Document Version: 1.0
+Date: March 26, 2026
+Author: Manus AI
+
+1. Introduction
+
+This document details the layout proposal for the initial build of the HR dashboard, focusing on the Dashboard Overview, Daily Activity section, and the primary Sidebar Navigation. This proposal adheres to the Visual Design Language document, incorporating its defined color palettes, typography, and UI component styles to ensure a cohesive, modern, and intuitive user experience.
+
+2. Overall Dashboard Layout
+
+The dashboard will adopt a fixed sidebar layout with a persistent top header, providing a consistent navigation experience while maximizing the content area. The main content will be presented in a flexible, grid-based structure, allowing for responsive adaptation across various screen sizes.
+
+Component
+Description
+Styling Considerations (Tailwind CSS Examples)
+Sidebar
+Fixed to the left, containing primary navigation links. Collapsible to provide more screen real estate.
+fixed, left-0, top-0, h-screen, bg-white (Light Mode), w-64 (expanded), w-20 (collapsed), shadow-lg (subtle)
+Top Header
+Spans the width of the content area, positioned above the main content. Contains global actions and user-specific elements.
+fixed, top-0, right-0, h-16, bg-white (Light Mode), shadow-md, z-10
+Main Content Area
+Occupies the remaining space, dynamically adjusting based on sidebar state. Houses the dashboard overview and module-specific content.
+ml-64 (when sidebar expanded), ml-20 (when sidebar collapsed), pt-16 (to clear header), bg-slate-50 (Light Mode), p-6
+
+
+
+
+3. Sidebar Navigation
+
+The sidebar will be a clean, minimalist component designed for easy access to core HR modules. Its design will prioritize readability and clear visual hierarchy.
+
+Element
+Description
+Styling Considerations (Tailwind CSS Examples)
+Logo/Brand Area
+Top section of the sidebar, displaying the company logo.
+h-16, flex, items-center, justify-center, border-b, border-slate-200
+Navigation Links
+List of primary links: Users, Time Clock, Schedule. Each link will have an icon and text label.
+flex, items-center, py-3, px-4, text-slate-800, font-semibold, hover:bg-indigo-50, hover:text-indigo-600
+Active Link State
+Visually distinct styling for the currently active navigation link.
+bg-indigo-100, text-indigo-700, border-l-4, border-indigo-500
+Icons
+Line-based or filled icons consistent with the chosen icon library (e.g., Heroicons).
+w-6, h-6, mr-3
+Collapsible Functionality
+A toggle mechanism to expand or collapse the sidebar, revealing or hiding text labels.
+transition-all, duration-300, ease-in-out
+
+
+
+
+4. Top Header
+
+The top header will provide essential global functionalities and user context, maintaining a clean and uncluttered appearance.
+
+Element
+Description
+Styling Considerations (Tailwind CSS Examples)
+Global Search Bar
+An input field for searching across the entire dashboard (employees, schedules, etc.).
+w-64, p-2, rounded-md, border, border-slate-200, focus:ring-indigo-500
+Location Switcher
+A dropdown for managers to select and switch between different store locations.
+relative, inline-block, text-slate-700, hover:text-indigo-600
+User Profile/Avatar
+Displays the logged-in user's avatar and name, with a dropdown for settings/logout.
+flex, items-center, space-x-2, cursor-pointer
+Notifications Icon
+An icon indicating new notifications, with a badge for unread counts.
+relative, text-slate-700, hover:text-indigo-600
+
+
+
+
+5. Dashboard Overview Layout
+
+The Dashboard Overview will be the landing page, providing a high-level summary of key HR metrics and daily activities. It will utilize a grid-based, card-centric design.
+
+Section
+Description
+Styling Considerations (Tailwind CSS Examples)
+Welcome/Greeting
+A personalized greeting for the logged-in user.
+text-2xl, font-bold, text-slate-800, mb-6
+Metric Cards (Top Row)
+A series of prominent cards displaying key performance indicators (e.g., Total Employees, Active Now, Late Arrivals).
+grid, grid-cols-1 (mobile), md:grid-cols-2, lg:grid-cols-4, gap-6, mb-6
+Store Overview Cards
+A grid of cards, each representing a store location with summary metrics (as per Connecteam reference).
+grid, grid-cols-1 (mobile), md:grid-cols-2, lg:grid-cols-3, gap-6, mb-6
+Main Charts Section
+Area for larger data visualizations, such as attendance trends or labor cost breakdowns.
+grid, grid-cols-1 (mobile), lg:grid-cols-2, gap-6, mb-6
+Daily Activity Section
+A dedicated area for real-time updates and an operational snapshot.
+col-span-full (full width on smaller screens), lg:col-span-1 (side-by-side with charts on larger screens)
+
+
+
+
+6. Daily Activity Section Layout
+
+This section will provide a dynamic feed of recent events and a quick operational summary for the current day.
+
+Element
+Description
+Styling Considerations (Tailwind CSS Examples)
+Operational Snapshot Widget
+A card displaying real-time metrics (Scheduled, Late Clock-ins, Clocked in now, Total Attendance, Late Clock-outs).
+bg-white, rounded-lg, shadow-md, p-4, mb-4
+Activity Feed List
+A scrollable list of recent employee actions (clock-ins, clock-outs, PTO requests).
+bg-white, rounded-lg, shadow-md, p-4, h-96 (fixed height with scroll), overflow-y-auto
+Activity Item
+Each item in the feed, showing event, employee, and timestamp.
+flex, items-center, py-2, border-b, border-slate-100, last:border-b-0
+
+
+
+
+This layout proposal, combined with the Visual Design Language, provides a clear direction for the aesthetic and structural development of the HR dashboard, ensuring a beautiful and functional initial build.
+

@@ -8,9 +8,11 @@ import {
   type LocationRow,
 } from "@/lib/dashboard/resolve-location";
 import type { DirectoryEmployee } from "@/lib/users/directory-buckets";
+import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { requirePermission } from "@/lib/rbac/guard";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import type { AdminAccess } from "@/lib/users/admin-access";
 
 const EMPLOYEE_SELECT = [
                       "id",
@@ -20,6 +22,9 @@ const EMPLOYEE_SELECT = [
                       "status",
                       "created_at",
                       "location_id",
+                      "direct_manager_id",
+                      "mobile_phone",
+                      "birth_date",
                       "first_name",
                       "last_name",
                       "title",
@@ -27,6 +32,7 @@ const EMPLOYEE_SELECT = [
                       "team",
                       "department",
                       "kiosk_code",
+                      "employee_code",
                       "last_login",
                       "added_by",
                       "archived_at",
@@ -34,6 +40,7 @@ const EMPLOYEE_SELECT = [
                       "access_level",
                       "managed_groups",
                       "permissions_label",
+                      "admin_access",
                       "admin_tab_enabled",
                     ].join(",");
 
@@ -41,6 +48,16 @@ export default async function UsersPage() {
   await requirePermission(PERMISSIONS.USERS_VIEW);
 
   const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const rbac = await getRbacContext(supabase, user);
+  const canEditAdminAccess =
+    !rbac.enabled || hasPermission(rbac, PERMISSIONS.ORG_OWNER);
+  const canPromoteToAdmin =
+    !rbac.enabled || hasPermission(rbac, PERMISSIONS.ORG_OWNER);
+  const canBulkAddFromAdminsTab =
+    !rbac.enabled || hasPermission(rbac, PERMISSIONS.USERS_MANAGE);
 
   const { data: locRows } = await supabase
     .from("locations")
@@ -83,12 +100,16 @@ export default async function UsersPage() {
       status: String(rec.status ?? "active"),
       created_at: String(rec.created_at ?? ""),
       location_id: lid,
+      direct_manager_id: (rec.direct_manager_id as string | null) ?? null,
+      mobile_phone: (rec.mobile_phone as string | null) ?? null,
+      birth_date: (rec.birth_date as string | null) ?? null,
       locationName: lid ? locNames.get(lid) ?? null : null,
       title: (rec.title as string | null) ?? null,
       employment_start_date: (rec.employment_start_date as string | null) ?? null,
       team: (rec.team as string | null) ?? null,
       department: (rec.department as string | null) ?? null,
       kiosk_code: (rec.kiosk_code as string | null) ?? null,
+      employee_code: (rec.employee_code as string | null) ?? null,
       last_login: (rec.last_login as string | null) ?? null,
       added_by: (rec.added_by as string | null) ?? null,
       archived_at: (rec.archived_at as string | null) ?? null,
@@ -96,17 +117,21 @@ export default async function UsersPage() {
       access_level: (rec.access_level as string | null) ?? null,
       managed_groups: (rec.managed_groups as string | null) ?? null,
       permissions_label: (rec.permissions_label as string | null) ?? null,
+      admin_access: (rec.admin_access as AdminAccess | null) ?? null,
       admin_tab_enabled: Boolean(rec.admin_tab_enabled),
     };
   });
 
   const migrationHint = (
     <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-      If you see a column error, run{" "}
-      <code className="rounded bg-amber-100/80 px-1">
-        supabase/migrations/009_employees_directory_connecteam.sql
-      </code>{" "}
-      in the Supabase SQL editor (after 003–008).
+      If you see a column error, run migrations through{" "}
+      <code className="rounded bg-amber-100/80 px-1">019</code>,{" "}
+      <code className="rounded bg-amber-100/80 px-1">017</code>,{" "}
+      <code className="rounded bg-amber-100/80 px-1">016</code>,{" "}
+      <code className="rounded bg-amber-100/80 px-1">015</code>,{" "}
+      <code className="rounded bg-amber-100/80 px-1">014</code>, and{" "}
+      <code className="rounded bg-amber-100/80 px-1">009</code> in the Supabase
+      SQL editor.
     </p>
   );
 
@@ -127,7 +152,15 @@ export default async function UsersPage() {
             </div>
           }
         >
-          <UsersDirectory employees={employees} locationLabel={locationName} />
+          <UsersDirectory
+            employees={employees}
+            locationLabel={locationName}
+            assignmentLocationId={scopeAll ? null : selectedLocationId}
+            scopeAll={scopeAll}
+            canEditAdminAccess={canEditAdminAccess}
+            canPromoteToAdmin={canPromoteToAdmin}
+            canBulkAddFromAdminsTab={canBulkAddFromAdminsTab}
+          />
         </Suspense>
       )}
     </div>

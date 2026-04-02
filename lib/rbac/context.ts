@@ -2,6 +2,7 @@ import { cache } from "react";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { ALL_PERMISSIONS, PERMISSIONS, type Permission } from "./permissions";
 import { normalizeRoleLabel, permissionsForRoleKey, type AppRoleKey } from "./matrix";
+import { storeManagerPermissionsFromAccess } from "@/lib/users/admin-access";
 
 export type RbacContext = {
   /** When false, all permissions are granted (legacy dev / anon-friendly). */
@@ -51,8 +52,8 @@ export const getRbacContext = cache(
 
     const { data: row, error } = await supabase
       .from("employees")
-      .select("id, role")
-      .eq("email", email)
+      .select("id, role, admin_access")
+      .ilike("email", email)
       .maybeSingle();
 
     if (error) {
@@ -65,7 +66,7 @@ export const getRbacContext = cache(
       };
     }
 
-    const rec = row as { id?: string; role?: string } | null;
+    const rec = row as { id?: string; role?: string; admin_access?: unknown } | null;
     if (!rec?.id) {
       return {
         enabled: true,
@@ -77,9 +78,15 @@ export const getRbacContext = cache(
     }
 
     const roleKey = normalizeRoleLabel(rec.role);
+    const permissions =
+      roleKey === "owner"
+        ? permissionsForRoleKey("owner")
+        : roleKey === "store_manager"
+          ? storeManagerPermissionsFromAccess(rec.admin_access)
+          : permissionsForRoleKey(roleKey);
     return {
       enabled: true,
-      permissions: permissionsForRoleKey(roleKey),
+      permissions,
       roleKey,
       employeeId: rec.id,
       needsEmployeeProfile: false,

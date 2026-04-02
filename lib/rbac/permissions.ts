@@ -8,14 +8,20 @@ export const PERMISSIONS = {
   ACTIVITY_VIEW: "activity.view",
   /** Directory / roster (Users page) */
   USERS_VIEW: "users.view",
+  /** Smart groups (segments & dynamic groups under /users/groups) */
+  USERS_GROUPS_VIEW: "users.groups.view",
   /** Future: edit roles, invite users, deactivate */
   USERS_MANAGE: "users.manage",
+  /** Org Owners only: promote to Store Manager, edit admin module access (admin_access). */
+  ORG_OWNER: "org.owner",
   TIME_CLOCK_VIEW: "timeclock.view",
   /** Approve or adjust team punches (manager / lead flows) */
   TIME_CLOCK_MANAGE: "timeclock.manage",
   SCHEDULE_VIEW: "schedule.view",
   /** Create / edit shifts */
   SCHEDULE_EDIT: "schedule.edit",
+  /** Weekly labor / hours report */
+  LABOR_REPORT_VIEW: "reports.labor.view",
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

@@ -3,10 +3,15 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+type Props = {
+  /** Hide Smart groups tab when RBAC denies `users.groups.view`. */
+  showSmartGroups?: boolean;
+};
+
 /**
  * Connecteam-style sub-area: employee directory vs smart groups (dynamic segments).
  */
-export function UsersSectionTabs() {
+export function UsersSectionTabs({ showSmartGroups = true }: Props) {
   const pathname = usePathname();
   const onGroups = pathname.startsWith("/users/groups");
   const onDirectory = !onGroups;
@@ -23,9 +28,11 @@ export function UsersSectionTabs() {
       <Link href="/users" className={tabClass(onDirectory)}>
         Users
       </Link>
-      <Link href="/users/groups" className={tabClass(onGroups)}>
-        Smart groups
-      </Link>
+      {showSmartGroups ? (
+        <Link href="/users/groups" className={tabClass(onGroups)}>
+          Smart groups
+        </Link>
+      ) : null}
     </nav>
   );
 }

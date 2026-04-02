@@ -27,34 +27,40 @@ export type PunchTableColumnDef = {
 
 /** Data columns (left → right). Actions column is separate — see `PUNCH_ACTIONS_COLUMN`. */
 export const PUNCH_TABLE_COLUMNS: readonly PunchTableColumnDef[] = [
-  { id: "index", header: "#", headerClassName: "w-12 px-3 py-3 text-center" },
-  { id: "name", header: "Name", headerClassName: "px-3 py-3" },
+  { id: "index", header: "#", headerClassName: "w-12 whitespace-nowrap px-3 py-3 text-center" },
+  { id: "name", header: "Name", headerClassName: "whitespace-nowrap px-3 py-3" },
   {
     id: "schedule",
     header: "Schedule",
-    headerClassName: "min-w-[180px] px-3 py-3",
+    headerClassName: "min-w-[180px] whitespace-nowrap px-3 py-3",
   },
-  { id: "type", header: "Type", headerClassName: "px-3 py-3" },
-  { id: "job", header: "Job", headerClassName: "px-3 py-3" },
+  { id: "type", header: "Type", headerClassName: "whitespace-nowrap px-3 py-3" },
+  { id: "job", header: "Job", headerClassName: "whitespace-nowrap px-3 py-3" },
   {
     id: "clockIn",
     header: "Clock in",
-    headerClassName: "min-w-[140px] px-3 py-3",
+    headerClassName: "min-w-[140px] whitespace-nowrap px-3 py-3",
   },
   {
     id: "clockOut",
     header: "Clock out",
-    headerClassName: "min-w-[120px] px-3 py-3",
+    headerClassName: "min-w-[120px] whitespace-nowrap px-3 py-3",
   },
-  { id: "dailyTotal", header: "Daily total", headerClassName: "px-3 py-3" },
-  { id: "pto", header: "PTO", headerClassName: "px-3 py-3" },
-  { id: "status", header: "Status", headerClassName: "px-3 py-3" },
+  { id: "dailyTotal", header: "Daily total", headerClassName: "whitespace-nowrap px-3 py-3" },
+  { id: "pto", header: "PTO", headerClassName: "whitespace-nowrap px-3 py-3" },
+  { id: "status", header: "Status", headerClassName: "whitespace-nowrap px-3 py-3" },
 ];
 
 export const PUNCH_ACTIONS_COLUMN: PunchTableColumnDef = {
   id: "actions",
   header: "Actions",
-  headerClassName: "w-28 px-3 py-3 text-right",
+  headerClassName: "w-28 whitespace-nowrap px-3 py-3 text-right",
+};
+
+export const PUNCH_ARCHIVE_ACTIONS_COLUMN: PunchTableColumnDef = {
+  id: "archive",
+  header: "Record",
+  headerClassName: "min-w-[7rem] whitespace-nowrap px-3 py-3 text-right",
 };
 
 /**

@@ -3,21 +3,26 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { SidebarAccountFooter } from "@/components/dashboard/sidebar-account-footer";
 import {
   Activity,
   BarChart2,
+  Building2,
   CalendarRange,
   Clock,
   LayoutDashboard,
   Menu,
   Network,
   PanelLeftClose,
+  Shield,
   Users,
 } from "lucide-react";
 
 const ICONS = {
   "/": LayoutDashboard,
   "/users": Users,
+  "/locations": Building2,
+  "/security-audit": Shield,
   "/users/groups": Network,
   "/activity": Activity,
   "/time-clock": Clock,
@@ -47,9 +52,19 @@ function activePath(pathname: string, href: string) {
 type SidebarProps = {
   /** When set (from server RBAC), only these links are shown. */
   navItems?: NavLink[];
+  signedIn?: boolean;
+  myProfileHref?: string | null;
+  profileUnlinked?: boolean;
+  userEmail?: string;
 };
 
-export function AppSidebar({ navItems }: SidebarProps) {
+export function AppSidebar({
+  navItems,
+  signedIn = false,
+  myProfileHref = null,
+  profileUnlinked = false,
+  userEmail = "",
+}: SidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const links: NavLink[] =
@@ -116,6 +131,14 @@ export function AppSidebar({ navItems }: SidebarProps) {
           );
         })}
       </nav>
+
+      <SidebarAccountFooter
+        signedIn={signedIn}
+        myProfileHref={myProfileHref}
+        profileUnlinked={profileUnlinked}
+        userEmail={userEmail}
+        collapsed={collapsed}
+      />
     </aside>
   );
 }

@@ -42,22 +42,28 @@ function KpiTile({
   const pal = dashboardKpiVariants[variant];
   return (
     <div className="rounded-lg border border-slate-200 bg-white pl-4 pr-5 pb-2.5 pt-3 shadow-sm sm:pl-5 sm:pr-7 sm:pb-2.5 sm:pt-3.5">
-      <div className="flex items-start gap-10 sm:gap-12 md:gap-14 lg:gap-16 xl:gap-20">
+      <div className="flex items-start gap-3 sm:gap-3.5">
         <div
           className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${pal.iconCircle} shadow-sm sm:h-9 sm:w-9`}
           aria-hidden
         >
           <Icon className="h-3.5 w-3.5 text-white sm:h-4 sm:w-4" strokeWidth={2.25} />
         </div>
-        <div className="min-w-0 flex-1 pt-1 pr-0.5 text-right sm:pt-1.5 sm:pr-1">
-          <p className="truncate text-[10px] font-medium leading-tight text-slate-600 sm:text-[11px]" title={label}>
+        <div className="min-w-0 flex-1 pt-1 text-right sm:pt-1.5">
+          <p
+            className="text-pretty text-[10px] font-medium leading-snug text-slate-600 sm:text-[11px]"
+            title={label}
+          >
             {label}
           </p>
           <p className="mt-1 text-2xl font-bold tabular-nums leading-none tracking-tight text-slate-900 sm:mt-1.5 sm:text-[1.75rem] md:text-3xl">
             {value}
           </p>
           {sub ? (
-            <p className="mt-1 truncate text-[10px] leading-snug text-slate-500 sm:mt-1.5" title={sub}>
+            <p
+              className="mt-1 text-pretty text-[10px] leading-snug text-slate-500 sm:mt-1.5"
+              title={sub}
+            >
               {sub}
             </p>
           ) : null}

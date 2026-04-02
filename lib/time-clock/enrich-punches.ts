@@ -12,6 +12,7 @@ import {
   lateClockOutBadge,
   type ShiftLike,
 } from "@/lib/time-clock/punch-display";
+import { formatHoursMinutes } from "@/lib/time-clock/timecard-rollup";
 import type { EnrichedPunchRow, TimeClockTodayMetrics } from "@/lib/time-clock/types";
 
 type RawEntry = {
@@ -20,6 +21,7 @@ type RawEntry = {
   clock_in_at: string;
   clock_out_at: string | null;
   status: string;
+  archived_at?: string | null;
 };
 
 export function jobToneFromRole(role: string): EnrichedPunchRow["jobTone"] {
@@ -40,7 +42,7 @@ export function computeTodayMetrics(
     lateClockIns: enrichedTodayForClock.filter((e) => e.lateInBadge).length,
     clockedInNow: openEntryCountForClock,
     totalAttendance: new Set(enrichedTodayForClock.map((e) => e.employeeId)).size,
-    lateClockOuts: enrichedTodayForClock.filter((e) => e.lateOutBadge).length,
+    runningLate: enrichedTodayForClock.filter((e) => e.lateOutBadge).length,
   };
 }
 
@@ -63,8 +65,28 @@ export function enrichPunchRows(
       shift && row.clock_out_at
         ? lateClockOutBadge(row.clock_out_at, shift.shift_end)
         : null;
-    const { label: dailyTotalLabel } = computeDailyTotal(row.clock_in_at, row.clock_out_at);
+    const { label: dailyTotalLabel, minutes: workedMinutes } = computeDailyTotal(
+      row.clock_in_at,
+      row.clock_out_at,
+    );
 
+    let scheduledDurationLabel: string | null = null;
+    let scheduleVarianceMinutes: number | null = null;
+    if (shift) {
+      const s = new Date(shift.shift_start);
+      const e = new Date(shift.shift_end);
+      if (!Number.isNaN(s.getTime()) && !Number.isNaN(e.getTime())) {
+        const sm = Math.round((e.getTime() - s.getTime()) / 60000);
+        if (sm > 0) {
+          scheduledDurationLabel = formatHoursMinutes(sm);
+          if (workedMinutes != null) {
+            scheduleVarianceMinutes = workedMinutes - sm;
+          }
+        }
+      }
+    }
+
+    const isArchived = Boolean(row.archived_at);
     return {
       id: row.id,
       employeeId: row.employee_id,
@@ -78,9 +100,12 @@ export function enrichPunchRows(
       clockOutAt: row.clock_out_at,
       clockInDisplay: formatPunchDateTime(row.clock_in_at),
       clockOutDisplay: row.clock_out_at ? formatPunchDateTime(row.clock_out_at) : "—",
+      isArchived,
       lateInBadge: lateIn,
       lateOutBadge: lateOut,
       dailyTotalLabel,
+      scheduledDurationLabel,
+      scheduleVarianceMinutes,
       ptoLabel: "—",
       status: row.status,
     };

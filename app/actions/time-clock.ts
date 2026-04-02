@@ -30,12 +30,19 @@ export async function clockIn(
 
   const { data: emp, error: empErr } = await supabase
     .from("employees")
-    .select("id, full_name, location_id")
+    .select("id, full_name, location_id, status")
     .eq("id", employeeId)
     .maybeSingle();
 
   if (empErr || !emp) {
     return { ok: false, error: empErr?.message ?? "Employee not found." };
+  }
+  const empStatus = String((emp as { status?: string }).status ?? "active");
+  if (empStatus !== "active") {
+    return {
+      ok: false,
+      error: "Archived or inactive employees can’t clock in.",
+    };
   }
   if (emp.location_id !== locationId) {
     return { ok: false, error: "That employee is not assigned to this location." };
@@ -75,6 +82,7 @@ export async function clockIn(
     .select("id")
     .eq("employee_id", employeeId)
     .is("clock_out_at", null)
+    .is("archived_at", null)
     .maybeSingle();
 
   if (open) {
@@ -123,12 +131,15 @@ export async function clockOut(entryId: string, locationId: string): Promise<Act
 
   const { data: row, error: fetchErr } = await supabase
     .from("time_entries")
-    .select("id, location_id, employee_id, clock_out_at, time_clock_id")
+    .select("id, location_id, employee_id, clock_out_at, time_clock_id, archived_at")
     .eq("id", entryId)
     .maybeSingle();
 
   if (fetchErr || !row) {
     return { ok: false, error: fetchErr?.message ?? "Entry not found." };
+  }
+  if ((row as { archived_at?: string | null }).archived_at) {
+    return { ok: false, error: "This punch is archived." };
   }
   if (row.location_id !== locationId) {
     return { ok: false, error: "Entry does not belong to this location." };

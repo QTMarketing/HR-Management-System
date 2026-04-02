@@ -1,0 +1,44 @@
+---
+description: Plain-language org access — Owners, Store Managers, Stores page, RBAC
+alwaysApply: true
+---
+
+# Who can do what (Retail HR app)
+
+## Two different ideas
+
+- **Store lead (per store)** = who is officially in charge of that store on the **Stores** page (`/locations`). Stored as `locations.manager_employee_id`. It is **org chart data**, not “what buttons they see in the app.”
+- **Product admin powers** = what someone can **click** in the app (schedule, time clock, user list, etc.). For Store Managers this is mostly driven by `employees.admin_access` plus their role.
+
+## Organization Owner
+
+- A few people (1–3) are **Owners** in the database: `employees.role` is **`Owner`**, **`Org Owner`**, or **`Organization Owner`** (see `lib/rbac/matrix.ts`).
+- They get permission **`org.owner`** (`PERMISSIONS.ORG_OWNER`).
+- **Only Owners can:** promote someone to Store Manager, and change another Store Manager’s **Permissions** (module toggles / `admin_access`).
+- **Store Managers** can still do day-to-day people tasks where the app allows (e.g. bulk add / edit users) if they have **`users.manage`**; they **cannot** promote admins or edit `admin_access` for others.
+
+## Stores page
+
+- **Nav:** Dashboard → **Stores** (`/locations`).
+- Lists each **location** and a **Store lead** dropdown.
+- When **`RBAC_ENABLED=true`**, only **Owners** can change the dropdown; others see read-only text.
+
+## RBAC switch
+
+- **`RBAC_ENABLED=true`**: rules above apply; match login email to `employees.email`.
+- **`RBAC_ENABLED`** unset/false: dev-friendly “full access” in code paths that check RBAC — do **not** rely on this for production.
+
+## Migration to apply for store leads
+
+- `017_locations_store_manager.sql` adds `locations.manager_employee_id`.
+
+## Security audit (governance trail)
+
+- `018_security_audit_log.sql` adds `security_audit_events`.
+- Owner actions append rows: admin permission changes, promotions, store lead changes, organization owner changes.
+- **Security audit** nav item (`/security-audit`) is **Owner-only** (`org.owner`).
+
+## Log out & assigning owners in the UI
+
+- **Log out:** header **avatar / name** (top right) opens the account menu → **Log out**. Session is shown whenever `user` exists (not only when email is present).
+- **Organization owner:** on an employee **profile** (`/users/[id]`), owners see **Organization owner** checkbox; grant/remove is audited. **Bootstrap:** the first owner must be set once in Supabase (`employees.role = 'Org Owner'`) so someone has `org.owner` before the in-app toggle works.

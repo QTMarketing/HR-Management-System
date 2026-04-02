@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { EmployeeTimecardModal } from "@/components/time-clock/employee-timecard-modal";
 import { TimePunchTableRow } from "@/components/time-clock/time-punch-table-row";
 import {
   matchesPunchTableSearch,
   PUNCH_ACTIONS_COLUMN,
+  PUNCH_ARCHIVE_ACTIONS_COLUMN,
   PUNCH_TABLE_COLUMNS,
   PUNCH_TABLE_MIN_WIDTH_PX,
 } from "@/lib/time-clock/punch-table-columns";
@@ -15,15 +17,25 @@ type Props = {
   title: string;
   subtitle?: string;
   emptyMessage: string;
+  /** Viewer can manage / adjust punches (enables editing fields in timecard). */
+  canManage?: boolean;
   /** Today tab: show clock-out actions for open punches. */
   showClockOutActions?: boolean;
   onClockOut?: (entryId: string) => void;
+  /** Timesheets: archive punch (retain row; no delete). */
+  showArchiveActions?: boolean;
+  onArchive?: (entryId: string) => void;
   pending?: boolean;
   /** Show search + date toolbar (Connecteam-style). */
   showToolbar?: boolean;
   toolbarDateLabel?: string;
   /** Right-side hint next to the date (e.g. "Today" vs "Last 30 days"). */
   toolbarHint?: string;
+  /**
+   * Row click opens employee timecard (Connecteam-style). Uses this pool for history when set
+   * (e.g. last-30-days rows); otherwise uses `rows` only.
+   */
+  employeeTimecardPool?: EnrichedPunchRow[];
 };
 
 export function TimePunchTable({
@@ -31,20 +43,32 @@ export function TimePunchTable({
   title,
   subtitle,
   emptyMessage,
+  canManage = false,
   showClockOutActions = false,
   onClockOut,
+  showArchiveActions = false,
+  onArchive,
   pending = false,
   showToolbar = true,
   toolbarDateLabel,
   toolbarHint = "Today",
+  employeeTimecardPool,
 }: Props) {
   const [query, setQuery] = useState("");
+  const [timecardAnchorRow, setTimecardAnchorRow] = useState<EnrichedPunchRow | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim();
     if (!q) return rows;
     return rows.filter((r) => matchesPunchTableSearch(r, q));
   }, [rows, query]);
+
+  const timecardRows = useMemo(() => {
+    if (!timecardAnchorRow) return [];
+    const pool = employeeTimecardPool ?? rows;
+    const fromPool = pool.filter((r) => r.employeeId === timecardAnchorRow.employeeId);
+    return fromPool.length > 0 ? fromPool : [timecardAnchorRow];
+  }, [timecardAnchorRow, employeeTimecardPool, rows]);
 
   const dateLabel =
     toolbarDateLabel ??
@@ -60,6 +84,10 @@ export function TimePunchTable({
       <div className="border-b border-slate-100 px-5 py-4">
         <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
         {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
+        <p className="mt-2 text-xs text-slate-400">
+          Click any row to open that employee&apos;s timecard for this clock (schedule, job/position,
+          hours by week).
+        </p>
       </div>
 
       {showToolbar ? (
@@ -105,6 +133,11 @@ export function TimePunchTable({
                     {PUNCH_ACTIONS_COLUMN.header}
                   </th>
                 ) : null}
+                {showArchiveActions ? (
+                  <th className={PUNCH_ARCHIVE_ACTIONS_COLUMN.headerClassName}>
+                    {PUNCH_ARCHIVE_ACTIONS_COLUMN.header}
+                  </th>
+                ) : null}
               </tr>
             </thead>
             <tbody className="text-slate-700">
@@ -116,13 +149,22 @@ export function TimePunchTable({
                   zebra={index % 2 === 1}
                   showClockOutActions={Boolean(showClockOutActions)}
                   onClockOut={onClockOut}
+                  showArchiveActions={Boolean(showArchiveActions)}
+                  onArchive={onArchive}
                   pending={pending}
+                  onRowClick={() => setTimecardAnchorRow(row)}
                 />
               ))}
             </tbody>
           </table>
         </div>
       )}
+      <EmployeeTimecardModal
+        open={timecardAnchorRow != null}
+        onClose={() => setTimecardAnchorRow(null)}
+        rows={timecardRows}
+        canEditJob={canManage}
+      />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { AddUsersBulkModal } from "@/components/users/add-users-bulk-modal";
+import { AdminPermissionsPopover } from "@/components/users/admin-permissions-popover";
 import {
   PromoteAdminModal,
   usersTabPromoteCandidates,
@@ -18,6 +19,9 @@ import {
   displayLast,
   initialsFor,
 } from "@/lib/users/directory-buckets";
+import { formatAdminAccessSummary } from "@/lib/users/admin-access";
+import { EllipsisTd } from "@/components/ui/ellipsis-td";
+import { normalizeRoleLabel } from "@/lib/rbac/matrix";
 
 function fmtDate(s: string | null | undefined): string {
   if (!s) return "—";
@@ -102,7 +106,7 @@ const stickyBodyCb =
 const stickyHeadName =
   "sticky left-12 z-30 min-w-[15rem] border-r border-slate-200 bg-slate-50 px-3 py-3.5 shadow-[4px_0_12px_-6px_rgba(15,23,42,0.12)]";
 const stickyBodyName =
-  "sticky left-12 z-20 min-w-[15rem] border-r border-slate-200 bg-inherit px-3 py-3 align-middle shadow-[4px_0_12px_-6px_rgba(15,23,42,0.08)]";
+  "sticky left-12 z-20 min-w-[15rem] max-w-[15rem] overflow-hidden border-r border-slate-200 bg-inherit px-3 py-3 align-middle shadow-[4px_0_12px_-6px_rgba(15,23,42,0.08)]";
 
 const cell = "px-4 py-3 align-middle";
 const cellNowrap = "whitespace-nowrap px-4 py-3 align-middle";
@@ -110,9 +114,26 @@ const cellNowrap = "whitespace-nowrap px-4 py-3 align-middle";
 type Props = {
   employees: DirectoryEmployee[];
   locationLabel: string;
+  /** When not all-locations: new users’ store = this location; direct manager list = its Store Managers. */
+  assignmentLocationId: string | null;
+  scopeAll: boolean;
+  /** Organization owners: edit Store Manager module access presets. */
+  canEditAdminAccess: boolean;
+  /** Organization owners: promote users to Store Manager. */
+  canPromoteToAdmin: boolean;
+  /** Store Managers (and owners): bulk-add employees from Admins tab shortcut. */
+  canBulkAddFromAdminsTab: boolean;
 };
 
-export function UsersDirectory({ employees, locationLabel }: Props) {
+export function UsersDirectory({
+  employees,
+  locationLabel,
+  assignmentLocationId,
+  scopeAll,
+  canEditAdminAccess,
+  canPromoteToAdmin,
+  canBulkAddFromAdminsTab,
+}: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
@@ -168,7 +189,6 @@ export function UsersDirectory({ employees, locationLabel }: Props) {
         displayLast(e),
         e.email,
         e.role,
-        e.title,
         e.team,
         e.department,
         e.kiosk_code,
@@ -203,16 +223,16 @@ export function UsersDirectory({ employees, locationLabel }: Props) {
       <th className={stickyHeadCb}>
         <input type="checkbox" disabled className="rounded border-slate-300" aria-label="Select all" />
       </th>
-      <th className={`${stickyHeadName} whitespace-normal`}>First name</th>
-      <th className={`${cell} min-w-[7.5rem]`}>Last name</th>
-      <th className={`${cell} min-w-[10rem]`}>Title</th>
+      <th className={`${stickyHeadName} whitespace-nowrap`}>First name</th>
+      <th className={`${cell} whitespace-nowrap min-w-[7.5rem]`}>Last name</th>
+      <th className={`${cell} whitespace-nowrap min-w-[10rem]`}>Position</th>
       <th className={`${cellNowrap} min-w-[11rem]`}>Employment start date</th>
-      <th className={`${cell} min-w-[8rem]`}>Team</th>
-      <th className={`${cell} min-w-[9rem]`}>Department</th>
-      <th className={`${cell} min-w-[6.5rem]`}>Kiosk code</th>
+      <th className={`${cell} whitespace-nowrap min-w-[8rem]`}>Team</th>
+      <th className={`${cell} whitespace-nowrap min-w-[9rem]`}>Department</th>
+      <th className={`${cell} whitespace-nowrap min-w-[6.5rem]`}>Kiosk code</th>
       <th className={`${cellNowrap} min-w-[9rem]`}>Date added</th>
       <th className={`${cellNowrap} min-w-[11rem]`}>Last login</th>
-      <th className={`${cell} min-w-[8rem]`}>Added by</th>
+      <th className={`${cell} whitespace-nowrap min-w-[8rem]`}>Added by</th>
       <th className={`w-12 min-w-12 px-3 py-3.5 text-right`} aria-label="Column settings">
         <span className="text-slate-400">▤</span>
       </th>
@@ -224,14 +244,14 @@ export function UsersDirectory({ employees, locationLabel }: Props) {
       <th className={stickyHeadCb}>
         <input type="checkbox" disabled className="rounded border-slate-300" aria-label="Select all" />
       </th>
-      <th className={`${stickyHeadName} whitespace-normal`}>First name</th>
-      <th className={`${cell} min-w-[7.5rem]`}>Last name</th>
-      <th className={`${cell} min-w-[10rem]`}>Access level</th>
-      <th className={`${cell} min-w-[10rem]`}>Managed groups</th>
-      <th className={`${cell} min-w-[10rem]`}>Permissions</th>
-      <th className={`${cell} min-w-[7rem]`}>Admin tab</th>
+      <th className={`${stickyHeadName} whitespace-nowrap`}>First name</th>
+      <th className={`${cell} whitespace-nowrap min-w-[7.5rem]`}>Last name</th>
+      <th className={`${cell} whitespace-nowrap min-w-[10rem]`}>Access level</th>
+      <th className={`${cell} whitespace-nowrap min-w-[10rem]`}>Managed groups</th>
+      <th className={`${cell} whitespace-nowrap min-w-[10rem]`}>Permissions</th>
+      <th className={`${cell} whitespace-nowrap min-w-[7rem]`}>Admin tab</th>
       <th className={`${cellNowrap} min-w-[11rem]`}>Last login</th>
-      <th className={`${cell} min-w-[8rem]`}>Added by</th>
+      <th className={`${cell} whitespace-nowrap min-w-[8rem]`}>Added by</th>
       <th className={`w-12 min-w-12 px-3 py-3.5 text-right`} aria-label="Column settings">
         <span className="text-slate-400">▤</span>
       </th>
@@ -243,18 +263,18 @@ export function UsersDirectory({ employees, locationLabel }: Props) {
       <th className={stickyHeadCb}>
         <input type="checkbox" disabled className="rounded border-slate-300" aria-label="Select all" />
       </th>
-      <th className={`${stickyHeadName} whitespace-normal`}>First name</th>
-      <th className={`${cell} min-w-[7.5rem]`}>Last name</th>
-      <th className={`${cell} min-w-[10rem]`}>Title</th>
+      <th className={`${stickyHeadName} whitespace-nowrap`}>First name</th>
+      <th className={`${cell} whitespace-nowrap min-w-[7.5rem]`}>Last name</th>
+      <th className={`${cell} whitespace-nowrap min-w-[10rem]`}>Position</th>
       <th className={`${cellNowrap} min-w-[11rem]`}>Employment start date</th>
-      <th className={`${cell} min-w-[8rem]`}>Team</th>
-      <th className={`${cell} min-w-[9rem]`}>Department</th>
-      <th className={`${cell} min-w-[6.5rem]`}>Kiosk code</th>
+      <th className={`${cell} whitespace-nowrap min-w-[8rem]`}>Team</th>
+      <th className={`${cell} whitespace-nowrap min-w-[9rem]`}>Department</th>
+      <th className={`${cell} whitespace-nowrap min-w-[6.5rem]`}>Kiosk code</th>
       <th className={`${cellNowrap} min-w-[9rem]`}>Date added</th>
       <th className={`${cellNowrap} min-w-[11rem]`}>Last login</th>
-      <th className={`${cell} min-w-[8rem]`}>Added by</th>
+      <th className={`${cell} whitespace-nowrap min-w-[8rem]`}>Added by</th>
       <th className={`${cellNowrap} min-w-[9rem]`}>Archived at</th>
-      <th className={`${cell} min-w-[8rem]`}>Archived by</th>
+      <th className={`${cell} whitespace-nowrap min-w-[8rem]`}>Archived by</th>
       <th className={`w-12 min-w-12 px-3 py-3.5 text-right`} aria-label="Column settings">
         <span className="text-slate-400">▤</span>
       </th>
@@ -354,7 +374,7 @@ export function UsersDirectory({ employees, locationLabel }: Props) {
             >
               <Upload className="h-4 w-4" />
             </button>
-            {tab === "admins" ? (
+            {tab === "admins" && (canPromoteToAdmin || canBulkAddFromAdminsTab) ? (
               <div className="relative" ref={adminAddMenuRef}>
                 <button
                   type="button"
@@ -372,34 +392,38 @@ export function UsersDirectory({ employees, locationLabel }: Props) {
                     role="menu"
                     className="absolute right-0 top-full z-50 mt-1.5 min-w-[14rem] rounded-md border border-slate-200 bg-white py-1 shadow-lg"
                   >
-                    <button
-                      role="menuitem"
-                      type="button"
-                      className="block w-full px-4 py-2.5 text-left text-sm text-slate-800 hover:bg-slate-50"
-                      onClick={() => {
-                        setAdminAddMenuOpen(false);
-                        setPromoteAdminOpen(true);
-                      }}
-                    >
-                      Promote existing user
-                    </button>
-                    <button
-                      role="menuitem"
-                      type="button"
-                      className="block w-full px-4 py-2.5 text-left text-sm text-slate-800 hover:bg-slate-50"
-                      onClick={() => {
-                        setAdminAddMenuOpen(false);
-                        setAddUsersBulkMode("admin_create");
-                        setAddUsersModalKey((k) => k + 1);
-                        setAddUsersOpen(true);
-                      }}
-                    >
-                      Create new user
-                    </button>
+                    {canPromoteToAdmin ? (
+                      <button
+                        role="menuitem"
+                        type="button"
+                        className="block w-full px-4 py-2.5 text-left text-sm text-slate-800 hover:bg-slate-50"
+                        onClick={() => {
+                          setAdminAddMenuOpen(false);
+                          setPromoteAdminOpen(true);
+                        }}
+                      >
+                        Promote existing user
+                      </button>
+                    ) : null}
+                    {canBulkAddFromAdminsTab ? (
+                      <button
+                        role="menuitem"
+                        type="button"
+                        className="block w-full px-4 py-2.5 text-left text-sm text-slate-800 hover:bg-slate-50"
+                        onClick={() => {
+                          setAdminAddMenuOpen(false);
+                          setAddUsersBulkMode("admin_create");
+                          setAddUsersModalKey((k) => k + 1);
+                          setAddUsersOpen(true);
+                        }}
+                      >
+                        Create new user
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
-            ) : (
+            ) : tab === "admins" ? null : (
               <button
                 type="button"
                 className={`${PRIMARY_ORANGE_CTA} inline-flex px-4 py-2.5 text-sm`}
@@ -445,24 +469,49 @@ export function UsersDirectory({ employees, locationLabel }: Props) {
                         <input type="checkbox" disabled className="rounded border-slate-300" />
                       </td>
                       <td className={stickyBodyName}>
-                        <div className="flex items-center gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
                           <Avatar e={e} />
-                          <span className="font-medium">{displayFirst(e)}</span>
+                          <Link
+                            href={`/users/${e.id}`}
+                            className="min-w-0 truncate font-medium text-orange-900 hover:text-orange-950 hover:underline"
+                            title={displayFirst(e)}
+                          >
+                            {displayFirst(e)}
+                          </Link>
                         </div>
                       </td>
-                      <td className={`${cell} text-slate-800`}>{displayLast(e)}</td>
-                      <td className={`${cell} text-slate-700`}>{e.title ?? e.role}</td>
-                      <td className={`${cellNowrap} text-slate-600`}>
-                        {fmtDate(e.employment_start_date)}
-                      </td>
-                      <td className={`${cell} text-slate-600`}>{e.team ?? "—"}</td>
-                      <td className={`${cell} text-slate-600`}>{e.department ?? "—"}</td>
-                      <td className={`${cell} font-mono text-xs text-slate-600`}>
-                        {e.kiosk_code ?? "—"}
-                      </td>
-                      <td className={`${cellNowrap} text-slate-600`}>{fmtDateAdded(e.created_at)}</td>
-                      <td className={`${cellNowrap} text-slate-600`}>{fmtLogin(e.last_login)}</td>
-                      <td className={`${cell} text-slate-600`}>{e.added_by ?? "—"}</td>
+                      <EllipsisTd maxClass="max-w-[7.5rem]" title={displayLast(e) || undefined}>
+                        <Link
+                          href={`/users/${e.id}`}
+                          className="block truncate text-slate-800 hover:text-orange-900 hover:underline"
+                        >
+                          {displayLast(e)}
+                        </Link>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[10rem]" title={e.role || undefined}>
+                        {e.role || "—"}
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[11rem]" title={fmtDate(e.employment_start_date)}>
+                        <span className="text-slate-600">{fmtDate(e.employment_start_date)}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[8rem]" title={e.team ?? undefined}>
+                        <span className="text-slate-600">{e.team ?? "—"}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[9rem]" title={e.department ?? undefined}>
+                        <span className="text-slate-600">{e.department ?? "—"}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[6.5rem]" title={e.kiosk_code ?? undefined}>
+                        <span className="font-mono text-xs text-slate-600">{e.kiosk_code ?? "—"}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[9rem]" title={fmtDateAdded(e.created_at)}>
+                        <span className="text-slate-600">{fmtDateAdded(e.created_at)}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[11rem]" title={fmtLogin(e.last_login)}>
+                        <span className="text-slate-600">{fmtLogin(e.last_login)}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[8rem]" title={e.added_by ?? undefined}>
+                        <span className="text-slate-600">{e.added_by ?? "—"}</span>
+                      </EllipsisTd>
                       <td className={`${cell} w-12 min-w-12`} />
                     </tr>
                   ))
@@ -493,30 +542,62 @@ export function UsersDirectory({ employees, locationLabel }: Props) {
                         <input type="checkbox" disabled className="rounded border-slate-300" />
                       </td>
                       <td className={stickyBodyName}>
-                        <div className="flex items-center gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
                           <Avatar e={e} />
-                          <span className="font-medium">{displayFirst(e)}</span>
+                          <Link
+                            href={`/users/${e.id}`}
+                            className="min-w-0 truncate font-medium text-orange-900 hover:text-orange-950 hover:underline"
+                            title={displayFirst(e)}
+                          >
+                            {displayFirst(e)}
+                          </Link>
                         </div>
                       </td>
-                      <td className={`${cell} text-slate-800`}>{displayLast(e)}</td>
-                      <td className={cell}>
+                      <EllipsisTd maxClass="max-w-[7.5rem]" title={displayLast(e) || undefined}>
+                        <Link
+                          href={`/users/${e.id}`}
+                          className="block truncate text-slate-800 hover:text-orange-900 hover:underline"
+                        >
+                          {displayLast(e)}
+                        </Link>
+                      </EllipsisTd>
+                      <td className={`${cell} max-w-[10rem] min-w-0 overflow-hidden`}>
                         <button
                           type="button"
                           disabled
-                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+                          className="inline-flex max-w-full items-center gap-1 truncate rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
                           title="Access level — editable when backend is connected."
                         >
-                          {e.access_level ?? "Store admin"}
-                          <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
+                          <span className="truncate">{e.access_level ?? "Store admin"}</span>
+                          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-500" />
                         </button>
                       </td>
-                      <td className={`${cell} text-slate-600`}>{e.managed_groups ?? "—"}</td>
-                      <td className={`${cell} text-slate-600`}>{e.permissions_label ?? "—"}</td>
+                      <EllipsisTd maxClass="max-w-[10rem]" title={e.managed_groups ?? undefined}>
+                        <span className="text-slate-600">{e.managed_groups ?? "—"}</span>
+                      </EllipsisTd>
+                      <td className={`${cell} max-w-[10rem] min-w-0 overflow-hidden text-slate-600`}>
+                        <AdminPermissionsPopover
+                          employeeId={e.id}
+                          access={e.admin_access}
+                          displayLabel={
+                            e.permissions_label?.trim() ||
+                            formatAdminAccessSummary(e.admin_access)
+                          }
+                          canEdit={
+                            canEditAdminAccess &&
+                            normalizeRoleLabel(e.role) === "store_manager"
+                          }
+                        />
+                      </td>
                       <td className={cell}>
                         <AdminToggle enabled={Boolean(e.admin_tab_enabled)} />
                       </td>
-                      <td className={`${cellNowrap} text-slate-600`}>{fmtLogin(e.last_login)}</td>
-                      <td className={`${cell} text-slate-600`}>{e.added_by ?? "—"}</td>
+                      <EllipsisTd maxClass="max-w-[11rem]" title={fmtLogin(e.last_login)}>
+                        <span className="text-slate-600">{fmtLogin(e.last_login)}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[8rem]" title={e.added_by ?? undefined}>
+                        <span className="text-slate-600">{e.added_by ?? "—"}</span>
+                      </EllipsisTd>
                       <td className={`${cell} w-12 min-w-12`} />
                     </tr>
                   ))
@@ -549,26 +630,55 @@ export function UsersDirectory({ employees, locationLabel }: Props) {
                         <input type="checkbox" disabled className="rounded border-slate-300" />
                       </td>
                       <td className={stickyBodyName}>
-                        <div className="flex items-center gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
                           <Avatar e={e} />
-                          <span className="font-medium">{displayFirst(e)}</span>
+                          <Link
+                            href={`/users/${e.id}`}
+                            className="min-w-0 truncate font-medium text-orange-900 hover:text-orange-950 hover:underline"
+                            title={displayFirst(e)}
+                          >
+                            {displayFirst(e)}
+                          </Link>
                         </div>
                       </td>
-                      <td className={`${cell} text-slate-800`}>{displayLast(e)}</td>
-                      <td className={`${cell} text-slate-700`}>{e.title ?? e.role}</td>
-                      <td className={`${cellNowrap} text-slate-600`}>
-                        {fmtDate(e.employment_start_date)}
-                      </td>
-                      <td className={`${cell} text-slate-600`}>{e.team ?? "—"}</td>
-                      <td className={`${cell} text-slate-600`}>{e.department ?? "—"}</td>
-                      <td className={`${cell} font-mono text-xs text-slate-600`}>
-                        {e.kiosk_code ?? "—"}
-                      </td>
-                      <td className={`${cellNowrap} text-slate-600`}>{fmtDateAdded(e.created_at)}</td>
-                      <td className={`${cellNowrap} text-slate-600`}>{fmtLogin(e.last_login)}</td>
-                      <td className={`${cell} text-slate-600`}>{e.added_by ?? "—"}</td>
-                      <td className={`${cellNowrap} text-slate-600`}>{fmtDate(e.archived_at)}</td>
-                      <td className={`${cell} text-slate-600`}>{e.archived_by ?? "—"}</td>
+                      <EllipsisTd maxClass="max-w-[7.5rem]" title={displayLast(e) || undefined}>
+                        <Link
+                          href={`/users/${e.id}`}
+                          className="block truncate text-slate-800 hover:text-orange-900 hover:underline"
+                        >
+                          {displayLast(e)}
+                        </Link>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[10rem]" title={e.role || undefined}>
+                        {e.role || "—"}
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[11rem]" title={fmtDate(e.employment_start_date)}>
+                        <span className="text-slate-600">{fmtDate(e.employment_start_date)}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[8rem]" title={e.team ?? undefined}>
+                        <span className="text-slate-600">{e.team ?? "—"}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[9rem]" title={e.department ?? undefined}>
+                        <span className="text-slate-600">{e.department ?? "—"}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[6.5rem]" title={e.kiosk_code ?? undefined}>
+                        <span className="font-mono text-xs text-slate-600">{e.kiosk_code ?? "—"}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[9rem]" title={fmtDateAdded(e.created_at)}>
+                        <span className="text-slate-600">{fmtDateAdded(e.created_at)}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[11rem]" title={fmtLogin(e.last_login)}>
+                        <span className="text-slate-600">{fmtLogin(e.last_login)}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[8rem]" title={e.added_by ?? undefined}>
+                        <span className="text-slate-600">{e.added_by ?? "—"}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[9rem]" title={fmtDate(e.archived_at)}>
+                        <span className="text-slate-600">{fmtDate(e.archived_at)}</span>
+                      </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[8rem]" title={e.archived_by ?? undefined}>
+                        <span className="text-slate-600">{e.archived_by ?? "—"}</span>
+                      </EllipsisTd>
                       <td className={`${cell} w-12 min-w-12`} />
                     </tr>
                   ))
@@ -580,9 +690,13 @@ export function UsersDirectory({ employees, locationLabel }: Props) {
       </div>
 
       <p className="text-xs text-slate-500">
-        RBAC still maps <code className="rounded bg-slate-100 px-1">employees.role</code> via{" "}
-        <code className="rounded bg-slate-100 px-1">lib/rbac/matrix.ts</code>. Admins tab lists active
-        Store Managers; user fields come from migration 009 once applied.
+        Roles map through <code className="rounded bg-slate-100 px-1">lib/rbac/matrix.ts</code>{" "}
+        (<strong className="font-semibold text-slate-600">Owner</strong> / Org Owner includes{" "}
+        <code className="rounded bg-slate-100 px-1">org.owner</code>: promote admins & edit module access).
+        Store Managers keep day-to-day user management where permitted.{" "}
+        <strong className="font-semibold text-slate-600">Users and time punches are not deleted</strong>{" "}
+        — archive from the profile (users) or Timesheets (punch). Canonical store lead per location is on{" "}
+        <strong className="font-semibold text-slate-600">Stores</strong>.
       </p>
 
       <AddUsersBulkModal
@@ -594,6 +708,8 @@ export function UsersDirectory({ employees, locationLabel }: Props) {
         }}
         employees={employees}
         mode={addUsersBulkMode}
+        assignmentLocationId={assignmentLocationId}
+        scopeAll={scopeAll}
       />
 
       <PromoteAdminModal

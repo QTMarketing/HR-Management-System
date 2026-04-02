@@ -3,27 +3,44 @@ import { Suspense } from "react";
 import { notFound, redirect } from "next/navigation";
 import { TimeClockPanel } from "@/components/time-clock/time-clock-panel";
 import { TimeClockDetailShell } from "@/components/time-clock/time-clock-detail-shell";
-import { TimePunchTable } from "@/components/time-clock/time-punch-table";
+import { TimeClockSettingsForm } from "@/components/time-clock/time-clock-settings-form";
 import { locationsForSession } from "@/lib/dashboard/locations-for-session";
 import { isAllLocations, resolveSelectedLocationId, type LocationRow } from "@/lib/dashboard/resolve-location";
 import { computeTodayMetrics, enrichPunchRows } from "@/lib/time-clock/enrich-punches";
 import { getLocalDayBounds } from "@/lib/time-clock/punch-display";
-import { getTimeClockSmartGate } from "@/lib/time-clock/smart-group-gate";
+import {
+  getPeriodBounds,
+  normalizePeriodConfig,
+  parsePeriodKind,
+  periodBoundsToQueryIso,
+  type TimesheetPeriodKind,
+} from "@/lib/time-clock/timesheet-period";
 import type { EnrichedPunchRow, TimeClockTodayMetrics } from "@/lib/time-clock/types";
 import { DEMO_LOCATIONS } from "@/lib/mock/dashboard-demo";
+import { TimeSheetsPanel } from "@/components/time-clock/time-sheets-panel";
 import { requirePermission } from "@/lib/rbac/guard";
+import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type PageProps = {
   params: Promise<{ clockId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default async function TimeClockDetailPage({ params }: PageProps) {
+export default async function TimeClockDetailPage({ params, searchParams }: PageProps) {
   await requirePermission(PERMISSIONS.TIME_CLOCK_VIEW);
 
   const { clockId } = await params;
+  const sp = await searchParams;
+
   const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const rbac = await getRbacContext(supabase, user);
+  const canArchiveTimeEntries =
+    !rbac.enabled || hasPermission(rbac, PERMISSIONS.TIME_CLOCK_MANAGE);
 
   const { data: locRows } = await supabase
     .from("locations")
@@ -46,7 +63,9 @@ export default async function TimeClockDetailPage({ params }: PageProps) {
 
   const { data: clock, error: clockErr } = await supabase
     .from("time_clocks")
-    .select("id, name, status, location_id")
+    .select(
+      "id, name, status, location_id, timesheet_period_kind, timesheet_period_config",
+    )
     .eq("id", clockId)
     .maybeSingle();
 
@@ -65,6 +84,29 @@ export default async function TimeClockDetailPage({ params }: PageProps) {
 
   const isArchived = clock.status === "archived";
 
+  const defaultKind = (clock.timesheet_period_kind as TimesheetPeriodKind) ?? "weekly";
+  const defaultConfig = normalizePeriodConfig(
+    (clock as { timesheet_period_config?: unknown }).timesheet_period_config,
+    defaultKind,
+  );
+
+  const periodParam = typeof sp.period === "string" ? sp.period : undefined;
+  const anchorParam = typeof sp.anchor === "string" ? sp.anchor : undefined;
+  const effectiveKind = parsePeriodKind(periodParam) ?? defaultKind;
+  const effectiveConfig = normalizePeriodConfig(
+    (clock as { timesheet_period_config?: unknown }).timesheet_period_config,
+    effectiveKind,
+  );
+
+  let anchor = new Date();
+  if (anchorParam) {
+    const t = Date.parse(anchorParam);
+    if (!Number.isNaN(t)) anchor = new Date(t);
+  }
+
+  const periodBounds = getPeriodBounds(anchor, effectiveKind, effectiveConfig);
+  const { gte: periodGte, lt: periodLt } = periodBoundsToQueryIso(periodBounds);
+
   const { data: empRows, error: empErr } = await supabase
     .from("employees")
     .select("id, full_name, role")
@@ -72,35 +114,17 @@ export default async function TimeClockDetailPage({ params }: PageProps) {
     .eq("status", "active")
     .order("full_name", { ascending: true });
 
-  const smartGate = await getTimeClockSmartGate(supabase, clockId);
-
-  let employees = (empRows ?? []).map((e) => ({
-    id: e.id,
-    full_name: e.full_name,
-  }));
-
-  let smartGroupHint: string | null = null;
-  if (smartGate.kind === "error") {
-    smartGroupHint = `Could not load smart group rules: ${smartGate.message}`;
-  } else if (smartGate.kind === "restricted") {
-    employees = employees.filter((e) => smartGate.allowedEmployeeIds.has(e.id));
-    smartGroupHint =
-      employees.length === 0
-        ? "This clock only allows employees who belong to a smart group assigned here (see Users → Smart groups). No eligible employees at this store yet — add members to the assigned groups."
-        : "Clock-in is limited to employees in smart groups assigned to this time clock.";
-  }
-
   const nameById = new Map((empRows ?? []).map((e) => [e.id, e.full_name] as const));
-  const roleById = new Map((empRows ?? []).map((e) => [e.id, e.role] as const));
+  const roleById = new Map((empRows ?? []).map((e) => [e.id, e.role ?? ""] as const));
 
-  const since30 = new Date();
-  since30.setDate(since30.getDate() - 30);
+  const since90 = new Date();
+  since90.setDate(since90.getDate() - 90);
 
   const { data: shiftsWindow } = await supabase
     .from("shifts")
     .select("employee_id, shift_start, shift_end, notes")
     .eq("location_id", effectiveLocationId)
-    .gte("shift_start", since30.toISOString());
+    .gte("shift_start", since90.toISOString());
 
   const shiftsList = shiftsWindow ?? [];
   const { start: dayStart, end: dayEnd } = getLocalDayBounds();
@@ -116,9 +140,10 @@ export default async function TimeClockDetailPage({ params }: PageProps) {
   try {
     const { data: raw, error } = await supabase
       .from("time_entries")
-      .select("id, employee_id, clock_in_at, clock_out_at, status")
+      .select("id, employee_id, clock_in_at, clock_out_at, status, archived_at")
       .eq("location_id", effectiveLocationId)
       .eq("time_clock_id", clockId)
+      .is("archived_at", null)
       .order("clock_in_at", { ascending: false })
       .limit(50);
 
@@ -130,8 +155,9 @@ export default async function TimeClockDetailPage({ params }: PageProps) {
 
     const { data: entriesToday } = await supabase
       .from("time_entries")
-      .select("id, employee_id, clock_in_at, clock_out_at, status")
+      .select("id, employee_id, clock_in_at, clock_out_at, status, archived_at")
       .eq("time_clock_id", clockId)
+      .is("archived_at", null)
       .gte("clock_in_at", dayStart.toISOString())
       .lt("clock_in_at", dayEnd.toISOString());
 
@@ -139,7 +165,8 @@ export default async function TimeClockDetailPage({ params }: PageProps) {
       .from("time_entries")
       .select("*", { count: "exact", head: true })
       .eq("time_clock_id", clockId)
-      .eq("status", "open");
+      .eq("status", "open")
+      .is("archived_at", null);
 
     const enrichedToday = enrichPunchRows(
       entriesToday ?? [],
@@ -153,22 +180,38 @@ export default async function TimeClockDetailPage({ params }: PageProps) {
       e instanceof Error ? e.message : "Could not load punches. Run migrations 006–007.";
   }
 
-  const timesheetSince = new Date();
-  timesheetSince.setDate(timesheetSince.getDate() - 30);
+  /** Wider pool for timecard drill-down and Today context */
+  const timesheetPoolSince = new Date();
+  timesheetPoolSince.setDate(timesheetPoolSince.getDate() - 90);
 
-  const timesheetRows: EnrichedPunchRow[] = [];
+  const { data: poolRaw } = await supabase
+    .from("time_entries")
+    .select("id, employee_id, clock_in_at, clock_out_at, status, archived_at")
+    .eq("time_clock_id", clockId)
+    .is("archived_at", null)
+    .gte("clock_in_at", timesheetPoolSince.toISOString())
+    .order("clock_in_at", { ascending: false })
+    .limit(2000);
+
+  const employeeTimecardPool: EnrichedPunchRow[] =
+    poolRaw && poolRaw.length > 0
+      ? enrichPunchRows(poolRaw, nameById, roleById, shiftsList)
+      : [];
 
   const { data: tsRaw } = await supabase
     .from("time_entries")
-    .select("id, employee_id, clock_in_at, clock_out_at, status")
+    .select("id, employee_id, clock_in_at, clock_out_at, status, archived_at")
     .eq("time_clock_id", clockId)
-    .gte("clock_in_at", timesheetSince.toISOString())
+    .is("archived_at", null)
+    .gte("clock_in_at", periodGte)
+    .lt("clock_in_at", periodLt)
     .order("clock_in_at", { ascending: false })
-    .limit(500);
+    .limit(5000);
 
-  if (tsRaw) {
-    timesheetRows.push(...enrichPunchRows(tsRaw, nameById, roleById, shiftsList));
-  }
+  const timesheetRows: EnrichedPunchRow[] =
+    tsRaw && tsRaw.length > 0
+      ? enrichPunchRows(tsRaw, nameById, roleById, shiftsList)
+      : [];
 
   return (
     <Suspense
@@ -197,33 +240,37 @@ export default async function TimeClockDetailPage({ params }: PageProps) {
             ) : null}
             <TimeClockPanel
               locationId={effectiveLocationId}
-              locationName={locationName}
-              timeClockId={clockId}
-              timeClocks={[{ id: clockId, name: clock.name }]}
-              employees={employees}
+              clockName={clock.name}
               entries={entries}
-              todayMetrics={isArchived ? null : todayMetrics}
-              archivedReadOnly={isArchived}
-              smartGroupHint={smartGroupHint}
+              todayMetrics={todayMetrics}
+              employeeTimecardPool={employeeTimecardPool}
+              canManage={canArchiveTimeEntries}
             />
           </div>
         }
         timesheetsContent={
-          <div className="space-y-3">
-            <TimePunchTable
-              rows={timesheetRows}
-              title="Timesheets"
-              subtitle="Last 30 days of punches for this time clock — same column layout as Today."
-              emptyMessage="No punches in the last 30 days for this time clock."
-              showClockOutActions={false}
-              showToolbar
-              toolbarHint="Last 30 days"
-            />
-            <p className="text-xs text-slate-500">
-              Week grid, export, and GPS map (Connecteam) can build on this table in a later phase.
-            </p>
-          </div>
+          <TimeSheetsPanel
+            rows={timesheetRows}
+            modalPoolRows={employeeTimecardPool}
+            locationId={effectiveLocationId}
+            timeClockId={clockId}
+            canArchive={canArchiveTimeEntries}
+            periodKind={effectiveKind}
+            periodConfig={effectiveConfig}
+            periodStartIso={periodBounds.start.toISOString()}
+            periodEndExclusiveIso={periodBounds.endExclusive.toISOString()}
+            clockDefaultKind={defaultKind}
+          />
         }
+        settingsContent={
+          <TimeClockSettingsForm
+            timeClockId={clockId}
+            initialKind={defaultKind}
+            initialConfig={defaultConfig}
+            canEdit={canArchiveTimeEntries}
+          />
+        }
+        canManage={canArchiveTimeEntries}
       />
     </Suspense>
   );

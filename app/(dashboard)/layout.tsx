@@ -48,7 +48,39 @@ export default async function DashboardLayout({
     cookieStore.get("hr_location_id")?.value,
   );
 
-  const displayName = displayNameFromUser(user);
+  let displayName = displayNameFromUser(user);
+  let profileEmployeeId = rbac.employeeId;
+  const emailNorm = user?.email?.trim().toLowerCase() ?? "";
+  if (!profileEmployeeId && emailNorm) {
+    const { data: empLink } = await supabase
+      .from("employees")
+      .select("id")
+      .ilike("email", emailNorm)
+      .maybeSingle();
+    profileEmployeeId = (empLink as { id?: string } | null)?.id ?? null;
+  }
+  const myProfileHref = profileEmployeeId ? `/users/${profileEmployeeId}` : null;
+  const profileUnlinked = Boolean(user) && Boolean(emailNorm) && !myProfileHref;
+
+  if (profileEmployeeId) {
+    const { data: empGreet } = await supabase
+      .from("employees")
+      .select("first_name, last_name, full_name")
+      .eq("id", profileEmployeeId)
+      .maybeSingle();
+    if (empGreet) {
+      const er = empGreet as {
+        first_name?: string | null;
+        last_name?: string | null;
+        full_name?: string | null;
+      };
+      const fn = er.first_name?.trim() ?? "";
+      const ln = er.last_name?.trim() ?? "";
+      const combined = [fn, ln].filter(Boolean).join(" ").trim();
+      if (combined) displayName = combined;
+      else if (er.full_name?.trim()) displayName = er.full_name.trim();
+    }
+  }
 
   const rbacProfileHint =
     rbac.enabled && rbac.needsEmployeeProfile && user?.email
@@ -59,7 +91,13 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex min-h-screen bg-slate-50">
-      <AppSidebar navItems={navItems} />
+      <AppSidebar
+        navItems={navItems}
+        signedIn={Boolean(user)}
+        myProfileHref={myProfileHref}
+        profileUnlinked={profileUnlinked}
+        userEmail={user?.email ?? ""}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
         {mvpDemoRibbon ? (
           <div className="border-b border-amber-500/50 bg-amber-950 px-4 py-1.5 text-center text-[11px] font-semibold tracking-wide text-amber-50">
@@ -71,7 +109,9 @@ export default async function DashboardLayout({
           displayName={displayName}
           locations={locations}
           selectedLocationId={selectedLocationId}
-          showSignOut={Boolean(user?.email)}
+          signedIn={Boolean(user)}
+          myProfileHref={myProfileHref}
+          profileUnlinked={profileUnlinked}
           rbacProfileHint={rbacProfileHint}
         />
         <main className="flex-1 py-6">

@@ -12,6 +12,7 @@ import {
 } from "@/app/actions/smart-groups";
 import type { SmartGroupsPayload } from "@/lib/smart-groups/load-data";
 import { PRIMARY_ORANGE_CTA, SECONDARY_ORANGE_PILL } from "@/lib/ui/primary-orange-cta";
+import { EllipsisTd } from "@/components/ui/ellipsis-td";
 import { ChevronDown, ChevronRight, Search, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -119,9 +120,16 @@ type Props = {
   payload: SmartGroupsPayload;
   canManage: boolean;
   dbError: string | null;
+  /** Deep link from Time clock → Edit assignments */
+  focusTimeClockId?: string | null;
 };
 
-export function SmartGroupsClient({ payload, canManage, dbError }: Props) {
+export function SmartGroupsClient({
+  payload,
+  canManage,
+  dbError,
+  focusTimeClockId = null,
+}: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() =>
@@ -224,6 +232,24 @@ export function SmartGroupsClient({ payload, canManage, dbError }: Props) {
           .
         </p>
       </div>
+
+      {focusTimeClockId ? (
+        <div className="rounded-xl border border-orange-200 bg-orange-50/95 px-4 py-3 text-sm text-orange-950">
+          <span className="font-semibold tracking-tight">
+            {payload.timeClocks.find((t) => t.id === focusTimeClockId)?.name ?? "Time clock"}
+          </span>
+          {" — "}
+          Use each group’s <strong className="font-semibold">Assignments</strong> control to attach or detach this
+          clock for who can punch in.
+          {" "}
+          <Link
+            href="/time-clock"
+            className="font-medium text-orange-900 underline underline-offset-2 hover:text-orange-950"
+          >
+            Back to Time clock
+          </Link>
+        </div>
+      ) : null}
 
       {segmentModal ? (
         <AddSegmentModal
@@ -385,7 +411,7 @@ export function SmartGroupsClient({ payload, canManage, dbError }: Props) {
                         <thead>
                           <tr className="border-b border-slate-200 bg-slate-50/90 text-xs font-semibold uppercase tracking-wide text-slate-500">
                             <th className="w-10 px-2 py-3" aria-label="Select row" />
-                            <th className="px-3 py-3">Group name</th>
+                            <th className="whitespace-nowrap px-3 py-3">Group name</th>
                             <th className="w-28 px-3 py-3 text-center">Connected</th>
                             <th className="min-w-[140px] px-3 py-3">Created by</th>
                             <th className="w-[150px] px-3 py-3 text-center">Assignments</th>
@@ -409,9 +435,14 @@ export function SmartGroupsClient({ payload, canManage, dbError }: Props) {
                                   aria-label={`Select ${g.name}`}
                                 />
                               </td>
-                              <td className="px-3 py-2.5 align-middle">
-                                <span className="font-medium text-slate-900">{g.name}</span>
-                              </td>
+                              <EllipsisTd
+                                padClass="px-3 py-2.5 align-middle"
+                                maxClass="max-w-[18rem]"
+                                title={g.name}
+                                className="font-medium text-slate-900"
+                              >
+                                {g.name}
+                              </EllipsisTd>
                               <td className="px-3 py-2.5 text-center align-middle tabular-nums">
                                 <button
                                   type="button"

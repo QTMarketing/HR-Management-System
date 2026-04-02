@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useTransition, type ReactNode } from "react";
 
-type View = "today" | "timesheets";
+type View = "today" | "timesheets" | "settings";
 
 type Props = {
   clockId: string;
@@ -12,6 +12,9 @@ type Props = {
   locationName: string;
   todayContent: ReactNode;
   timesheetsContent: ReactNode;
+  settingsContent: ReactNode;
+  /** Show Settings tab (time clock management). */
+  canManage: boolean;
 };
 
 export function TimeClockDetailShell({
@@ -20,20 +23,24 @@ export function TimeClockDetailShell({
   locationName,
   todayContent,
   timesheetsContent,
+  settingsContent,
+  canManage,
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
-  const view: View = searchParams.get("view") === "timesheets" ? "timesheets" : "today";
+  const rawView = searchParams.get("view");
+  const view: View =
+    rawView === "timesheets" ? "timesheets" : rawView === "settings" ? "settings" : "today";
 
   const setView = useCallback(
     (next: View) => {
       startTransition(() => {
         const q = new URLSearchParams(searchParams.toString());
-        if (next === "timesheets") {
-          q.set("view", "timesheets");
-        } else {
+        if (next === "today") {
           q.delete("view");
+        } else {
+          q.set("view", next);
         }
         const suffix = q.toString();
         router.push(suffix ? `/time-clock/${clockId}?${suffix}` : `/time-clock/${clockId}`);
@@ -60,7 +67,7 @@ export function TimeClockDetailShell({
       </div>
 
       <div className="border-b border-slate-200">
-        <nav className="flex gap-6" aria-label="Time clock views">
+        <nav className="flex flex-wrap gap-6" aria-label="Time clock views">
           <button
             type="button"
             disabled={pending}
@@ -85,10 +92,24 @@ export function TimeClockDetailShell({
           >
             Timesheets
           </button>
+          {canManage ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => setView("settings")}
+              className={`border-b-2 pb-3 text-sm font-semibold transition-colors disabled:opacity-50 ${
+                view === "settings"
+                  ? "border-orange-500 text-orange-950"
+                  : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              Settings
+            </button>
+          ) : null}
         </nav>
       </div>
 
-      {view === "today" ? todayContent : timesheetsContent}
+      {view === "today" ? todayContent : view === "timesheets" ? timesheetsContent : settingsContent}
     </div>
   );
 }

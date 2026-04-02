@@ -28,7 +28,7 @@ type EntryRow = {
 };
 
 export default async function WeeklyLaborReportPage() {
-  await requirePermission(PERMISSIONS.DASHBOARD_VIEW);
+  await requirePermission(PERMISSIONS.LABOR_REPORT_VIEW);
 
   const supabase = await createSupabaseServerClient();
 
@@ -95,6 +95,7 @@ export default async function WeeklyLaborReportPage() {
     let entryQ = supabase
       .from("time_entries")
       .select("clock_in_at, clock_out_at, location_id")
+      .is("archived_at", null)
       .gte("clock_in_at", entriesFetchStart.toISOString())
       .lt("clock_in_at", weekEnd.toISOString());
     if (!scopeAll) {

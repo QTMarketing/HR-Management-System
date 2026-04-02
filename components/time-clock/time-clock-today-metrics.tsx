@@ -12,7 +12,7 @@ export function TimeClockTodayMetricsStrip({ metrics }: Props) {
     { label: "Late clock-ins", value: metrics.lateClockIns },
     { label: "Clocked in now", value: metrics.clockedInNow },
     { label: "Total attendance", value: metrics.totalAttendance },
-    { label: "Late clock-outs", value: metrics.lateClockOuts },
+    { label: "Running Late", value: metrics.runningLate },
   ];
 
   return (

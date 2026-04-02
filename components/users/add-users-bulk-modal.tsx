@@ -10,6 +10,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -17,12 +18,15 @@ import {
   useMemo,
   useRef,
   useState,
+  useTransition,
   type FormEvent,
 } from "react";
+import { bulkCreateEmployees } from "@/app/actions/users-bulk";
 import {
   PRIMARY_ORANGE_CTA,
   SECONDARY_ORANGE_PILL,
 } from "@/lib/ui/primary-orange-cta";
+import { normalizeRoleLabel } from "@/lib/rbac/matrix";
 import {
   type DirectoryEmployee,
   bucketForEmployee,
@@ -55,7 +59,7 @@ type OptionalColumnKey =
 const OPTIONAL_COLUMNS: { key: OptionalColumnKey; label: string }[] = [
   { key: "birthday", label: "Birthday" },
   { key: "employmentStart", label: "Employment Start Date" },
-  { key: "directManager", label: "Direct manager" },
+  { key: "directManager", label: "Direct manager (store)" },
   { key: "payRules", label: "Pay rules" },
   { key: "timeOff", label: "Time off" },
   { key: "schedulingRules", label: "Scheduling rules" },
@@ -75,7 +79,23 @@ export type BulkUserDraft = {
   schedulingRules: string;
 };
 
-function emptyRow(): BulkUserDraft {
+/** Same-location Store Manager as in legacy “direct manager” semantics. */
+function computeDefaultDirectManager(
+  employees: DirectoryEmployee[],
+  scopeAll: boolean,
+  assignmentLocationId: string | null,
+): string {
+  if (scopeAll || !assignmentLocationId) return "";
+  const mgrs = employees.filter(
+    (e) =>
+      bucketForEmployee(e) !== "archived" &&
+      normalizeRoleLabel(e.role) === "store_manager" &&
+      e.location_id === assignmentLocationId,
+  );
+  return mgrs.length === 1 ? mgrs[0].id : "";
+}
+
+function emptyRow(directManagerId = ""): BulkUserDraft {
   return {
     id: crypto.randomUUID(),
     firstName: "",
@@ -84,7 +104,7 @@ function emptyRow(): BulkUserDraft {
     phoneNational: "",
     birthday: "",
     employmentStart: "",
-    directManagerId: "",
+    directManagerId,
     payRules: PAY_OPTIONS[0],
     timeOff: TIME_OFF_OPTIONS[0],
     schedulingRules: SCHEDULE_OPTIONS[0],
@@ -121,6 +141,9 @@ type Props = {
   employees: DirectoryEmployee[];
   /** When opening from Admins → Create new user, adjust titles. */
   mode?: "default" | "admin_create";
+  /** Directory scope: store new hires work at — Store Managers here fill “Direct manager”. */
+  assignmentLocationId: string | null;
+  scopeAll: boolean;
 };
 
 export function AddUsersBulkModal({
@@ -128,9 +151,14 @@ export function AddUsersBulkModal({
   onOpenChange,
   employees,
   mode = "default",
+  assignmentLocationId,
+  scopeAll,
 }: Props) {
+  const router = useRouter();
   const titleId = useId();
   const menuRef = useRef<HTMLDivElement>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitPending, startSubmitTransition] = useTransition();
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [visibleOptional, setVisibleOptional] = useState<Record<OptionalColumnKey, boolean>>(() =>
     Object.fromEntries(OPTIONAL_COLUMNS.map((c) => [c.key, true])) as Record<
@@ -138,20 +166,45 @@ export function AddUsersBulkModal({
       boolean
     >,
   );
-  const [rows, setRows] = useState<BulkUserDraft[]>(() => [emptyRow()]);
+  const defaultDirectManagerId = useMemo(
+    () => computeDefaultDirectManager(employees, scopeAll, assignmentLocationId),
+    [employees, scopeAll, assignmentLocationId],
+  );
+
+  const [rows, setRows] = useState<BulkUserDraft[]>(() => [
+    emptyRow(computeDefaultDirectManager(employees, scopeAll, assignmentLocationId)),
+  ]);
   const [touched, setTouched] = useState(false);
 
+  /** Store Managers only — same store as header scope, or all stores with labels when “All locations”. */
   const managerOptions = useMemo(() => {
-    return employees
-      .filter((e) => bucketForEmployee(e) !== "archived")
-      .map((e) => ({
-        id: e.id,
-        label: `${displayFirst(e)} ${displayLast(e)}`.replace(/\s+/g, " ").trim() || e.full_name,
-      }))
+    const active = employees.filter((e) => bucketForEmployee(e) !== "archived");
+    const managers = active.filter((e) => normalizeRoleLabel(e.role) === "store_manager");
+    if (!scopeAll && assignmentLocationId) {
+      return managers
+        .filter((e) => e.location_id === assignmentLocationId)
+        .map((e) => ({
+          id: e.id,
+          label:
+            `${displayFirst(e)} ${displayLast(e)}`.replace(/\s+/g, " ").trim() || e.full_name,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+    }
+    return managers
+      .map((e) => {
+        const name =
+          `${displayFirst(e)} ${displayLast(e)}`.replace(/\s+/g, " ").trim() || e.full_name;
+        const store = e.locationName ? ` · ${e.locationName}` : "";
+        return { id: e.id, label: `${name}${store}` };
+      })
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [employees]);
+  }, [employees, scopeAll, assignmentLocationId]);
 
   const close = useCallback(() => onOpenChange(false), [onOpenChange]);
+
+  useEffect(() => {
+    if (open) setSubmitError(null);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -182,7 +235,7 @@ export function AddUsersBulkModal({
     return () => window.removeEventListener("mousedown", onPointer);
   }, [columnsMenuOpen]);
 
-  const addRow = () => setRows((r) => [...r, emptyRow()]);
+  const addRow = () => setRows((r) => [...r, emptyRow(defaultDirectManagerId)]);
 
   const removeRow = (id: string) => {
     setRows((r) => (r.length <= 1 ? r : r.filter((row) => row.id !== id)));
@@ -207,10 +260,27 @@ export function AddUsersBulkModal({
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     setTouched(true);
+    setSubmitError(null);
     if (completeRows.length === 0) return;
     if (invalidRows.length > 0) return;
-    // Invitations / Supabase insert — wire when backend is ready.
-    onOpenChange(false);
+    startSubmitTransition(async () => {
+      const payload = completeRows.map((row) => ({
+        firstName: row.firstName,
+        lastName: row.lastName,
+        phoneDial: row.phoneDial,
+        phoneNational: row.phoneNational,
+        birthday: row.birthday,
+        employmentStart: row.employmentStart,
+        directManagerId: row.directManagerId,
+      }));
+      const result = await bulkCreateEmployees(payload, assignmentLocationId, scopeAll);
+      if (!result.ok) {
+        setSubmitError(result.error);
+        return;
+      }
+      router.refresh();
+      onOpenChange(false);
+    });
   };
 
   if (!open) return null;
@@ -247,6 +317,21 @@ export function AddUsersBulkModal({
           <p className="px-5 py-6 text-center text-sm text-slate-600 sm:px-8">
             Users login to the mobile and web app using their mobile phone number.
           </p>
+          <p className="mx-5 mb-2 max-w-2xl text-center text-xs text-slate-500 sm:mx-auto sm:px-8">
+            <strong className="font-semibold text-slate-600">Direct manager</strong> is the{" "}
+            <strong className="font-semibold text-slate-600">Store Manager</strong> for the location in the
+            header. New hires should match that store. If there is exactly one Store Manager, they are
+            pre-selected.
+          </p>
+
+          {submitError ? (
+            <p
+              className="mx-5 mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-center text-sm text-red-900 sm:mx-8"
+              role="alert"
+            >
+              {submitError}
+            </p>
+          ) : null}
 
           {touched && (invalidRows.length > 0 || completeRows.length === 0) ? (
             <p className="mx-5 mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-center text-sm text-amber-950 sm:mx-8">
@@ -260,13 +345,13 @@ export function AddUsersBulkModal({
             <table className="w-full min-w-[1100px] border-separate border-spacing-0 text-left text-sm">
               <thead>
                 <tr className="bg-slate-50/95 text-xs font-semibold tracking-wide text-slate-600">
-                  <th className="sticky top-0 z-10 border-b border-slate-200 px-2 py-3 pl-3">
+                  <th className="sticky top-0 z-10 border-b border-slate-200 px-2 py-3 pl-3 whitespace-nowrap">
                     First name<span className="text-orange-600">*</span>
                   </th>
-                  <th className="sticky top-0 z-10 border-b border-slate-200 px-2 py-3">
+                  <th className="sticky top-0 z-10 border-b border-slate-200 px-2 py-3 whitespace-nowrap">
                     Last name<span className="text-orange-600">*</span>
                   </th>
-                  <th className="sticky top-0 z-10 border-b border-slate-200 px-2 py-3">
+                  <th className="sticky top-0 z-10 border-b border-slate-200 px-2 py-3 whitespace-nowrap">
                     Mobile phone<span className="text-orange-600">*</span>
                   </th>
                   {OPTIONAL_COLUMNS.map(
@@ -429,7 +514,13 @@ export function AddUsersBulkModal({
                               })
                             }
                           >
-                            <option value="">Select manager</option>
+                            <option value="">
+                              {managerOptions.length === 0
+                                ? scopeAll
+                                  ? "No Store Managers in directory"
+                                  : "No Store Manager — promote one in Admins"
+                                : "Select manager"}
+                            </option>
                             {managerOptions.map((m) => (
                               <option key={m.id} value={m.id}>
                                 {m.label}
@@ -509,8 +600,12 @@ export function AddUsersBulkModal({
             >
               Cancel
             </button>
-            <button type="submit" className={`${PRIMARY_ORANGE_CTA} px-5 py-2.5 text-sm`}>
-              {mode === "admin_create" ? "Create user" : "Add users"}
+            <button
+              type="submit"
+              disabled={submitPending}
+              className={`${PRIMARY_ORANGE_CTA} px-5 py-2.5 text-sm disabled:opacity-60`}
+            >
+              {submitPending ? "Saving…" : mode === "admin_create" ? "Create user" : "Add users"}
             </button>
           </div>
         </form>

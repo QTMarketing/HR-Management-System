@@ -1,4 +1,5 @@
 import { normalizeRoleLabel } from "@/lib/rbac/matrix";
+import type { AdminAccess } from "@/lib/users/admin-access";
 
 export type DirectoryEmployee = {
   id: string;
@@ -10,12 +11,17 @@ export type DirectoryEmployee = {
   status: string;
   created_at: string;
   location_id: string | null;
+  /** Store Manager / reporting line when set */
+  direct_manager_id: string | null;
+  mobile_phone: string | null;
+  birth_date: string | null;
   locationName: string | null;
   title: string | null;
   employment_start_date: string | null;
   team: string | null;
   department: string | null;
   kiosk_code: string | null;
+  employee_code: string | null;
   last_login: string | null;
   added_by: string | null;
   archived_at: string | null;
@@ -23,6 +29,8 @@ export type DirectoryEmployee = {
   access_level: string | null;
   managed_groups: string | null;
   permissions_label: string | null;
+  /** Store Manager module access; null = all modules. */
+  admin_access: AdminAccess | null;
   admin_tab_enabled: boolean | null;
 };
 
@@ -30,7 +38,8 @@ export type DirectoryTab = "users" | "admins" | "archived";
 
 export function bucketForEmployee(e: DirectoryEmployee): DirectoryTab {
   if (e.status === "archived" || e.status === "inactive") return "archived";
-  if (normalizeRoleLabel(e.role) === "store_manager") return "admins";
+  const key = normalizeRoleLabel(e.role);
+  if (key === "store_manager" || key === "owner") return "admins";
   return "users";
 }
 

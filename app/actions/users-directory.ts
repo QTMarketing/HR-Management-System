@@ -4,6 +4,11 @@ import { revalidatePath } from "next/cache";
 import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { normalizeRoleLabel } from "@/lib/rbac/matrix";
+import {
+  SECURITY_AUDIT_ACTIONS,
+  insertSecurityAudit,
+  resolveActorEmployeeId,
+} from "@/lib/audit/security-audit";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export type ActionResult<T = void> =
@@ -13,15 +18,18 @@ export type ActionResult<T = void> =
 /** Stored `employees.role` value — normalized as store_manager in app RBAC. */
 const STORE_MANAGER_ROLE_LABEL = "Store Manager";
 
-async function gateUsersManage(): Promise<ActionResult> {
+async function gateOrgOwner(): Promise<ActionResult> {
   if (process.env.RBAC_ENABLED !== "true") return { ok: true };
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   const ctx = await getRbacContext(supabase, user);
-  if (!hasPermission(ctx, PERMISSIONS.USERS_MANAGE)) {
-    return { ok: false, error: "You need users.manage permission to change admin roles." };
+  if (!hasPermission(ctx, PERMISSIONS.ORG_OWNER)) {
+    return {
+      ok: false,
+      error: "Only organization owners can promote users to Store Manager.",
+    };
   }
   return { ok: true };
 }
@@ -30,7 +38,7 @@ async function gateUsersManage(): Promise<ActionResult> {
  * Promote an active directory user to Store Manager (Admins tab).
  */
 export async function promoteEmployeeToAdmin(employeeId: string): Promise<ActionResult> {
-  const gated = await gateUsersManage();
+  const gated = await gateOrgOwner();
   if (!gated.ok) return gated;
 
   const id = employeeId?.trim();
@@ -70,6 +78,19 @@ export async function promoteEmployeeToAdmin(employeeId: string): Promise<Action
 
   if (updErr) return { ok: false, error: updErr.message };
 
+  const actorId = await resolveActorEmployeeId(supabase);
+  const prevRole = String((row as { role?: string }).role ?? "");
+  await insertSecurityAudit(supabase, {
+    actorEmployeeId: actorId,
+    action: SECURITY_AUDIT_ACTIONS.EMPLOYEE_PROMOTED_STORE_MANAGER,
+    targetEmployeeId: id,
+    metadata: {
+      previous_role: prevRole,
+      new_role: STORE_MANAGER_ROLE_LABEL,
+    },
+  });
+
   revalidatePath("/users");
+  revalidatePath("/security-audit");
   return { ok: true };
 }

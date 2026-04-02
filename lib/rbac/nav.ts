@@ -17,10 +17,17 @@ export type NavItemWithGroup = NavItem & { group?: NavGroup };
 export const DASHBOARD_NAV: NavItemWithGroup[] = [
   { href: "/", label: "Dashboard", permission: PERMISSIONS.DASHBOARD_VIEW, group: "main" },
   { href: "/users", label: "Users", permission: PERMISSIONS.USERS_VIEW, group: "main" },
+  { href: "/locations", label: "Stores", permission: PERMISSIONS.USERS_VIEW, group: "main" },
+  {
+    href: "/security-audit",
+    label: "Security audit",
+    permission: PERMISSIONS.ORG_OWNER,
+    group: "main",
+  },
   {
     href: "/users/groups",
     label: "Smart groups",
-    permission: PERMISSIONS.USERS_VIEW,
+    permission: PERMISSIONS.USERS_GROUPS_VIEW,
     group: "main",
   },
   {
@@ -34,7 +41,7 @@ export const DASHBOARD_NAV: NavItemWithGroup[] = [
   {
     href: "/reports/labor",
     label: "Labor report",
-    permission: PERMISSIONS.DASHBOARD_VIEW,
+    permission: PERMISSIONS.LABOR_REPORT_VIEW,
     group: "operations",
   },
 ];

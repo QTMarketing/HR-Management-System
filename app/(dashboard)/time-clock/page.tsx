@@ -5,8 +5,13 @@ import {
   type HubClock,
 } from "@/components/time-clock/time-clock-hub";
 import { locationsForSession } from "@/lib/dashboard/locations-for-session";
-import { isAllLocations, resolveSelectedLocationId, type LocationRow } from "@/lib/dashboard/resolve-location";
+import {
+  isAllLocations,
+  resolveSelectedLocationId,
+  type LocationRow,
+} from "@/lib/dashboard/resolve-location";
 import { DEMO_LOCATIONS } from "@/lib/mock/dashboard-demo";
+import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { requirePermission } from "@/lib/rbac/guard";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -15,6 +20,13 @@ export default async function TimeClockHubPage() {
   await requirePermission(PERMISSIONS.TIME_CLOCK_VIEW);
 
   const supabase = await createSupabaseServerClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const rbac = await getRbacContext(supabase, user);
+  const canManageClocks =
+    !rbac.enabled || hasPermission(rbac, PERMISSIONS.TIME_CLOCK_MANAGE);
 
   const { data: locRows } = await supabase
     .from("locations")
@@ -26,6 +38,7 @@ export default async function TimeClockHubPage() {
     rawLocations = DEMO_LOCATIONS;
   }
   const locations = locationsForSession(rawLocations);
+  const locationsForAdd = locations.filter((l) => !isAllLocations(l.id));
 
   const cookieStore = await cookies();
   const locationId = resolveSelectedLocationId(
@@ -83,6 +96,10 @@ export default async function TimeClockHubPage() {
           status: st,
           storeName: fromJoin ?? locNameById.get(lid) ?? null,
           employeesAtStore: byLocation.get(lid) ?? 0,
+          hint:
+            st === "archived"
+              ? "Archived — open for read-only timesheet history."
+              : "Opens Today and Timesheets: punches and approvals for this store.",
         };
         if (st === "archived") archivedClocks.push(item);
         else activeClocks.push(item);
@@ -109,7 +126,15 @@ export default async function TimeClockHubPage() {
     } else {
       for (const row of clockRows ?? []) {
         const st = row.status === "archived" ? "archived" : "active";
-        const item: HubClock = { id: row.id, name: row.name, status: st };
+        const item: HubClock = {
+          id: row.id,
+          name: row.name,
+          status: st,
+          hint:
+            st === "archived"
+              ? "Archived — open for read-only timesheet history."
+              : "Opens Today and Timesheets: punches and approvals for this store.",
+        };
         if (st === "archived") archivedClocks.push(item);
         else activeClocks.push(item);
       }
@@ -130,6 +155,8 @@ export default async function TimeClockHubPage() {
         archivedClocks={archivedClocks}
         employeeCount={employeeCount}
         errorMessage={errorMessage}
+        locationsForAdd={locationsForAdd}
+        canManageClocks={canManageClocks}
       />
     </Suspense>
   );

@@ -1,3 +1,5 @@
+import { EllipsisTd } from "@/components/ui/ellipsis-td";
+
 import type { StaffUpdateRow } from "./recent-staff-updates.types";
 
 const statusStyles = {
@@ -55,10 +57,10 @@ export function RecentStaffUpdates({ rows, errorMessage, emptyHint }: Props) {
           <table className="w-full min-w-[480px] text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                <th className="py-3 pl-5 pr-4">Employee</th>
-                <th className="py-3 pr-4">Update</th>
-                <th className="py-3 pr-4">Status</th>
-                <th className="py-3 pr-5">Time</th>
+                <th className="whitespace-nowrap py-3 pl-5 pr-4">Employee</th>
+                <th className="whitespace-nowrap py-3 pr-4">Update</th>
+                <th className="whitespace-nowrap py-3 pr-4">Status</th>
+                <th className="whitespace-nowrap py-3 pr-5">Time</th>
               </tr>
             </thead>
             <tbody className="text-slate-700">
@@ -66,11 +68,24 @@ export function RecentStaffUpdates({ rows, errorMessage, emptyHint }: Props) {
                 const st = statusStyles[row.status];
                 return (
                   <tr key={row.id} className="border-b border-slate-100 last:border-b-0">
-                    <td className="py-3 pl-5 pr-4 font-medium text-slate-900">{row.employeeLabel}</td>
-                    <td className="py-3 pr-4">{row.updateText}</td>
+                    <EllipsisTd
+                      padClass="py-3 pl-5 pr-4 align-middle"
+                      maxClass="max-w-[14rem]"
+                      title={row.employeeLabel}
+                      className="font-medium text-slate-900"
+                    >
+                      {row.employeeLabel}
+                    </EllipsisTd>
+                    <EllipsisTd
+                      padClass="py-3 pr-4 align-middle"
+                      maxClass="max-w-[28rem]"
+                      title={row.updateText}
+                    >
+                      {row.updateText}
+                    </EllipsisTd>
                     <td className="py-3 pr-4">
                       <span
-                        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${st.pill}`}
+                        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium leading-snug ${st.pill}`}
                       >
                         <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />
                         {st.label}
