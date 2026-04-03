@@ -148,11 +148,13 @@ export default async function EmployeeProfilePage({
     }));
 
   const createdAt = rec.created_at ?? null;
+  /** Request-time instant (avoid Date.now() in render — react-hooks/purity). */
+  const asOfMs = new Date().getTime();
   let daysInSystem: number | null = null;
   if (createdAt) {
     const t = new Date(createdAt).getTime();
     if (!Number.isNaN(t)) {
-      daysInSystem = Math.max(0, Math.floor((Date.now() - t) / 86_400_000));
+      daysInSystem = Math.max(0, Math.floor((asOfMs - t) / 86_400_000));
     }
   }
 

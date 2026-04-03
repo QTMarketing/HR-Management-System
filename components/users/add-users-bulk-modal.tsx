@@ -203,10 +203,6 @@ export function AddUsersBulkModal({
   const close = useCallback(() => onOpenChange(false), [onOpenChange]);
 
   useEffect(() => {
-    if (open) setSubmitError(null);
-  }, [open]);
-
-  useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";

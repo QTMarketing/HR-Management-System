@@ -8,6 +8,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   useTransition,
 } from "react";
 import { createPortal } from "react-dom";
@@ -50,22 +51,26 @@ export function AdminPermissionsPopover({ employeeId, access, displayLabel, canE
   const [panelPos, setPanelPos] = useState<{ top: number; left: number; maxHeight: number } | null>(
     null,
   );
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const scheduleMainCb = useRef<HTMLInputElement>(null);
   const tcMainCb = useRef<HTMLInputElement>(null);
 
-  useEffect(() => setMounted(true), []);
-
   /** Fresh draft whenever the menu opens or server data changes while open. */
   useEffect(() => {
     if (!open) return;
-    setDraft(access == null ? defaultAdminAccess() : normalizeAdminAccess(access));
-    setFlyout(null);
-    setSearch("");
-    setError(null);
+    queueMicrotask(() => {
+      setDraft(access == null ? defaultAdminAccess() : normalizeAdminAccess(access));
+      setFlyout(null);
+      setSearch("");
+      setError(null);
+    });
   }, [open, access, employeeId]);
 
   const updatePanelPosition = useCallback(() => {
@@ -84,7 +89,7 @@ export function AdminPermissionsPopover({ employeeId, access, displayLabel, canE
 
   useLayoutEffect(() => {
     if (!open || !canEdit) {
-      setPanelPos(null);
+      queueMicrotask(() => setPanelPos(null));
       return;
     }
     updatePanelPosition();

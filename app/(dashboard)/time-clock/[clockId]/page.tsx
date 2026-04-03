@@ -264,6 +264,7 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
         }
         settingsContent={
           <TimeClockSettingsForm
+            key={`${clockId}-${defaultKind}-${JSON.stringify(defaultConfig)}`}
             timeClockId={clockId}
             initialKind={defaultKind}
             initialConfig={defaultConfig}

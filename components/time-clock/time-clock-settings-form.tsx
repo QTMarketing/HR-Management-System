@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { saveTimeClockTimesheetPeriod } from "@/app/actions/time-clock-period";
 import type { TimesheetPeriodConfig, TimesheetPeriodKind } from "@/lib/time-clock/timesheet-period";
 import { PRIMARY_ORANGE_CTA } from "@/lib/ui/primary-orange-cta";
@@ -27,11 +27,6 @@ export function TimeClockSettingsForm({
   );
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    setKind(initialKind);
-    setSplitDay(String(initialConfig.split_after_day ?? 15));
-  }, [initialKind, initialConfig.split_after_day]);
 
   function buildConfig(): TimesheetPeriodConfig | null {
     if (kind !== "semi_monthly" && kind !== "custom") return null;

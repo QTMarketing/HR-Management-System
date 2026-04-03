@@ -485,6 +485,7 @@ export function TimeSheetsPanel({
       ) : null}
 
       <EmployeeTimecardModal
+        key={timecardAnchorRow?.employeeId ?? "closed"}
         open={timecardAnchorRow != null}
         onClose={() => setTimecardAnchorRow(null)}
         rows={timecardRows}

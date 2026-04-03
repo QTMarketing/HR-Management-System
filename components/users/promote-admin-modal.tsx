@@ -34,8 +34,10 @@ export function PromoteAdminModal({ open, onOpenChange, candidates }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    setError(null);
-    setSelectedId("");
+    queueMicrotask(() => {
+      setError(null);
+      setSelectedId("");
+    });
   }, [open]);
 
   useEffect(() => {

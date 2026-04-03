@@ -143,7 +143,6 @@ export function shiftsForCell(
   dayIndex: number,
 ): ShiftForBoard[] {
   const { start, end } = dayBounds(weekMonday, dayIndex);
-  const wantNoJob = jobRowKey === JOB_ROW_NONE;
   return shifts.filter((s) => {
     if (s.groupName !== groupName) return false;
     const sKey = s.jobName == null ? JOB_ROW_NONE : s.jobName;

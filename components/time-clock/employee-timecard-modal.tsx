@@ -139,12 +139,6 @@ export function EmployeeTimecardModal({ open, onClose, rows, canEditJob = false 
     {},
   );
 
-  useEffect(() => {
-    if (!open) return;
-    // Reset overrides whenever the modal opens on a different employee.
-    setJobOverrides({});
-  }, [open, rows]);
-
   if (!open || !meta) return null;
 
   const { first, byDay, totalPaid, workedDays, weekBlocks, totalVariance, periodLabel } = meta;

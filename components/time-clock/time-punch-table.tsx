@@ -160,6 +160,7 @@ export function TimePunchTable({
         </div>
       )}
       <EmployeeTimecardModal
+        key={timecardAnchorRow?.employeeId ?? "closed"}
         open={timecardAnchorRow != null}
         onClose={() => setTimecardAnchorRow(null)}
         rows={timecardRows}
