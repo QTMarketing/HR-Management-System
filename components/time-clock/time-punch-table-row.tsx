@@ -17,6 +17,21 @@ function jobPillClass(tone: EnrichedPunchRow["jobTone"]): string {
   }
 }
 
+function reviewBadgeClass(status: EnrichedPunchRow["reviewStatus"]): string {
+  switch (status) {
+    case "open":
+      return "bg-amber-50 text-amber-900 ring-amber-200/80";
+    case "pending":
+      return "bg-sky-50 text-sky-900 ring-sky-200/80";
+    case "approved":
+      return "bg-emerald-50 text-emerald-900 ring-emerald-200/80";
+    case "archived":
+      return "bg-slate-200 text-slate-800 ring-slate-300/80";
+    default:
+      return "bg-slate-100 text-slate-700 ring-slate-200/80";
+  }
+}
+
 type Props = {
   row: EnrichedPunchRow;
   /** 0-based index in the filtered list (displayed as 1-based #). */
@@ -26,6 +41,9 @@ type Props = {
   onClockOut?: (entryId: string) => void;
   showArchiveActions?: boolean;
   onArchive?: (entryId: string) => void;
+  showReviewActions?: boolean;
+  onApprove?: (entryId: string) => void;
+  onUnapprove?: (entryId: string) => void;
   pending?: boolean;
   /** Opens employee timecard (full row is clickable except actions). */
   onRowClick?: () => void;
@@ -43,6 +61,9 @@ export function TimePunchTableRow({
   onClockOut,
   showArchiveActions = false,
   onArchive,
+  showReviewActions = false,
+  onApprove,
+  onUnapprove,
   pending = false,
   onRowClick,
 }: Props) {
@@ -96,15 +117,33 @@ export function TimePunchTableRow({
       </td>
       <td className="max-w-[11rem] px-3 py-2.5 align-middle">
         <span
-          className={`inline-flex max-w-full min-w-0 items-center justify-center truncate rounded px-2.5 py-1 text-xs font-medium leading-snug ring-1 ${jobPillClass(row.jobTone)}`}
-          title={row.employeeRole}
+          className={`inline-flex max-w-full min-w-0 flex-col items-start justify-center gap-0.5 truncate rounded px-2.5 py-1 text-xs font-medium leading-snug ring-1 ${jobPillClass(row.jobTone)}`}
+          title={
+            row.jobCodeAtPunch
+              ? `${row.employeeRole} · Labor code: ${row.jobCodeAtPunch}`
+              : row.employeeRole
+          }
         >
-          {row.employeeRole}
+          <span className="truncate">{row.employeeRole}</span>
+          {row.jobCodeAtPunch ? (
+            <span className="max-w-full truncate text-[10px] font-normal opacity-90">
+              {row.jobCodeAtPunch}
+            </span>
+          ) : null}
         </span>
       </td>
       <td className="max-w-[200px] px-3 py-2.5 align-middle">
         <div className="flex min-w-0 flex-nowrap items-center gap-2">
-          <span className="min-w-0 truncate text-slate-700" title={row.clockInDisplay}>
+          <span
+            className="min-w-0 truncate text-slate-700"
+            title={[
+              row.clockInDisplay,
+              row.punchSourceLabel ? `Source: ${row.punchSourceLabel}` : null,
+              row.wasEdited ? "Times edited by manager" : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          >
             {row.clockInDisplay}
           </span>
           {row.lateInBadge ? (
@@ -126,31 +165,29 @@ export function TimePunchTableRow({
           ) : null}
         </div>
       </td>
+      <td className="max-w-[10rem] px-3 py-2.5 align-middle text-xs text-slate-600">
+        <span className="line-clamp-2" title={row.breaksSummaryLabel ?? undefined}>
+          {row.breaksSummaryLabel ?? <span className="text-slate-400">—</span>}
+        </span>
+      </td>
       <td className="whitespace-nowrap px-3 py-2.5 font-mono text-sm text-slate-800">
         {row.dailyTotalLabel}
       </td>
       <td className="max-w-[8rem] px-3 py-2.5 align-middle">
-        <span className="block truncate text-slate-500" title={row.ptoLabel}>
+        <span
+          className="block truncate text-slate-500"
+          title={`${row.ptoLabel}. Today tab: time off in the same Mon–Sun week as clock-in. Timesheets: time off on that punch’s calendar day.`}
+        >
           {row.ptoLabel}
         </span>
       </td>
       <td className="px-3 py-2.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {archived ? (
-            <span className="inline-flex items-center justify-center rounded bg-slate-200 px-2.5 py-1 text-xs font-medium leading-snug text-slate-800">
-              Archived
-            </span>
-          ) : null}
-          <span
-            className={
-              row.status === "open"
-                ? "inline-flex items-center justify-center rounded bg-amber-50 px-2.5 py-1 text-xs font-medium leading-snug text-amber-900"
-                : "inline-flex items-center justify-center rounded bg-slate-100 px-2.5 py-1 text-xs font-medium leading-snug text-slate-700"
-            }
-          >
-            {row.status}
-          </span>
-        </div>
+        <span
+          className={`inline-flex items-center justify-center rounded px-2.5 py-1 text-xs font-medium leading-snug ring-1 ${reviewBadgeClass(row.reviewStatus)}`}
+          title={row.reviewLabel}
+        >
+          {row.reviewLabel}
+        </span>
       </td>
       {showClockOutActions ? (
         <td className="px-3 py-2.5 text-right">
@@ -186,6 +223,39 @@ export function TimePunchTableRow({
               Archive
             </button>
           ) : null}
+        </td>
+      ) : null}
+      {showReviewActions ? (
+        <td className="px-3 py-2.5 text-right">
+          {archived || row.reviewStatus === "open" ? (
+            <span className="text-xs text-slate-400">—</span>
+          ) : row.reviewStatus === "pending" && onApprove ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onApprove(row.id);
+              }}
+              disabled={pending}
+              className="text-sm font-semibold text-emerald-700 hover:text-emerald-800 disabled:opacity-50"
+            >
+              Approve
+            </button>
+          ) : row.reviewStatus === "approved" && onUnapprove ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onUnapprove(row.id);
+              }}
+              disabled={pending}
+              className="text-sm font-medium text-slate-600 underline decoration-slate-300 underline-offset-2 hover:text-slate-900 disabled:opacity-50"
+            >
+              Unapprove
+            </button>
+          ) : (
+            <span className="text-xs text-slate-400">—</span>
+          )}
         </td>
       ) : null}
     </tr>

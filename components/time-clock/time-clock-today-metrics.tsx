@@ -7,12 +7,12 @@ type Props = {
 };
 
 export function TimeClockTodayMetricsStrip({ metrics }: Props) {
-  const items = [
-    { label: "Scheduled", value: metrics.scheduledToday },
-    { label: "Late clock-ins", value: metrics.lateClockIns },
-    { label: "Clocked in now", value: metrics.clockedInNow },
-    { label: "Total attendance", value: metrics.totalAttendance },
-    { label: "Running Late", value: metrics.runningLate },
+  const items: { label: string; value: number; valueClass: string }[] = [
+    { label: "Scheduled", value: metrics.scheduledToday, valueClass: "text-slate-900" },
+    { label: "Late clock-ins", value: metrics.lateClockIns, valueClass: "text-red-600" },
+    { label: "Clocked in now", value: metrics.clockedInNow, valueClass: "text-emerald-600" },
+    { label: "Total attendance", value: metrics.totalAttendance, valueClass: "text-slate-900" },
+    { label: "Running Late", value: metrics.runningLate, valueClass: "text-amber-600" },
   ];
 
   return (
@@ -22,7 +22,7 @@ export function TimeClockTodayMetricsStrip({ metrics }: Props) {
           key={item.label}
           className="rounded-xl border border-slate-200/80 bg-white px-4 py-3 shadow-sm"
         >
-          <p className="text-2xl font-semibold tabular-nums text-slate-900">{item.value}</p>
+          <p className={`text-2xl font-semibold tabular-nums ${item.valueClass}`}>{item.value}</p>
           <p className="mt-1 text-xs font-medium text-slate-500">{item.label}</p>
         </div>
       ))}

@@ -1,15 +1,19 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { EmployeeTimecardModal } from "@/components/time-clock/employee-timecard-modal";
+import type { StoreEmployeeOption } from "@/components/time-clock/time-off-request-sidebar";
 import { TimePunchTableRow } from "@/components/time-clock/time-punch-table-row";
 import {
   matchesPunchTableSearch,
   PUNCH_ACTIONS_COLUMN,
   PUNCH_ARCHIVE_ACTIONS_COLUMN,
+  PUNCH_REVIEW_ACTIONS_COLUMN,
   PUNCH_TABLE_COLUMNS,
   PUNCH_TABLE_MIN_WIDTH_PX,
 } from "@/lib/time-clock/punch-table-columns";
+import type { TimeOffRecordForUi } from "@/lib/time-clock/time-off-display";
 import type { EnrichedPunchRow } from "@/lib/time-clock/types";
 
 type Props = {
@@ -36,6 +40,16 @@ type Props = {
    * (e.g. last-30-days rows); otherwise uses `rows` only.
    */
   employeeTimecardPool?: EnrichedPunchRow[];
+  /** Time off rows for PTO column + timecard summary (optional). */
+  timeOffRecords?: TimeOffRecordForUi[];
+  /** Manager approval (closed punches). */
+  showReviewActions?: boolean;
+  onApprove?: (entryId: string) => void;
+  onUnapprove?: (entryId: string) => void;
+  /** Active employees at this clock’s store — powers “Add time off” roster in the timecard modal. */
+  storeEmployees?: StoreEmployeeOption[];
+  /** Required for manager “Adjust punch times” in the timecard. */
+  locationId?: string;
 };
 
 export function TimePunchTable({
@@ -53,7 +67,14 @@ export function TimePunchTable({
   toolbarDateLabel,
   toolbarHint = "Today",
   employeeTimecardPool,
+  timeOffRecords = [],
+  showReviewActions = false,
+  onApprove,
+  onUnapprove,
+  storeEmployees,
+  locationId: locationIdProp,
 }: Props) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [timecardAnchorRow, setTimecardAnchorRow] = useState<EnrichedPunchRow | null>(null);
 
@@ -138,6 +159,11 @@ export function TimePunchTable({
                     {PUNCH_ARCHIVE_ACTIONS_COLUMN.header}
                   </th>
                 ) : null}
+                {showReviewActions ? (
+                  <th className={PUNCH_REVIEW_ACTIONS_COLUMN.headerClassName}>
+                    {PUNCH_REVIEW_ACTIONS_COLUMN.header}
+                  </th>
+                ) : null}
               </tr>
             </thead>
             <tbody className="text-slate-700">
@@ -151,6 +177,9 @@ export function TimePunchTable({
                   onClockOut={onClockOut}
                   showArchiveActions={Boolean(showArchiveActions)}
                   onArchive={onArchive}
+                  showReviewActions={Boolean(showReviewActions)}
+                  onApprove={onApprove}
+                  onUnapprove={onUnapprove}
                   pending={pending}
                   onRowClick={() => setTimecardAnchorRow(row)}
                 />
@@ -165,6 +194,15 @@ export function TimePunchTable({
         onClose={() => setTimecardAnchorRow(null)}
         rows={timecardRows}
         canEditJob={canManage}
+        canApprovePunches={Boolean(showReviewActions && canManage)}
+        onApproveEntry={onApprove}
+        onUnapproveEntry={onUnapprove}
+        approvalPending={pending}
+        canManageTimeEntries={Boolean(canManage)}
+        storeEmployees={storeEmployees}
+        locationId={locationIdProp}
+        timeOffRecords={timeOffRecords}
+        onPunchAdjusted={() => router.refresh()}
       />
     </div>
   );

@@ -207,3 +207,46 @@ export function parsePeriodKind(raw: string | undefined | null): TimesheetPeriod
   }
   return null;
 }
+
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Build period bounds from URL `range_from` / `range_to` (YYYY-MM-DD, local calendar dates).
+ * `dateTo` is inclusive (last day shown); storage uses exclusive end at midnight after last day.
+ */
+export function periodBoundsFromDateStrings(dateFrom: string, dateTo: string): PeriodBounds | null {
+  if (!YMD_RE.test(dateFrom) || !YMD_RE.test(dateTo)) return null;
+  const [y1, m1, d1] = dateFrom.split("-").map(Number);
+  const [y2, m2, d2] = dateTo.split("-").map(Number);
+  const start = new Date(y1, m1 - 1, d1, 0, 0, 0, 0);
+  const lastInclusive = new Date(y2, m2 - 1, d2, 0, 0, 0, 0);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(lastInclusive.getTime())) return null;
+  if (lastInclusive < start) return null;
+  const endExclusive = new Date(lastInclusive);
+  endExclusive.setDate(endExclusive.getDate() + 1);
+  return { start, endExclusive };
+}
+
+/** Shift a custom day range by the same length (prev/next). */
+export function shiftCustomRangeYmd(
+  fromYmd: string,
+  toYmd: string,
+  direction: -1 | 1,
+): { from: string; to: string } | null {
+  const b = periodBoundsFromDateStrings(fromYmd, toYmd);
+  if (!b) return null;
+  const nDays = Math.round((b.endExclusive.getTime() - b.start.getTime()) / 86400000);
+  const newStart = new Date(b.start);
+  newStart.setDate(newStart.getDate() + direction * nDays);
+  const newEndEx = new Date(b.endExclusive);
+  newEndEx.setDate(newEndEx.getDate() + direction * nDays);
+  const lastIn = new Date(newEndEx);
+  lastIn.setDate(lastIn.getDate() - 1);
+  const y = newStart.getFullYear();
+  const m = String(newStart.getMonth() + 1).padStart(2, "0");
+  const d = String(newStart.getDate()).padStart(2, "0");
+  const y2 = lastIn.getFullYear();
+  const m2 = String(lastIn.getMonth() + 1).padStart(2, "0");
+  const d2 = String(lastIn.getDate()).padStart(2, "0");
+  return { from: `${y}-${m}-${d}`, to: `${y2}-${m2}-${d2}` };
+}

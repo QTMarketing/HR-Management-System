@@ -7,6 +7,10 @@ export const SECURITY_AUDIT_ACTIONS = {
   ORGANIZATION_OWNER_CHANGED: "organization_owner_changed",
   EMPLOYEE_ARCHIVED: "employee_archived",
   TIME_ENTRY_ARCHIVED: "time_entry_archived",
+  TIME_ENTRY_APPROVED: "time_entry_approved",
+  TIME_ENTRY_UNAPPROVED: "time_entry_unapproved",
+  TIME_ENTRY_ADJUSTED: "time_entry_adjusted",
+  TIME_OFF_RECORDED: "time_off_recorded",
 } as const;
 
 export type SecurityAuditAction =

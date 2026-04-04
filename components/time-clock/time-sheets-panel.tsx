@@ -5,21 +5,31 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Download,
   Filter,
   Plus,
   Search,
 } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
+import { approveTimeEntry, unapproveTimeEntry } from "@/app/actions/time-entry-approval";
 import { seedSampleTimesheetPunches } from "@/app/actions/seed-time-entries";
 import { EmployeeTimecardModal } from "@/components/time-clock/employee-timecard-modal";
+import type { StoreEmployeeOption } from "@/components/time-clock/time-off-request-sidebar";
 import { formatHoursMinutes, punchMinutes } from "@/lib/time-clock/timecard-rollup";
+import {
+  buildTimesheetPunchesCsv,
+  downloadTimesheetCsv,
+} from "@/lib/time-clock/export-timesheet-csv";
+import { TimesheetRangePicker } from "@/components/time-clock/timesheet-range-picker";
 import {
   enumerateDaysInPeriod,
   formatPeriodRangeLabel,
+  shiftCustomRangeYmd,
   shiftPeriodAnchor,
   type TimesheetPeriodConfig,
   type TimesheetPeriodKind,
 } from "@/lib/time-clock/timesheet-period";
+import type { TimeOffRecordForUi } from "@/lib/time-clock/time-off-display";
 import type { EnrichedPunchRow } from "@/lib/time-clock/types";
 
 type Props = {
@@ -27,6 +37,7 @@ type Props = {
   rows: EnrichedPunchRow[];
   /** Wider pool for employee timecard modal (e.g. last 90 days). */
   modalPoolRows: EnrichedPunchRow[];
+  timeOffRecords?: TimeOffRecordForUi[];
   locationId: string;
   timeClockId: string;
   canArchive: boolean;
@@ -34,7 +45,11 @@ type Props = {
   periodConfig: TimesheetPeriodConfig;
   periodStartIso: string;
   periodEndExclusiveIso: string;
+  /** When set, period comes from custom URL range (not Week/Month math). */
+  rangeFromYmd?: string | null;
+  rangeToYmd?: string | null;
   clockDefaultKind: TimesheetPeriodKind;
+  storeEmployees: StoreEmployeeOption[];
 };
 
 function dayKeyLocal(d: Date): string {
@@ -59,6 +74,7 @@ function periodKindLabel(k: TimesheetPeriodKind): string {
 export function TimeSheetsPanel({
   rows,
   modalPoolRows,
+  timeOffRecords = [],
   locationId,
   timeClockId,
   canArchive,
@@ -66,17 +82,30 @@ export function TimeSheetsPanel({
   periodConfig,
   periodStartIso,
   periodEndExclusiveIso,
+  rangeFromYmd = null,
+  rangeToYmd = null,
   clockDefaultKind,
+  storeEmployees,
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [, startTransition] = useTransition();
+  const [actionPending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
   const [seedPending, setSeedPending] = useState(false);
   const [query, setQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [timecardAnchorRow, setTimecardAnchorRow] = useState<EnrichedPunchRow | null>(null);
+  const [approvalErr, setApprovalErr] = useState<string | null>(null);
+
+  const filteredRows = useMemo(() => {
+    if (statusFilter === "all") return rows;
+    return rows.filter((r) => {
+      if (statusFilter === "approved") return r.reviewStatus === "approved";
+      if (statusFilter === "pending") return r.reviewStatus === "pending";
+      return true;
+    });
+  }, [rows, statusFilter]);
 
   const bounds = useMemo(
     () => ({
@@ -90,18 +119,74 @@ export function TimeSheetsPanel({
   const dayKeys = useMemo(() => days.map((d) => dayKeyLocal(d)), [days]);
   const rangeLabel = useMemo(() => formatPeriodRangeLabel(bounds), [bounds]);
 
+  const periodEndInclusive = useMemo(() => {
+    const ex = new Date(periodEndExclusiveIso);
+    const d = new Date(ex);
+    d.setDate(d.getDate() - 1);
+    return d;
+  }, [periodEndExclusiveIso]);
+
+  const hasCustomRange = Boolean(rangeFromYmd && rangeToYmd);
+
   const timecardRows = useMemo(() => {
     if (!timecardAnchorRow) return [];
     const fromPool = modalPoolRows.filter((r) => r.employeeId === timecardAnchorRow.employeeId);
     return fromPool.length > 0 ? fromPool : [timecardAnchorRow];
   }, [modalPoolRows, timecardAnchorRow]);
 
-  function pushTimesheetsQuery(updates: { period?: TimesheetPeriodKind; anchor?: Date }) {
+  function onApproveEntry(entryId: string) {
+    setApprovalErr(null);
+    startTransition(async () => {
+      const r = await approveTimeEntry(entryId, locationId);
+      if (!r.ok) {
+        setApprovalErr(r.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  function onUnapproveEntry(entryId: string) {
+    setApprovalErr(null);
+    startTransition(async () => {
+      const r = await unapproveTimeEntry(entryId, locationId);
+      if (!r.ok) {
+        setApprovalErr(r.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  function pushTimesheetsQuery(updates: {
+    period?: TimesheetPeriodKind;
+    anchor?: Date;
+    rangeFrom?: string | null;
+    rangeTo?: string | null;
+    clearCustomRange?: boolean;
+  }) {
     const q = new URLSearchParams(searchParams.toString());
     q.set("view", "timesheets");
     q.set("period", updates.period ?? periodKind);
-    if (updates.anchor) q.set("anchor", updates.anchor.toISOString());
+    if (updates.clearCustomRange) {
+      q.delete("range_from");
+      q.delete("range_to");
+    }
+    if (updates.rangeFrom !== undefined) {
+      if (updates.rangeFrom) q.set("range_from", updates.rangeFrom);
+      else q.delete("range_from");
+    }
+    if (updates.rangeTo !== undefined) {
+      if (updates.rangeTo) q.set("range_to", updates.rangeTo);
+      else q.delete("range_to");
+    }
+    if (updates.rangeFrom && updates.rangeTo) {
+      q.delete("anchor");
+    } else if (updates.anchor) {
+      q.set("anchor", updates.anchor.toISOString());
+    }
     router.push(`/time-clock/${timeClockId}?${q.toString()}`);
+    router.refresh();
   }
 
   const byEmployee = useMemo(() => {
@@ -109,7 +194,7 @@ export function TimeSheetsPanel({
       string,
       { employeeId: string; name: string; role: string; rows: EnrichedPunchRow[] }
     >();
-    for (const r of rows) {
+    for (const r of filteredRows) {
       const key = r.employeeId;
       if (!key) continue;
       if (!map.has(key)) {
@@ -128,7 +213,7 @@ export function TimeSheetsPanel({
     }));
     list.sort((a, b) => a.name.localeCompare(b.name));
     return list;
-  }, [rows]);
+  }, [filteredRows]);
 
   const filteredEmployees = useMemo(() => {
     let list = byEmployee;
@@ -138,11 +223,20 @@ export function TimeSheetsPanel({
         (e) => e.name.toLowerCase().includes(q) || e.role.toLowerCase().includes(q),
       );
     }
-    if (statusFilter !== "all") {
-      list = list;
-    }
     return list;
-  }, [byEmployee, query, statusFilter]);
+  }, [byEmployee, query]);
+
+  const rowsForExport = useMemo(
+    () => filteredEmployees.flatMap((e) => e.rows),
+    [filteredEmployees],
+  );
+
+  function onExportCsv() {
+    if (rowsForExport.length === 0) return;
+    const csv = buildTimesheetPunchesCsv(rowsForExport, { periodLabel: rangeLabel });
+    const safe = rangeLabel.replace(/[^\w\d\-]+/g, "_").slice(0, 48) || "period";
+    downloadTimesheetCsv(csv, `timesheet-${safe}.csv`);
+  }
 
   const minutesForEmployeeByDay = useMemo(() => {
     const map = new Map<string, number[]>();
@@ -171,6 +265,11 @@ export function TimeSheetsPanel({
       {err ? (
         <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
           {err}
+        </p>
+      ) : null}
+      {approvalErr ? (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
+          {approvalErr}
         </p>
       ) : null}
 
@@ -216,7 +315,11 @@ export function TimeSheetsPanel({
                   value={periodKind}
                   onChange={(e) => {
                     const next = e.target.value as TimesheetPeriodKind;
-                    pushTimesheetsQuery({ period: next, anchor: new Date() });
+                    pushTimesheetsQuery({
+                      period: next,
+                      anchor: new Date(),
+                      clearCustomRange: true,
+                    });
                   }}
                   className="h-10 w-full cursor-pointer appearance-none rounded border border-slate-200 bg-white py-2 pl-4 pr-10 text-sm font-medium text-slate-800 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-400/25"
                   aria-label="Period type"
@@ -232,13 +335,20 @@ export function TimeSheetsPanel({
                 />
               </div>
 
-              <div className="inline-flex min-w-0 items-center gap-0 rounded border border-slate-200 bg-white pl-1 pr-1 shadow-sm">
+              <div className="inline-flex min-w-0 flex-wrap items-center gap-1 rounded border border-slate-200 bg-white pl-1 pr-1 shadow-sm">
                 <button
                   type="button"
                   onClick={() => {
+                    if (rangeFromYmd && rangeToYmd) {
+                      const n = shiftCustomRangeYmd(rangeFromYmd, rangeToYmd, -1);
+                      if (n) {
+                        pushTimesheetsQuery({ rangeFrom: n.from, rangeTo: n.to });
+                      }
+                      return;
+                    }
                     const start = new Date(periodStartIso);
                     const newStart = shiftPeriodAnchor(start, periodKind, periodConfig, -1);
-                    pushTimesheetsQuery({ anchor: newStart });
+                    pushTimesheetsQuery({ anchor: newStart, clearCustomRange: true });
                   }}
                   className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded text-slate-600 hover:bg-slate-100"
                   aria-label="Previous period"
@@ -247,24 +357,48 @@ export function TimeSheetsPanel({
                 </button>
                 <button
                   type="button"
-                  onClick={() => pushTimesheetsQuery({ anchor: new Date() })}
-                  className="min-w-[8.5rem] px-2 py-2 text-center text-sm font-semibold tabular-nums text-slate-900 sm:min-w-[10rem]"
-                  title="Jump to period containing today"
+                  onClick={() =>
+                    pushTimesheetsQuery({ anchor: new Date(), clearCustomRange: true })
+                  }
+                  className="min-w-[8.5rem] cursor-pointer rounded-md px-2 py-2 text-center text-sm font-semibold tabular-nums text-slate-900 transition-colors hover:bg-slate-100 active:bg-slate-200 sm:min-w-[10rem]"
+                  title="Jump to the period that contains today (clears a custom date range). If you already see this week, the grid may not change."
                 >
                   {rangeLabel}
                 </button>
                 <button
                   type="button"
                   onClick={() => {
+                    if (rangeFromYmd && rangeToYmd) {
+                      const n = shiftCustomRangeYmd(rangeFromYmd, rangeToYmd, 1);
+                      if (n) {
+                        pushTimesheetsQuery({ rangeFrom: n.from, rangeTo: n.to });
+                      }
+                      return;
+                    }
                     const start = new Date(periodStartIso);
                     const newStart = shiftPeriodAnchor(start, periodKind, periodConfig, 1);
-                    pushTimesheetsQuery({ anchor: newStart });
+                    pushTimesheetsQuery({ anchor: newStart, clearCustomRange: true });
                   }}
                   className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded text-slate-600 hover:bg-slate-100"
                   aria-label="Next period"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>
+                <div className="border-l border-slate-200 pl-2">
+                  <TimesheetRangePicker
+                    key={`${periodStartIso}-${periodEndExclusiveIso}`}
+                    rangeLabel={rangeLabel}
+                    periodStart={new Date(periodStartIso)}
+                    periodEndInclusive={periodEndInclusive}
+                    hasCustomRange={hasCustomRange}
+                    onApplyCustomRange={(fromYmd, toYmd) =>
+                      pushTimesheetsQuery({ rangeFrom: fromYmd, rangeTo: toYmd })
+                    }
+                    onClearCustomRange={() =>
+                      pushTimesheetsQuery({ anchor: new Date(), clearCustomRange: true })
+                    }
+                  />
+                </div>
               </div>
 
               <div className="relative min-w-[11rem] shrink-0">
@@ -274,19 +408,26 @@ export function TimeSheetsPanel({
                   className="h-10 w-full cursor-pointer appearance-none rounded border border-slate-200 bg-white py-2 pl-4 pr-10 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-400/25"
                   aria-label="Status filter"
                 >
-                  <option value="all">Status filter</option>
-                  <option value="approved" disabled>
-                    Approved (soon)
-                  </option>
-                  <option value="pending" disabled>
-                    Pending (soon)
-                  </option>
+                  <option value="all">All statuses</option>
+                  <option value="approved">Approved</option>
+                  <option value="pending">Pending review</option>
                 </select>
                 <ChevronDown
                   className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
                   aria-hidden
                 />
               </div>
+
+              <button
+                type="button"
+                disabled={rowsForExport.length === 0}
+                onClick={onExportCsv}
+                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Download punches for the visible period as CSV"
+              >
+                <Download className="h-4 w-4 shrink-0" aria-hidden />
+                Export CSV
+              </button>
 
               {canArchive ? (
                 <button
@@ -490,6 +631,15 @@ export function TimeSheetsPanel({
         onClose={() => setTimecardAnchorRow(null)}
         rows={timecardRows}
         canEditJob={canArchive}
+        canApprovePunches={canArchive}
+        onApproveEntry={canArchive ? onApproveEntry : undefined}
+        onUnapproveEntry={canArchive ? onUnapproveEntry : undefined}
+        approvalPending={actionPending}
+        canManageTimeEntries={canArchive}
+        storeEmployees={storeEmployees}
+        locationId={locationId}
+        timeOffRecords={timeOffRecords}
+        onPunchAdjusted={() => router.refresh()}
       />
     </div>
   );

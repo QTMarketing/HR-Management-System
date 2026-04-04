@@ -46,15 +46,30 @@ export function AccountMenu({
     await supabase.auth.signOut();
     setOpen(false);
     router.refresh();
-    router.push("/login");
+    router.push(process.env.NEXT_PUBLIC_AUTH_ENABLED === "true" ? "/login" : "/");
     setLoading(false);
   }
 
+  const authEnabled = process.env.NEXT_PUBLIC_AUTH_ENABLED === "true";
+
   if (!signedIn) {
+    if (!authEnabled) {
+      return (
+        <span
+          className="max-w-[11rem] shrink-0 truncate rounded-lg border border-dashed border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-600"
+          title="Add NEXT_PUBLIC_AUTH_ENABLED=true to .env.local and restart the dev server to use the /login page."
+        >
+          Not signed in — enable auth in .env
+        </span>
+      );
+    }
     return (
-      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-600">
-        ?
-      </span>
+      <Link
+        href="/login"
+        className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+      >
+        Sign in
+      </Link>
     );
   }
 

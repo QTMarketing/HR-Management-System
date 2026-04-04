@@ -1,0 +1,49 @@
+---
+description: Time & attendance roadmap — complete phases in order and run QA after each phase.
+alwaysApply: true
+---
+
+# Time & attendance phases (production track)
+
+Work in order: **Phase 0** (policy words) → **1** punch truth → **2** breaks → **3** timesheet packet (optional) → **4** OT rules → **5** PTO + ledger → **6** notifications → **7** payroll export (CSV).  
+Stay in **hours + export**, not tax/withholding.
+
+## After completing each phase
+
+Run a **quick QA pass** before merging or tagging:
+
+1. **Smoke:** happy path + one failure path (permission denied, validation error).
+2. **Data:** confirm Supabase rows / columns match the feature (or RPC returns expected shape).
+3. **RBAC:** with `RBAC_ENABLED=true`, confirm viewers without permission cannot perform manager actions.
+4. **Regression:** touch the previous phase’s critical path (e.g. after Phase 2, still clock in/out and see punches).
+
+Document anything that is **deferred** (e.g. “OT deferred to payroll”) so scope stays honest.
+
+## Phase 1 QA checklist (punch truth)
+
+- [ ] Self-serve **Clock in** creates `time_entries` with `punch_source` (`web` or `mobile`) and optional `job_code`.
+- [ ] **Clock out** closes the open row; optional GPS on clock-out when geofence enabled.
+- [ ] **client_request_id** / double-submit: second identical request does not duplicate (idempotency).
+- [ ] **Geofence:** when location has lat/lng/radius, clock-in without GPS fails; with position inside radius succeeds.
+- [ ] Manager **Adjust times** saves `edited_at` / `edit_reason`, clears `approved_at`, and appears on **Security audit** (time clock manage permission).
+- [ ] Times refresh in UI after punch / adjust (`router.refresh`).
+
+## Phase 2 QA checklist (breaks as data)
+
+- [ ] **Start break** (unpaid or paid) creates `time_entry_breaks` with `ended_at` null; only one open break per punch.
+- [ ] **End break** sets `ended_at`; **Clock out** also closes any open break with the same timestamp as clock-out.
+- [ ] Punch table **Breaks** column shows a short summary (unpaid / paid minutes, or “On break” when in progress).
+- [ ] Phase 1 still works: clock in/out, adjust times, geofence path unchanged.
+
+## Phase 3 QA checklist (timesheet packet)
+
+- [ ] **Timesheets** tab shows punches for the selected period (existing grid).
+- [ ] **Export CSV** downloads rows matching the current period + filters (search/status) with columns: employee, times, breaks summary, status, job code, punch source.
+- [ ] Phase 1–2 paths still work after export (read-only client download).
+
+## Phase 4–7 (not implemented yet — track when you start)
+
+- **4 — OT rules:** weekly/daily thresholds, flags on punches or summary (schema + UI TBD).
+- **5 — PTO + ledger:** balances + requests tied to ledger (beyond time-off sidebar stubs).
+- **6 — Notifications:** in-app/email for late punch / OT / approvals (TBD).
+- **7 — Payroll export:** CSV is started via Phase 3 export; extend with provider-specific columns / pay period close if needed.

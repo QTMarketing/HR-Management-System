@@ -6,12 +6,13 @@ import { TimeClockDetailShell } from "@/components/time-clock/time-clock-detail-
 import { TimeClockSettingsForm } from "@/components/time-clock/time-clock-settings-form";
 import { locationsForSession } from "@/lib/dashboard/locations-for-session";
 import { isAllLocations, resolveSelectedLocationId, type LocationRow } from "@/lib/dashboard/resolve-location";
-import { computeTodayMetrics, enrichPunchRows } from "@/lib/time-clock/enrich-punches";
+import { attachBreakRollups, computeTodayMetrics, enrichPunchRows } from "@/lib/time-clock/enrich-punches";
 import { getLocalDayBounds } from "@/lib/time-clock/punch-display";
 import {
   getPeriodBounds,
   normalizePeriodConfig,
   parsePeriodKind,
+  periodBoundsFromDateStrings,
   periodBoundsToQueryIso,
   type TimesheetPeriodKind,
 } from "@/lib/time-clock/timesheet-period";
@@ -22,6 +23,13 @@ import { requirePermission } from "@/lib/rbac/guard";
 import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { takeLatestPunchPerEmployee } from "@/lib/time-clock/dedupe-punches";
+import type { TimeEntryBreakRow } from "@/lib/time-clock/breaks";
+import { loadBreaksByEntryIds } from "@/lib/time-clock/load-entry-breaks";
+import {
+  attachPtoLabels,
+  type TimeOffRecordForUi,
+} from "@/lib/time-clock/time-off-display";
 
 type PageProps = {
   params: Promise<{ clockId: string }>;
@@ -92,19 +100,27 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
 
   const periodParam = typeof sp.period === "string" ? sp.period : undefined;
   const anchorParam = typeof sp.anchor === "string" ? sp.anchor : undefined;
+  const rangeFromParam = typeof sp.range_from === "string" ? sp.range_from : undefined;
+  const rangeToParam = typeof sp.range_to === "string" ? sp.range_to : undefined;
   const effectiveKind = parsePeriodKind(periodParam) ?? defaultKind;
   const effectiveConfig = normalizePeriodConfig(
     (clock as { timesheet_period_config?: unknown }).timesheet_period_config,
     effectiveKind,
   );
 
+  const customBoundsFromUrl =
+    rangeFromParam && rangeToParam
+      ? periodBoundsFromDateStrings(rangeFromParam, rangeToParam)
+      : null;
+
   let anchor = new Date();
-  if (anchorParam) {
+  if (anchorParam && !customBoundsFromUrl) {
     const t = Date.parse(anchorParam);
     if (!Number.isNaN(t)) anchor = new Date(t);
   }
 
-  const periodBounds = getPeriodBounds(anchor, effectiveKind, effectiveConfig);
+  const periodBounds =
+    customBoundsFromUrl ?? getPeriodBounds(anchor, effectiveKind, effectiveConfig);
   const { gte: periodGte, lt: periodLt } = periodBoundsToQueryIso(periodBounds);
 
   const { data: empRows, error: empErr } = await supabase
@@ -134,39 +150,80 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
   });
 
   let entries: EnrichedPunchRow[] = [];
+  let clockedInNowRows: EnrichedPunchRow[] = [];
   let entriesError: string | null = empErr?.message ?? null;
   let todayMetrics: TimeClockTodayMetrics | null = null;
 
   try {
-    const { data: raw, error } = await supabase
-      .from("time_entries")
-      .select("id, employee_id, clock_in_at, clock_out_at, status, archived_at")
-      .eq("location_id", effectiveLocationId)
-      .eq("time_clock_id", clockId)
-      .is("archived_at", null)
-      .order("clock_in_at", { ascending: false })
-      .limit(50);
+    const { data: rpcRows, error: rpcErr } = await supabase.rpc(
+      "time_entries_latest_per_employee_for_clock",
+      {
+        p_time_clock_id: clockId,
+        p_location_id: effectiveLocationId,
+      },
+    );
 
-    if (error) {
-      entriesError = error.message;
-    } else if (raw) {
-      entries = enrichPunchRows(raw, nameById, roleById, shiftsList);
+    let rawForToday: {
+      id: string;
+      employee_id: string;
+      clock_in_at: string;
+      clock_out_at: string | null;
+      status: string;
+      archived_at?: string | null;
+      approved_at?: string | null;
+      punch_source?: string | null;
+      job_code?: string | null;
+      edited_at?: string | null;
+      edit_reason?: string | null;
+    }[] = [];
+
+    if (!rpcErr && rpcRows && Array.isArray(rpcRows)) {
+      rawForToday = rpcRows as typeof rawForToday;
+    } else {
+      const { data: fallbackRaw, error: fbErr } = await supabase
+        .from("time_entries")
+        .select(
+          "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, edited_at, edit_reason",
+        )
+        .eq("location_id", effectiveLocationId)
+        .eq("time_clock_id", clockId)
+        .is("archived_at", null)
+        .order("clock_in_at", { ascending: false })
+        .limit(3000);
+
+      if (fbErr) {
+        entriesError = rpcErr?.message ?? fbErr.message;
+      } else if (fallbackRaw) {
+        rawForToday = takeLatestPunchPerEmployee(fallbackRaw);
+      }
+    }
+
+    if (!entriesError) {
+      entries = enrichPunchRows(rawForToday, nameById, roleById, shiftsList).sort((a, b) =>
+        b.clockInAt.localeCompare(a.clockInAt),
+      );
     }
 
     const { data: entriesToday } = await supabase
       .from("time_entries")
-      .select("id, employee_id, clock_in_at, clock_out_at, status, archived_at")
+      .select(
+        "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, edited_at, edit_reason",
+      )
       .eq("time_clock_id", clockId)
       .is("archived_at", null)
       .gte("clock_in_at", dayStart.toISOString())
       .lt("clock_in_at", dayEnd.toISOString());
 
-    const { count: openCount } = await supabase
+    const { data: openEntriesRaw } = await supabase
       .from("time_entries")
-      .select("*", { count: "exact", head: true })
+      .select(
+        "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, edited_at, edit_reason",
+      )
       .eq("time_clock_id", clockId)
+      .eq("location_id", effectiveLocationId)
       .eq("status", "open")
-      .is("archived_at", null);
+      .is("archived_at", null)
+      .order("clock_in_at", { ascending: true });
 
     const enrichedToday = enrichPunchRows(
       entriesToday ?? [],
@@ -174,7 +231,8 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
       roleById,
       shiftsList,
     );
-    todayMetrics = computeTodayMetrics(shiftsToday, enrichedToday, openCount ?? 0);
+    clockedInNowRows = enrichPunchRows(openEntriesRaw ?? [], nameById, roleById, shiftsList);
+    todayMetrics = computeTodayMetrics(shiftsToday, enrichedToday, clockedInNowRows.length);
   } catch (e) {
     entriesError =
       e instanceof Error ? e.message : "Could not load punches. Run migrations 006–007.";
@@ -186,21 +244,25 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
 
   const { data: poolRaw } = await supabase
     .from("time_entries")
-    .select("id, employee_id, clock_in_at, clock_out_at, status, archived_at")
+    .select(
+      "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, edited_at, edit_reason",
+    )
     .eq("time_clock_id", clockId)
     .is("archived_at", null)
     .gte("clock_in_at", timesheetPoolSince.toISOString())
     .order("clock_in_at", { ascending: false })
     .limit(2000);
 
-  const employeeTimecardPool: EnrichedPunchRow[] =
+  let employeeTimecardPool: EnrichedPunchRow[] =
     poolRaw && poolRaw.length > 0
       ? enrichPunchRows(poolRaw, nameById, roleById, shiftsList)
       : [];
 
   const { data: tsRaw } = await supabase
     .from("time_entries")
-    .select("id, employee_id, clock_in_at, clock_out_at, status, archived_at")
+    .select(
+      "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, edited_at, edit_reason",
+    )
     .eq("time_clock_id", clockId)
     .is("archived_at", null)
     .gte("clock_in_at", periodGte)
@@ -208,10 +270,136 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
     .order("clock_in_at", { ascending: false })
     .limit(5000);
 
-  const timesheetRows: EnrichedPunchRow[] =
+  let timesheetRows: EnrichedPunchRow[] =
     tsRaw && tsRaw.length > 0
       ? enrichPunchRows(tsRaw, nameById, roleById, shiftsList)
       : [];
+
+  const breakScopeIds = new Set<string>();
+  for (const r of entries) breakScopeIds.add(r.id);
+  for (const r of clockedInNowRows) breakScopeIds.add(r.id);
+  for (const r of employeeTimecardPool) breakScopeIds.add(r.id);
+  for (const r of timesheetRows) breakScopeIds.add(r.id);
+
+  let breaksByEntryId = new Map<string, TimeEntryBreakRow[]>();
+  try {
+    breaksByEntryId = await loadBreaksByEntryIds(supabase, [...breakScopeIds]);
+  } catch {
+    breaksByEntryId = new Map();
+  }
+
+  const asOf = new Date();
+  entries = attachBreakRollups(entries, breaksByEntryId, asOf);
+  clockedInNowRows = attachBreakRollups(clockedInNowRows, breaksByEntryId, asOf);
+  employeeTimecardPool =
+    employeeTimecardPool.length > 0
+      ? attachBreakRollups(employeeTimecardPool, breaksByEntryId, asOf)
+      : [];
+  timesheetRows =
+    timesheetRows.length > 0 ? attachBreakRollups(timesheetRows, breaksByEntryId, asOf) : [];
+
+  /**
+   * Load approved time off that could affect any punch we show.
+   * Do NOT bound the upper range with "now" or the current pay period only: `start_at < winEnd`
+   * would drop all future-dated PTO (e.g. next week), so the query returned [] and PTO never appeared.
+   */
+  const fetchRangeStart = new Date(
+    Math.min(since90.getTime(), periodBounds.start.getTime()) - 30 * 86400000,
+  );
+  const fetchRangeEnd = new Date(
+    Math.max(periodBounds.endExclusive.getTime(), Date.now()) + 800 * 86400000,
+  );
+
+  let timeOffRecords: TimeOffRecordForUi[] = [];
+  const { data: torRaw, error: torErr } = await supabase
+    .from("time_off_records")
+    .select("id, employee_id, time_off_type, start_at, end_at")
+    .eq("location_id", effectiveLocationId)
+    .eq("status", "approved")
+    .lt("start_at", fetchRangeEnd.toISOString())
+    .gt("end_at", fetchRangeStart.toISOString());
+
+  if (torErr) {
+    console.error("[time_off_records]", torErr.message);
+  }
+  if (torRaw && Array.isArray(torRaw)) {
+    timeOffRecords = torRaw as TimeOffRecordForUi[];
+  }
+
+  if (timeOffRecords.length > 0) {
+    // Today tab: one row per employee — show PTO in the same Mon–Sun week as the punch (not only that calendar day).
+    entries = attachPtoLabels(entries, timeOffRecords, "week");
+    clockedInNowRows = attachPtoLabels(clockedInNowRows, timeOffRecords, "week");
+    employeeTimecardPool = attachPtoLabels(employeeTimecardPool, timeOffRecords, "day");
+    timesheetRows = attachPtoLabels(timesheetRows, timeOffRecords, "day");
+  }
+
+  const storeEmployees = (empRows ?? []).map((e) => ({
+    id: e.id,
+    fullName: e.full_name?.trim() || "Employee",
+  }));
+
+  /** Phase 1: self-serve punch + geofence hint */
+  let viewerEmployeeId: string | null = null;
+  let viewerAtLocation = false;
+  let viewerOpenEntryId: string | null = null;
+  /** Phase 2: open break row for viewer’s open punch, if any. */
+  let viewerOpenBreakId: string | null = null;
+  let geofenceActive = false;
+
+  const userEmail = user?.email?.trim();
+  if (userEmail) {
+    const { data: viewerEmp } = await supabase
+      .from("employees")
+      .select("id, location_id")
+      .ilike("email", userEmail)
+      .eq("status", "active")
+      .maybeSingle();
+    if (viewerEmp) {
+      const ve = viewerEmp as { id: string; location_id: string | null };
+      viewerEmployeeId = ve.id;
+      viewerAtLocation = ve.location_id === effectiveLocationId;
+      if (viewerAtLocation) {
+        const { data: openRow } = await supabase
+          .from("time_entries")
+          .select("id")
+          .eq("employee_id", ve.id)
+          .eq("time_clock_id", clockId)
+          .is("clock_out_at", null)
+          .is("archived_at", null)
+          .maybeSingle();
+        viewerOpenEntryId = (openRow as { id: string } | null)?.id ?? null;
+        if (viewerOpenEntryId) {
+          const { data: openBreak, error: openBreakErr } = await supabase
+            .from("time_entry_breaks")
+            .select("id")
+            .eq("time_entry_id", viewerOpenEntryId)
+            .is("ended_at", null)
+            .maybeSingle();
+          if (!openBreakErr && openBreak) {
+            viewerOpenBreakId = (openBreak as { id: string }).id;
+          }
+        }
+      }
+    }
+  }
+
+  const { data: locGeo } = await supabase
+    .from("locations")
+    .select("geofence_center_lat, geofence_center_lng, geofence_radius_meters")
+    .eq("id", effectiveLocationId)
+    .maybeSingle();
+  const geoRow = locGeo as {
+    geofence_center_lat: number | null;
+    geofence_center_lng: number | null;
+    geofence_radius_meters: number | null;
+  } | null;
+  geofenceActive =
+    Boolean(geoRow) &&
+    geoRow!.geofence_center_lat != null &&
+    geoRow!.geofence_center_lng != null &&
+    geoRow!.geofence_radius_meters != null &&
+    (geoRow!.geofence_radius_meters ?? 0) > 0;
 
   return (
     <Suspense
@@ -239,12 +427,22 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
               </p>
             ) : null}
             <TimeClockPanel
+              timeClockId={clockId}
               locationId={effectiveLocationId}
               clockName={clock.name}
               entries={entries}
+              clockedInNow={clockedInNowRows}
               todayMetrics={todayMetrics}
               employeeTimecardPool={employeeTimecardPool}
+              timeOffRecords={timeOffRecords}
               canManage={canArchiveTimeEntries}
+              storeEmployees={storeEmployees}
+              viewerEmployeeId={viewerEmployeeId}
+              viewerAtLocation={viewerAtLocation}
+              viewerOpenEntryId={viewerOpenEntryId}
+              viewerOpenBreakId={viewerOpenBreakId}
+              geofenceActive={geofenceActive}
+              clockSelfServeDisabled={isArchived}
             />
           </div>
         }
@@ -252,6 +450,7 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
           <TimeSheetsPanel
             rows={timesheetRows}
             modalPoolRows={employeeTimecardPool}
+            timeOffRecords={timeOffRecords}
             locationId={effectiveLocationId}
             timeClockId={clockId}
             canArchive={canArchiveTimeEntries}
@@ -259,7 +458,10 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
             periodConfig={effectiveConfig}
             periodStartIso={periodBounds.start.toISOString()}
             periodEndExclusiveIso={periodBounds.endExclusive.toISOString()}
+            rangeFromYmd={customBoundsFromUrl ? rangeFromParam : null}
+            rangeToYmd={customBoundsFromUrl ? rangeToParam : null}
             clockDefaultKind={defaultKind}
+            storeEmployees={storeEmployees}
           />
         }
         settingsContent={

@@ -24,9 +24,27 @@ export type EnrichedPunchRow = {
   /** Worked minutes minus scheduled minutes (closed punch + schedule only). */
   scheduleVarianceMinutes: number | null;
   ptoLabel: string;
+  /** Raw DB status: `open` | `closed`. */
   status: string;
+  /**
+   * UI review state: open shift, closed pending manager approval, approved, or archived.
+   * Derived from `status`, `clock_out_at`, `approved_at`, `archived_at`.
+   */
+  reviewStatus: "open" | "pending" | "approved" | "archived";
+  /** Short label for the Status column (e.g. Open, Pending, Approved, Archived). */
+  reviewLabel: string;
   /** Soft-deleted punch — retained for audit, excluded from active totals. */
   isArchived?: boolean;
+  /** `time_entries.punch_source` — how the punch was recorded (Phase 1). */
+  punchSourceLabel?: string | null;
+  /** Job/labor code at clock-in when set. */
+  jobCodeAtPunch?: string | null;
+  /** Manager edited clock times after the fact. */
+  wasEdited?: boolean;
+  /** Phase 2: paid/unpaid break summary for this punch (when breaks exist). */
+  breaksSummaryLabel?: string | null;
+  /** Total unpaid break minutes (completed + in-progress unpaid portion). */
+  unpaidBreakMinutes?: number | null;
 };
 
 export type TimeClockTodayMetrics = {

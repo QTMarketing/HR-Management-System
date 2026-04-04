@@ -12,6 +12,12 @@ import {
   lateClockOutBadge,
   type ShiftLike,
 } from "@/lib/time-clock/punch-display";
+import {
+  formatBreaksSummaryLabel,
+  rollupBreakMinutes,
+  type TimeEntryBreakRow,
+} from "@/lib/time-clock/breaks";
+import { punchSourceLabel as punchSourceDisplay } from "@/lib/time-clock/punch-source";
 import { formatHoursMinutes } from "@/lib/time-clock/timecard-rollup";
 import type { EnrichedPunchRow, TimeClockTodayMetrics } from "@/lib/time-clock/types";
 
@@ -22,7 +28,25 @@ type RawEntry = {
   clock_out_at: string | null;
   status: string;
   archived_at?: string | null;
+  approved_at?: string | null;
+  punch_source?: string | null;
+  job_code?: string | null;
+  edited_at?: string | null;
+  edit_reason?: string | null;
 };
+
+function reviewFromRaw(row: RawEntry): Pick<EnrichedPunchRow, "reviewStatus" | "reviewLabel"> {
+  if (row.archived_at) {
+    return { reviewStatus: "archived", reviewLabel: "Archived" };
+  }
+  if (row.status === "open" || !row.clock_out_at) {
+    return { reviewStatus: "open", reviewLabel: "Open" };
+  }
+  if (row.approved_at) {
+    return { reviewStatus: "approved", reviewLabel: "Approved" };
+  }
+  return { reviewStatus: "pending", reviewLabel: "Pending" };
+}
 
 export function jobToneFromRole(role: string): EnrichedPunchRow["jobTone"] {
   const r = role.toLowerCase();
@@ -44,6 +68,23 @@ export function computeTodayMetrics(
     totalAttendance: new Set(enrichedTodayForClock.map((e) => e.employeeId)).size,
     runningLate: enrichedTodayForClock.filter((e) => e.lateOutBadge).length,
   };
+}
+
+/** Attach Phase 2 break rollups after punch rows are enriched (separate DB fetch). */
+export function attachBreakRollups(
+  rows: EnrichedPunchRow[],
+  breaksByEntryId: Map<string, TimeEntryBreakRow[]>,
+  asOf: Date = new Date(),
+): EnrichedPunchRow[] {
+  return rows.map((row) => {
+    const breaks = breaksByEntryId.get(row.id) ?? [];
+    const rollup = rollupBreakMinutes(breaks, asOf, row.clockOutAt);
+    return {
+      ...row,
+      breaksSummaryLabel: formatBreaksSummaryLabel(rollup),
+      unpaidBreakMinutes: rollup.unpaidMinutes > 0 ? rollup.unpaidMinutes : null,
+    };
+  });
 }
 
 export function enrichPunchRows(
@@ -87,6 +128,8 @@ export function enrichPunchRows(
     }
 
     const isArchived = Boolean(row.archived_at);
+    const review = reviewFromRaw(row);
+    const jc = row.job_code?.trim();
     return {
       id: row.id,
       employeeId: row.employee_id,
@@ -108,6 +151,11 @@ export function enrichPunchRows(
       scheduleVarianceMinutes,
       ptoLabel: "—",
       status: row.status,
+      reviewStatus: review.reviewStatus,
+      reviewLabel: review.reviewLabel,
+      punchSourceLabel: punchSourceDisplay(row.punch_source ?? undefined),
+      jobCodeAtPunch: jc && jc.length > 0 ? jc : null,
+      wasEdited: Boolean(row.edited_at),
     };
   });
 }

@@ -46,9 +46,9 @@ async function gateManageTime(): Promise<SeedTimeEntriesResult | null> {
 
 /**
  * Inserts closed `time_entries` for **previous calendar week + current calendar week** (Mon–Sun × 2)
- * for every active employee at the location, only on weekdays, only for employee-days that do not
- * already have a punch. Matches the default Timesheets week view so green cells appear without
- * navigating weeks.
+ * for every active employee at the location, **weekdays only** (no weekend sample punches until
+ * weekend handling is finalized). Skips employee-days that already have a punch. Matches the
+ * default Timesheets week view so green cells appear without navigating weeks.
  */
 export async function seedSampleTimesheetPunches(
   timeClockId: string,
@@ -109,7 +109,7 @@ export async function seedSampleTimesheetPunches(
 
       const dow = day.getDay();
       const isWeekend = dow === 0 || dow === 6;
-      if (isWeekend && (ei + di) % 3 !== 0) continue;
+      if (isWeekend) continue;
 
       const varianceMin = ((ei * 17 + di * 13) % 91) - 45;
       const minutes = Math.max(450, Math.min(540, 480 + varianceMin));
@@ -128,6 +128,7 @@ export async function seedSampleTimesheetPunches(
         clock_in_at: start.toISOString(),
         clock_out_at: end.toISOString(),
         status: "closed",
+        punch_source: "import",
       });
     }
   }

@@ -15,7 +15,7 @@
 import type { EnrichedPunchRow } from "@/lib/time-clock/types";
 
 /** Minimum scroll width for the table wrapper (update if you add wide columns). */
-export const PUNCH_TABLE_MIN_WIDTH_PX = 1100;
+export const PUNCH_TABLE_MIN_WIDTH_PX = 1280;
 
 export type PunchTableColumnDef = {
   /** Stable id for keys; align with comments in `time-punch-table-row.tsx`. */
@@ -46,6 +46,11 @@ export const PUNCH_TABLE_COLUMNS: readonly PunchTableColumnDef[] = [
     header: "Clock out",
     headerClassName: "min-w-[120px] whitespace-nowrap px-3 py-3",
   },
+  {
+    id: "breaks",
+    header: "Breaks",
+    headerClassName: "min-w-[7rem] whitespace-nowrap px-3 py-3",
+  },
   { id: "dailyTotal", header: "Daily total", headerClassName: "whitespace-nowrap px-3 py-3" },
   { id: "pto", header: "PTO", headerClassName: "whitespace-nowrap px-3 py-3" },
   { id: "status", header: "Status", headerClassName: "whitespace-nowrap px-3 py-3" },
@@ -71,6 +76,18 @@ export function matchesPunchTableSearch(row: EnrichedPunchRow, queryTrimmed: str
   const q = queryTrimmed.toLowerCase();
   if (!q) return true;
   return (
-    row.employeeName.toLowerCase().includes(q) || row.employeeRole.toLowerCase().includes(q)
+    row.employeeName.toLowerCase().includes(q) ||
+    row.employeeRole.toLowerCase().includes(q) ||
+    row.reviewLabel.toLowerCase().includes(q) ||
+    (row.jobCodeAtPunch?.toLowerCase().includes(q) ?? false) ||
+    (row.punchSourceLabel?.toLowerCase().includes(q) ?? false) ||
+    (row.breaksSummaryLabel?.toLowerCase().includes(q) ?? false) ||
+    row.ptoLabel.toLowerCase().includes(q)
   );
 }
+
+export const PUNCH_REVIEW_ACTIONS_COLUMN: PunchTableColumnDef = {
+  id: "review",
+  header: "Review",
+  headerClassName: "min-w-[6.5rem] whitespace-nowrap px-3 py-3 text-right",
+};
