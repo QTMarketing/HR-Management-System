@@ -45,6 +45,11 @@ export type EnrichedPunchRow = {
   breaksSummaryLabel?: string | null;
   /** Total unpaid break minutes (completed + in-progress unpaid portion). */
   unpaidBreakMinutes?: number | null;
+  /**
+   * `false` when this row is roster-only (no backing `time_entries` row), e.g. “no punch yet”
+   * on Today’s latest-punch table. Omit or `true` for real punches.
+   */
+  hasRealTimeEntry?: boolean;
 };
 
 export type TimeClockTodayMetrics = {

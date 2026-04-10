@@ -15,6 +15,9 @@ const ACTION_LABEL: Record<string, string> = {
   [SECURITY_AUDIT_ACTIONS.TIME_ENTRY_UNAPPROVED]: "Time punch unapproved",
   [SECURITY_AUDIT_ACTIONS.TIME_ENTRY_ADJUSTED]: "Time punch times edited",
   [SECURITY_AUDIT_ACTIONS.TIME_OFF_RECORDED]: "Time off recorded",
+  [SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_SUBMITTED]: "Time off request submitted",
+  [SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_APPROVED]: "Time off request approved",
+  [SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_DENIED]: "Time off request denied",
 };
 
 function fmtWhen(iso: string): string {
@@ -203,6 +206,24 @@ export default async function SecurityAuditPage() {
                     (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
                   const typ = typeof meta.time_off_type === "string" ? meta.time_off_type : "—";
                   detail = `${typ} · ${emp} · ${loc} · ${String(meta.time_off_record_id ?? "").slice(0, 8)}…`;
+                } else if (r.action === SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_SUBMITTED) {
+                  const emp = r.target_employee_id
+                    ? nameById.get(r.target_employee_id) ?? r.target_employee_id
+                    : "—";
+                  const loc =
+                    (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
+                  const typ = typeof meta.time_off_type === "string" ? meta.time_off_type : "—";
+                  detail = `${typ} · ${emp} · ${loc} · ${String(meta.time_off_record_id ?? "").slice(0, 8)}…`;
+                } else if (
+                  r.action === SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_APPROVED ||
+                  r.action === SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_DENIED
+                ) {
+                  const emp = r.target_employee_id
+                    ? nameById.get(r.target_employee_id) ?? r.target_employee_id
+                    : "—";
+                  const loc =
+                    (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
+                  detail = `${emp} · ${loc} · ${String(meta.time_off_record_id ?? "").slice(0, 8)}…`;
                 } else {
                   detail = JSON.stringify(meta);
                 }

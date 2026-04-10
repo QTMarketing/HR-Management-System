@@ -7,6 +7,10 @@ import { RecentStaffUpdates } from "@/components/dashboard/recent-staff-updates"
 import type { StaffUpdateRow } from "@/components/dashboard/recent-staff-updates.types";
 import { displayNameFromUser } from "@/lib/auth/display-name";
 import { aggregateLocationMetrics } from "@/lib/dashboard/aggregate-dashboard";
+import {
+  mergeLiveOperationalKpis,
+  type DashboardMetricsRow,
+} from "@/lib/dashboard/live-operational-kpis";
 import { locationsForSession } from "@/lib/dashboard/locations-for-session";
 import {
   isAllLocations,
@@ -33,19 +37,7 @@ function mapStaffStatus(s: string): StaffUpdateRow["status"] {
   return "pending";
 }
 
-type MetricsRow = {
-  total_employees: number;
-  active_now: number;
-  late_arrivals: number;
-  avg_weekly_hours: number;
-  active_now_trend_text: string | null;
-  late_arrivals_trend_text: string | null;
-  scheduled_today: number;
-  late_clock_ins: number;
-  clocked_in_now: number;
-  total_attendance_pct: number;
-  late_clock_outs: number;
-};
+type MetricsRow = DashboardMetricsRow;
 
 const forceMock = process.env.NEXT_PUBLIC_USE_MOCK_DATA === "true";
 
@@ -61,12 +53,16 @@ export default async function DashboardPage() {
   } = await supabase.auth.getUser();
 
   let rawLocations: LocationRow[] = [];
+  /** True when Supabase returned at least one store (do not blend demo KPIs/lists with live DB). */
+  let locationsFromDatabase = false;
   if (!forceMock) {
     const { data } = await supabase
       .from("locations")
       .select("id, name")
       .order("sort_order", { ascending: true });
-    rawLocations = (data ?? []).map((r) => ({ id: r.id, name: r.name }));
+    const rows = (data ?? []).map((r) => ({ id: r.id, name: r.name }));
+    locationsFromDatabase = rows.length > 0;
+    rawLocations = rows;
   }
   if (rawLocations.length === 0) {
     rawLocations = DEMO_LOCATIONS;
@@ -133,24 +129,34 @@ export default async function DashboardPage() {
 
       if (activityRes.error) activityError = activityRes.error.message;
       else if (activityRes.data) {
-        activityItems = activityRes.data.map((row) => ({
-          id: row.id,
-          who: row.employee_label,
-          action: row.action,
-          status: mapActivityStatus(row.status),
-          occurredAt: row.occurred_at,
-        }));
+        activityItems = activityRes.data
+          .map((row) => ({
+            id: row.id,
+            who: row.employee_label,
+            action: row.action,
+            status: mapActivityStatus(row.status),
+            occurredAt: row.occurred_at,
+          }))
+          .sort(
+            (a, b) =>
+              new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime(),
+          );
       }
 
       if (staffRes.error) staffError = staffRes.error.message;
       else if (staffRes.data) {
-        staffRows = staffRes.data.map((row) => ({
-          id: row.id,
-          employeeLabel: row.employee_label,
-          updateText: row.update_text,
-          status: mapStaffStatus(row.status),
-          createdAt: row.created_at,
-        }));
+        staffRows = staffRes.data
+          .map((row) => ({
+            id: row.id,
+            employeeLabel: row.employee_label,
+            updateText: row.update_text,
+            status: mapStaffStatus(row.status),
+            createdAt: row.created_at,
+          }))
+          .sort(
+            (a, b) =>
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          );
       }
 
       if (metricsRes.error) metricsError = metricsRes.error.message;
@@ -197,11 +203,15 @@ export default async function DashboardPage() {
       metricsError = msg;
     }
 
+    const useSyntheticDemo =
+      forceMock || !locationsFromDatabase;
+
     const needsDemo =
-      !metrics ||
-      !!metricsError ||
-      (!!activityError && activityItems.length === 0) ||
-      (!!staffError && staffRows.length === 0);
+      useSyntheticDemo &&
+      (!metrics ||
+        !!metricsError ||
+        (!!activityError && activityItems.length === 0) ||
+        (!!staffError && staffRows.length === 0));
 
     if (needsDemo) {
       usedDemoFallback = true;
@@ -217,6 +227,10 @@ export default async function DashboardPage() {
         staffError = null;
       }
       metricsError = null;
+    }
+
+    if (locationsFromDatabase) {
+      metrics = await mergeLiveOperationalKpis(supabase, metrics, { scopeAll, locationId });
     }
   }
 

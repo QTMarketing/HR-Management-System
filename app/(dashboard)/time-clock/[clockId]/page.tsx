@@ -6,7 +6,12 @@ import { TimeClockDetailShell } from "@/components/time-clock/time-clock-detail-
 import { TimeClockSettingsForm } from "@/components/time-clock/time-clock-settings-form";
 import { locationsForSession } from "@/lib/dashboard/locations-for-session";
 import { isAllLocations, resolveSelectedLocationId, type LocationRow } from "@/lib/dashboard/resolve-location";
-import { attachBreakRollups, computeTodayMetrics, enrichPunchRows } from "@/lib/time-clock/enrich-punches";
+import {
+  attachBreakRollups,
+  computeTodayMetrics,
+  enrichPunchRows,
+  mergeLatestPunchesWithStoreRoster,
+} from "@/lib/time-clock/enrich-punches";
 import { getLocalDayBounds } from "@/lib/time-clock/punch-display";
 import {
   getPeriodBounds,
@@ -30,6 +35,7 @@ import {
   attachPtoLabels,
   type TimeOffRecordForUi,
 } from "@/lib/time-clock/time-off-display";
+import type { PendingTimeOffRequestRow } from "@/lib/time-clock/pending-time-off";
 
 type PageProps = {
   params: Promise<{ clockId: string }>;
@@ -123,6 +129,26 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
     customBoundsFromUrl ?? getPeriodBounds(anchor, effectiveKind, effectiveConfig);
   const { gte: periodGte, lt: periodLt } = periodBoundsToQueryIso(periodBounds);
 
+  const ymd = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  let holidays: { holiday_date: string; name: string; is_paid?: boolean | null; paid_hours?: number | null }[] =
+    [];
+  try {
+    const { data } = await supabase
+      .from("company_holidays")
+      .select("holiday_date, name, is_paid, paid_hours")
+      .gte("holiday_date", ymd(periodBounds.start))
+      .lt("holiday_date", ymd(periodBounds.endExclusive));
+    holidays = (data ?? []) as typeof holidays;
+  } catch {
+    holidays = [];
+  }
+
   const { data: empRows, error: empErr } = await supabase
     .from("employees")
     .select("id, full_name, role")
@@ -132,6 +158,11 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
 
   const nameById = new Map((empRows ?? []).map((e) => [e.id, e.full_name] as const));
   const roleById = new Map((empRows ?? []).map((e) => [e.id, e.role ?? ""] as const));
+  const storeEmployees = (empRows ?? []).map((e) => ({
+    id: e.id,
+    fullName: e.full_name?.trim() || "Employee",
+    role: e.role ?? "",
+  }));
 
   const since90 = new Date();
   since90.setDate(since90.getDate() - 90);
@@ -298,6 +329,8 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
   timesheetRows =
     timesheetRows.length > 0 ? attachBreakRollups(timesheetRows, breaksByEntryId, asOf) : [];
 
+  entries = mergeLatestPunchesWithStoreRoster(entries, storeEmployees, new Date());
+
   /**
    * Load approved time off that could affect any punch we show.
    * Do NOT bound the upper range with "now" or the current pay period only: `start_at < winEnd`
@@ -334,15 +367,47 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
     timesheetRows = attachPtoLabels(timesheetRows, timeOffRecords, "day");
   }
 
-  const storeEmployees = (empRows ?? []).map((e) => ({
-    id: e.id,
-    fullName: e.full_name?.trim() || "Employee",
-  }));
+  let pendingTimeOffRequests: PendingTimeOffRequestRow[] = [];
+  if (canArchiveTimeEntries) {
+    const { data: pendingRaw, error: pendingErr } = await supabase
+      .from("time_off_records")
+      .select("id, employee_id, time_off_type, start_at, end_at, created_at, employee_notes")
+      .eq("location_id", effectiveLocationId)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(40);
+    if (pendingErr) {
+      console.error("[time_off_records pending]", pendingErr.message);
+    } else if (pendingRaw) {
+      pendingTimeOffRequests = pendingRaw.map((row) => {
+        const pr = row as {
+          id: string;
+          employee_id: string;
+          time_off_type: string;
+          start_at: string;
+          end_at: string;
+          created_at: string;
+          employee_notes: string | null;
+        };
+        return {
+          id: pr.id,
+          employeeId: pr.employee_id,
+          employeeName: nameById.get(pr.employee_id) ?? "Employee",
+          timeOffType: pr.time_off_type,
+          startAt: pr.start_at,
+          endAt: pr.end_at,
+          createdAt: pr.created_at,
+          employeeNotes: pr.employee_notes,
+        };
+      });
+    }
+  }
 
   /** Phase 1: self-serve punch + geofence hint */
   let viewerEmployeeId: string | null = null;
   let viewerAtLocation = false;
   let viewerOpenEntryId: string | null = null;
+  let viewerOpenEntryClockInAt: string | null = null;
   /** Phase 2: open break row for viewer’s open punch, if any. */
   let viewerOpenBreakId: string | null = null;
   let geofenceActive = false;
@@ -362,13 +427,15 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
       if (viewerAtLocation) {
         const { data: openRow } = await supabase
           .from("time_entries")
-          .select("id")
+          .select("id, clock_in_at")
           .eq("employee_id", ve.id)
           .eq("time_clock_id", clockId)
           .is("clock_out_at", null)
           .is("archived_at", null)
           .maybeSingle();
         viewerOpenEntryId = (openRow as { id: string } | null)?.id ?? null;
+        viewerOpenEntryClockInAt =
+          (openRow as { clock_in_at?: string } | null)?.clock_in_at ?? null;
         if (viewerOpenEntryId) {
           const { data: openBreak, error: openBreakErr } = await supabase
             .from("time_entry_breaks")
@@ -435,11 +502,13 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
               todayMetrics={todayMetrics}
               employeeTimecardPool={employeeTimecardPool}
               timeOffRecords={timeOffRecords}
+              pendingTimeOffRequests={pendingTimeOffRequests}
               canManage={canArchiveTimeEntries}
               storeEmployees={storeEmployees}
               viewerEmployeeId={viewerEmployeeId}
               viewerAtLocation={viewerAtLocation}
               viewerOpenEntryId={viewerOpenEntryId}
+              viewerOpenEntryClockInAt={viewerOpenEntryClockInAt}
               viewerOpenBreakId={viewerOpenBreakId}
               geofenceActive={geofenceActive}
               clockSelfServeDisabled={isArchived}
@@ -462,6 +531,7 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
             rangeToYmd={customBoundsFromUrl ? rangeToParam : null}
             clockDefaultKind={defaultKind}
             storeEmployees={storeEmployees}
+            holidays={holidays}
           />
         }
         settingsContent={

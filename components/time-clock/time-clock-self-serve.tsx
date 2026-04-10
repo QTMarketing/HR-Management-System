@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { clockIn, clockOut } from "@/app/actions/time-clock";
 import { endBreak, startBreak } from "@/app/actions/time-entry-breaks";
+import { EmployeeTimeOffRequestModal } from "@/components/time-clock/employee-time-off-request-modal";
 
 type Props = {
   timeClockId: string;
@@ -13,6 +14,8 @@ type Props = {
   viewerAtLocation: boolean;
   /** Open punch id on this clock for the viewer, if any. */
   viewerOpenEntryId: string | null;
+  /** Clock-in timestamp for the viewer's open punch (Today UX). */
+  viewerOpenEntryClockInAt?: string | null;
   /** Open break id on that punch (Phase 2), if any. */
   viewerOpenBreakId?: string | null;
   /** Location has geofence columns set — clock-in requires GPS. */
@@ -34,6 +37,7 @@ export function TimeClockSelfServe({
   viewerEmployeeId,
   viewerAtLocation,
   viewerOpenEntryId,
+  viewerOpenEntryClockInAt = null,
   viewerOpenBreakId = null,
   geofenceActive,
   disabled = false,
@@ -41,6 +45,7 @@ export function TimeClockSelfServe({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
+  const [timeOffOpen, setTimeOffOpen] = useState(false);
   const [jobCode, setJobCode] = useState("");
   const [breakPaid, setBreakPaid] = useState(false);
 
@@ -178,6 +183,22 @@ export function TimeClockSelfServe({
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <h3 className="text-sm font-semibold text-slate-800">Your punch</h3>
+      {viewerOpenEntryId && viewerOpenEntryClockInAt ? (
+        <p className="mt-1 text-xs text-slate-600">
+          Status:{" "}
+          <span className="font-semibold text-emerald-700">
+            Clocked in
+          </span>{" "}
+          since{" "}
+          <span className="tabular-nums font-medium text-slate-800">
+            {new Date(viewerOpenEntryClockInAt).toLocaleTimeString(undefined, {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            })}
+          </span>
+        </p>
+      ) : null}
       {geofenceActive ? (
         <p className="mt-1 text-xs text-slate-500">
           This store requires GPS for clock-in (browser will ask for location).
@@ -254,7 +275,24 @@ export function TimeClockSelfServe({
           </button>
         )}
       </div>
+      <div className="mt-4 border-t border-slate-100 pt-3">
+        <button
+          type="button"
+          onClick={() => setTimeOffOpen(true)}
+          disabled={pending}
+          className="text-sm font-medium text-orange-700 underline decoration-orange-300 underline-offset-2 hover:text-orange-900 disabled:opacity-50"
+        >
+          Request time off
+        </button>
+      </div>
       {msg ? <p className="mt-2 text-sm text-red-600">{msg}</p> : null}
+      <EmployeeTimeOffRequestModal
+        open={timeOffOpen}
+        onClose={() => setTimeOffOpen(false)}
+        locationId={locationId}
+        employeeId={viewerEmployeeId}
+        onSaved={() => router.refresh()}
+      />
     </div>
   );
 }

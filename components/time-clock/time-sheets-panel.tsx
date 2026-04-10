@@ -50,6 +50,7 @@ type Props = {
   rangeToYmd?: string | null;
   clockDefaultKind: TimesheetPeriodKind;
   storeEmployees: StoreEmployeeOption[];
+  holidays?: { holiday_date: string; name: string; is_paid?: boolean | null; paid_hours?: number | null }[];
 };
 
 function dayKeyLocal(d: Date): string {
@@ -86,6 +87,7 @@ export function TimeSheetsPanel({
   rangeToYmd = null,
   clockDefaultKind,
   storeEmployees,
+  holidays = [],
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -117,6 +119,27 @@ export function TimeSheetsPanel({
 
   const days = useMemo(() => enumerateDaysInPeriod(bounds), [bounds]);
   const dayKeys = useMemo(() => days.map((d) => dayKeyLocal(d)), [days]);
+  const holidayByDayKey = useMemo(() => {
+    const map = new Map<string, { name: string; isPaid: boolean; paidHours: number | null }>();
+    for (const h of holidays) {
+      const key = String(h.holiday_date ?? "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue;
+      map.set(key, {
+        name: h.name,
+        isPaid: h.is_paid !== false,
+        paidHours: typeof h.paid_hours === "number" ? h.paid_hours : null,
+      });
+    }
+    return map;
+  }, [holidays]);
+  const dayIndexByKey = useMemo(() => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < dayKeys.length; i++) {
+      const k = dayKeys[i];
+      if (k) m.set(k, i);
+    }
+    return m;
+  }, [dayKeys]);
   const rangeLabel = useMemo(() => formatPeriodRangeLabel(bounds), [bounds]);
 
   const periodEndInclusive = useMemo(() => {
@@ -215,8 +238,25 @@ export function TimeSheetsPanel({
     return list;
   }, [filteredRows]);
 
+  const byEmployeeWithAll = useMemo(() => {
+    const map = new Map(byEmployee.map((e) => [e.employeeId, e] as const));
+    for (const se of storeEmployees) {
+      if (!se.id) continue;
+      if (map.has(se.id)) continue;
+      map.set(se.id, {
+        employeeId: se.id,
+        name: se.fullName ?? "Employee",
+        role: se.role ?? "",
+        rows: [],
+      });
+    }
+    const list = [...map.values()];
+    list.sort((a, b) => a.name.localeCompare(b.name));
+    return list;
+  }, [byEmployee, storeEmployees]);
+
   const filteredEmployees = useMemo(() => {
-    let list = byEmployee;
+    let list = byEmployeeWithAll;
     const q = query.trim().toLowerCase();
     if (q) {
       list = list.filter(
@@ -224,7 +264,7 @@ export function TimeSheetsPanel({
       );
     }
     return list;
-  }, [byEmployee, query]);
+  }, [byEmployeeWithAll, query]);
 
   const rowsForExport = useMemo(
     () => filteredEmployees.flatMap((e) => e.rows),
@@ -244,14 +284,27 @@ export function TimeSheetsPanel({
       const mins = new Array<number>(days.length).fill(0);
       for (const r of e.rows) {
         const dk = dayKeyLocal(new Date(r.clockInAt));
-        const di = dayKeys.indexOf(dk);
+        const di = dayIndexByKey.get(dk);
         if (di === -1) continue;
+        if (di == null) continue;
         mins[di] += punchMinutes(r) ?? 0;
       }
+
+      // Automatic paid holiday hours (when store is closed: no punches).
+      for (let di = 0; di < days.length; di++) {
+        if (mins[di] > 0) continue;
+        const key = dayKeys[di];
+        if (!key) continue;
+        const h = holidayByDayKey.get(key);
+        if (!h || !h.isPaid) continue;
+        const hours = h.paidHours ?? 8;
+        if (hours > 0) mins[di] += Math.round(hours * 60);
+      }
+
       map.set(e.employeeId, mins);
     }
     return map;
-  }, [filteredEmployees, dayKeys, days.length]);
+  }, [filteredEmployees, dayIndexByKey, dayKeys, days.length, holidayByDayKey]);
 
   const gridTemplate = `260px repeat(${days.length}, minmax(52px, 1fr))`;
 
@@ -541,12 +594,19 @@ export function TimeSheetsPanel({
                 </div>
                 {days.map((d, di) => {
                   const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+                  const hk = dayKeys[di];
+                  const holiday = hk ? holidayByDayKey.get(hk) ?? null : null;
                   return (
                     <div
                       key={di}
                       className={`border-r border-slate-200 p-1.5 text-center last:border-r-0 sm:p-2 ${
-                        isWeekend ? "bg-slate-100/80" : ""
+                        holiday ? "bg-amber-50/70" : isWeekend ? "bg-slate-100/80" : ""
                       }`}
+                      title={
+                        holiday
+                          ? `${holiday.name}${holiday.isPaid ? ` (paid${holiday.paidHours ? ` ${holiday.paidHours}h` : ""})` : ""}`
+                          : undefined
+                      }
                     >
                       <div className="text-[10px] font-semibold leading-tight text-slate-600 sm:text-[11px]">
                         {d.toLocaleDateString(undefined, { weekday: "short" })}
@@ -554,6 +614,11 @@ export function TimeSheetsPanel({
                       <div className="mt-0.5 text-[10px] font-semibold tabular-nums text-slate-900 sm:text-xs">
                         {d.getDate()}
                       </div>
+                      {holiday ? (
+                        <div className="mt-0.5 truncate text-[9px] font-semibold text-amber-700 sm:text-[10px]">
+                          {holiday.name}
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })}
@@ -562,6 +627,7 @@ export function TimeSheetsPanel({
               {filteredEmployees.map((e) => {
                 const mins = minutesForEmployeeByDay.get(e.employeeId) ?? new Array(days.length).fill(0);
                 const totalPeriod = mins.reduce((a, b) => a + b, 0);
+                const canOpenAnyTimecard = e.rows.length > 0;
                 return (
                   <div
                     key={e.employeeId}
@@ -571,7 +637,12 @@ export function TimeSheetsPanel({
                     <button
                       type="button"
                       className="sticky left-0 z-[1] border-r border-slate-200 bg-white px-3 py-2.5 text-left hover:bg-slate-50/80 sm:px-4 sm:py-3"
-                      onClick={() => setTimecardAnchorRow(e.rows[e.rows.length - 1] ?? null)}
+                      onClick={() => {
+                        if (!canOpenAnyTimecard) return;
+                        setTimecardAnchorRow(e.rows[e.rows.length - 1] ?? null);
+                      }}
+                      disabled={!canOpenAnyTimecard}
+                      title={!canOpenAnyTimecard ? "No punches for this employee in this period." : "Open timecard"}
                     >
                       <div className="truncate text-sm font-semibold text-slate-900">{e.name}</div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
@@ -589,22 +660,49 @@ export function TimeSheetsPanel({
                       const has = m > 0;
                       const anchor =
                         e.rows.find((r) => dayKeyLocal(new Date(r.clockInAt)) === dayKeys[di]) ?? null;
+                      const dk = dayKeys[di];
+                      const holiday = dk ? holidayByDayKey.get(dk) ?? null : null;
+                      const isHolidayPayCell = has && !anchor && Boolean(holiday?.isPaid);
+                      const canOpenCell = Boolean(anchor) || canOpenAnyTimecard;
                       return (
                         <div
                           key={di}
                           className="flex min-h-[52px] items-center justify-center border-r border-slate-100 p-1 last:border-r-0 sm:min-h-[56px]"
                         >
                           {has ? (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setTimecardAnchorRow(anchor ?? e.rows[e.rows.length - 1] ?? null)
-                              }
-                              className="inline-flex max-w-full items-center justify-center rounded-md bg-emerald-600 px-1.5 py-1 text-[11px] font-semibold tabular-nums text-white shadow-sm hover:bg-emerald-700 sm:px-2 sm:text-sm"
-                              title="Open timecard"
-                            >
-                              {formatHoursMinutes(m)}
-                            </button>
+                            canOpenCell ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setTimecardAnchorRow(anchor ?? e.rows[e.rows.length - 1] ?? null)
+                                }
+                                className={`inline-flex max-w-full items-center justify-center rounded-md px-1.5 py-1 text-[11px] font-semibold tabular-nums text-white shadow-sm sm:px-2 sm:text-sm ${
+                                  isHolidayPayCell
+                                    ? "bg-amber-600 hover:bg-amber-700"
+                                    : "bg-emerald-600 hover:bg-emerald-700"
+                                }`}
+                                title={
+                                  isHolidayPayCell
+                                    ? `${holiday?.name ?? "Holiday"} (paid)`
+                                    : "Open timecard"
+                                }
+                              >
+                                {isHolidayPayCell ? `Holiday ${formatHoursMinutes(m)}` : formatHoursMinutes(m)}
+                              </button>
+                            ) : (
+                              <span
+                                className={`inline-flex max-w-full items-center justify-center rounded-md px-2 py-1 text-[11px] font-semibold tabular-nums text-white shadow-sm ${
+                                  isHolidayPayCell ? "bg-amber-600" : "bg-emerald-600"
+                                }`}
+                                title={
+                                  isHolidayPayCell
+                                    ? `${holiday?.name ?? "Holiday"} (paid) — no punches to open`
+                                    : "No punches to open"
+                                }
+                              >
+                                {isHolidayPayCell ? `Holiday ${formatHoursMinutes(m)}` : formatHoursMinutes(m)}
+                              </span>
+                            )
                           ) : (
                             <span className="text-[10px] text-slate-300 sm:text-xs">—</span>
                           )}

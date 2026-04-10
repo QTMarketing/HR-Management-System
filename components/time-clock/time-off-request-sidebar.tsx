@@ -6,58 +6,16 @@ import {
   dateYmdToLocalDayStartIso,
   datetimeLocalValueToIso,
 } from "@/lib/time-clock/datetime-local";
+import { computeHoursAndDaysFromRange } from "@/lib/time-clock/time-off-request-helpers";
 import { TIME_OFF_TYPES } from "@/lib/time-clock/time-off-types";
 import { X } from "lucide-react";
-import { useEffect, useId, useState, useTransition } from "react";
+import { useEffect, useId, useMemo, useState, useTransition } from "react";
 
 export type StoreEmployeeOption = {
   id: string;
   fullName: string;
+  role?: string;
 };
-
-const WORK_HOURS_PER_DAY = 8;
-
-/**
- * Derive total hours + day equivalents from start/end.
- * — All day: inclusive calendar days; hours = days × 8 (standard full-day length).
- * — Date/time: elapsed hours (rounded to 0.25h); days = hours ÷ 8 (work-day equivalents).
- */
-function computeHoursAndDaysFromRange(
-  allDay: boolean,
-  startRaw: string,
-  endRaw: string,
-): { totalHours: string; daysOfLeave: string } | null {
-  const start = startRaw.trim();
-  const end = endRaw.trim();
-  if (!start || !end) return null;
-
-  if (allDay) {
-    const m1 = /^(\d{4})-(\d{2})-(\d{2})$/.exec(start);
-    const m2 = /^(\d{4})-(\d{2})-(\d{2})$/.exec(end);
-    if (!m1 || !m2) return null;
-    const d0 = new Date(Number(m1[1]), Number(m1[2]) - 1, Number(m1[3]));
-    const d1 = new Date(Number(m2[1]), Number(m2[2]) - 1, Number(m2[3]));
-    if (Number.isNaN(d0.getTime()) || Number.isNaN(d1.getTime()) || d1 < d0) return null;
-    const inclusiveDays = Math.floor((d1.getTime() - d0.getTime()) / 86400000) + 1;
-    const hours = inclusiveDays * WORK_HOURS_PER_DAY;
-    return {
-      totalHours: String(Math.round(hours * 4) / 4),
-      daysOfLeave: String(inclusiveDays),
-    };
-  }
-
-  const t0 = Date.parse(start);
-  const t1 = Date.parse(end);
-  if (Number.isNaN(t0) || Number.isNaN(t1) || t1 < t0) return null;
-  const durationHours = (t1 - t0) / 3600000;
-  const roundedHours = Math.round(durationHours * 4) / 4;
-  const dayEquiv = durationHours / WORK_HOURS_PER_DAY;
-  const roundedDays = Math.round(dayEquiv * 100) / 100;
-  return {
-    totalHours: String(roundedHours),
-    daysOfLeave: roundedDays < 0.005 ? "0" : String(roundedDays),
-  };
-}
 
 type Props = {
   open: boolean;
@@ -90,37 +48,18 @@ export function TimeOffRequestSidebar({
   const [allDay, setAllDay] = useState(false);
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
-  const [totalHours, setTotalHours] = useState("");
-  const [days, setDays] = useState("");
   const [managerNotes, setManagerNotes] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  useEffect(() => {
-    if (open) {
-      setEmployeeId(defaultEmployeeId);
-      setFormError(null);
-    }
-  }, [open, defaultEmployeeId]);
+  // Keep employee selection stable; we don't auto-reset via effects (lint rule).
 
-  /** Auto-fill total hours + days when start/end change (still editable). */
-  useEffect(() => {
-    if (!open) return;
+  const derived = useMemo(() => {
+    if (!open) return null;
     const s = startAt.trim();
     const e = endAt.trim();
-    if (!s || !e) {
-      setTotalHours("");
-      setDays("");
-      return;
-    }
-    const derived = computeHoursAndDaysFromRange(allDay, startAt, endAt);
-    if (!derived) {
-      setTotalHours("");
-      setDays("");
-      return;
-    }
-    setTotalHours(derived.totalHours);
-    setDays(derived.daysOfLeave);
+    if (!s || !e) return null;
+    return computeHoursAndDaysFromRange(allDay, startAt, endAt);
   }, [open, allDay, startAt, endAt]);
 
   useEffect(() => {
@@ -172,8 +111,8 @@ export function TimeOffRequestSidebar({
       return;
     }
 
-    const th = parseOptionalNumber(totalHours);
-    const dLeave = parseOptionalNumber(days);
+    const th = parseOptionalNumber(derived?.totalHours ?? "");
+    const dLeave = parseOptionalNumber(derived?.daysOfLeave ?? "");
     const notes = managerNotes.trim();
 
     startTransition(async () => {
@@ -318,40 +257,25 @@ export function TimeOffRequestSidebar({
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600" htmlFor={`${baseId}-hours`}>
-                Total hours (optional)
-              </label>
-              <input
-                id={`${baseId}-hours`}
-                type="number"
-                min={0}
-                step={0.25}
-                placeholder="from start / end"
-                value={totalHours}
-                onChange={(e) => setTotalHours(e.target.value)}
-                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400/70 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
-              />
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Total hours
+              </div>
+              <div className="mt-0.5 text-sm font-semibold text-slate-900">
+                {derived?.totalHours ?? "—"}
+              </div>
             </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600" htmlFor={`${baseId}-days`}>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 Days of leave
-              </label>
-              <input
-                id={`${baseId}-days`}
-                type="number"
-                min={0}
-                step={0.5}
-                placeholder="from start / end"
-                value={days}
-                onChange={(e) => setDays(e.target.value)}
-                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400/70 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
-              />
+              </div>
+              <div className="mt-0.5 text-sm font-semibold text-slate-900">
+                {derived?.daysOfLeave ?? "—"}
+              </div>
             </div>
           </div>
           <p className="text-[11px] text-slate-500">
-            Total hours and days of leave update from start and end (all-day: calendar days × 8 h; date/time:
-            elapsed hours and ÷8 for day equivalents). You can still edit them before saving.
+            Totals are calculated from start/end (all-day: calendar days × 8h).
           </p>
 
           <div>

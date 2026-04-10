@@ -1,9 +1,6 @@
 import { cookies } from "next/headers";
 import { Suspense } from "react";
-import {
-  ScheduleHub,
-  type ScheduleCard,
-} from "@/components/schedule/schedule-hub";
+import { ScheduleStoresList, type ScheduleStoreCardModel } from "@/components/schedule/schedule-stores-list";
 import { locationsForSession } from "@/lib/dashboard/locations-for-session";
 import {
   isAllLocations,
@@ -11,8 +8,10 @@ import {
   type LocationRow,
 } from "@/lib/dashboard/resolve-location";
 import { DEMO_LOCATIONS } from "@/lib/mock/dashboard-demo";
+import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { requirePermission } from "@/lib/rbac/guard";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
+import { formatWeekQueryParam, mondayOfWeekContaining } from "@/lib/schedule/week";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export default async function SchedulePage() {
@@ -22,7 +21,7 @@ export default async function SchedulePage() {
 
   const { data: locRows } = await supabase
     .from("locations")
-    .select("id, name")
+    .select("id, name, manager_employee_id")
     .order("sort_order", { ascending: true });
 
   let rawLocations: LocationRow[] = (locRows ?? []).map((r) => ({ id: r.id, name: r.name }));
@@ -40,17 +39,53 @@ export default async function SchedulePage() {
   const locationName =
     locations.find((l) => l.id === locationId)?.name ?? "Location";
 
-  const activeCards: ScheduleCard[] = [
-    {
-      id: "main",
-      title: "Main schedule",
-      assignedLabel: scopeAll
-        ? "All locations (matches header scope)"
-        : `All active employees · ${locationName}`,
-      hint: "Opens the week board: toolbars, day summaries, role rows, shift cards, weekly summary.",
-      href: "/schedule/board",
-    },
-  ];
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const ctx = await getRbacContext(supabase, user);
+  const weekMonday = mondayOfWeekContaining(new Date());
+  const weekParam = formatWeekQueryParam(weekMonday);
+
+  const canEditByPermission =
+    !ctx.enabled || hasPermission(ctx, PERMISSIONS.SCHEDULE_EDIT);
+  const ownerCanEditAll = !ctx.enabled || ctx.roleKey === "owner";
+  const managerIdByLocation = new Map(
+    (locRows ?? []).map((r) => [r.id as string, (r as { manager_employee_id?: string | null }).manager_employee_id ?? null] as const),
+  );
+
+  const visibleLocations = scopeAll
+    ? locations.filter((l) => !isAllLocations(l.id))
+    : locations.filter((l) => l.id === locationId);
+
+  const { data: empRows } = await supabase
+    .from("employees")
+    .select("id, full_name, role, location_id")
+    .eq("status", "active")
+    .order("full_name");
+
+  const byLoc = new Map<string, { id: string; fullName: string; role?: string | null }[]>();
+  for (const r of empRows ?? []) {
+    const lid = r.location_id as string;
+    if (!lid) continue;
+    if (!byLoc.has(lid)) byLoc.set(lid, []);
+    byLoc.get(lid)!.push({
+      id: r.id as string,
+      fullName: (r.full_name as string) ?? "—",
+      role: (r.role as string) ?? null,
+    });
+  }
+
+  const stores: ScheduleStoreCardModel[] = visibleLocations.map((l) => {
+    const managerEmployeeId = managerIdByLocation.get(l.id) ?? null;
+    const isStoreManager = ctx.employeeId != null && managerEmployeeId === ctx.employeeId;
+    const canEdit = canEditByPermission && (ownerCanEditAll || isStoreManager);
+    return {
+      locationId: l.id,
+      locationName: l.name,
+      employees: byLoc.get(l.id) ?? [],
+      canEdit,
+    };
+  });
 
   return (
     <Suspense
@@ -60,10 +95,10 @@ export default async function SchedulePage() {
         </div>
       }
     >
-      <ScheduleHub
-        locationLabel={locationName}
-        activeCards={activeCards}
-        archivedCards={[]}
+      <ScheduleStoresList
+        scopeLabel={scopeAll ? "All locations" : locationName}
+        weekParam={weekParam}
+        stores={stores}
       />
     </Suspense>
   );

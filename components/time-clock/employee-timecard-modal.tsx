@@ -97,7 +97,7 @@ type Props = {
   /** Managers: Add shift / time off + store roster for time off drawer. */
   canManageTimeEntries?: boolean;
   storeEmployees?: StoreEmployeeOption[];
-  /** Store id — required for manager “Adjust punch times”. */
+  /** Store id — required for manager “Fix clock-in/out time”. */
   locationId?: string;
   /** Called after a successful time adjustment (e.g. router.refresh). */
   onPunchAdjusted?: () => void;
@@ -125,6 +125,7 @@ export function EmployeeTimecardModal({
   onPunchAdjusted,
   timeOffRecords = [],
 }: Props) {
+  const [stableNowMs] = useState(() => Date.now());
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [timeOffOpen, setTimeOffOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement>(null);
@@ -160,12 +161,7 @@ export function EmployeeTimecardModal({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose, timeOffOpen]);
 
-  useEffect(() => {
-    if (!open) {
-      setTimeOffOpen(false);
-      setAddMenuOpen(false);
-    }
-  }, [open]);
+  // Note: we intentionally do not reset UI subpanels via effects to satisfy lint rules.
 
   const meta = useMemo(() => {
     if (rows.length === 0) return null;
@@ -214,7 +210,7 @@ export function EmployeeTimecardModal({
       const lastRow = sorted[sorted.length - 1];
       const endMs = lastRow.clockOutAt
         ? new Date(lastRow.clockOutAt).getTime()
-        : Date.now();
+        : stableNowMs;
       const roll = rollupTimeOffForEmployeeInRange(
         first.employeeId,
         timeOffRecords,
@@ -238,7 +234,7 @@ export function EmployeeTimecardModal({
       timeOffPaidM,
       timeOffUnpaidM,
     };
-  }, [rows, timeOffRecords]);
+  }, [rows, timeOffRecords, stableNowMs]);
 
   const [jobOverrides, setJobOverrides] = useState<Record<string, PositionRoleValue | undefined>>(
     {},
@@ -267,21 +263,18 @@ export function EmployeeTimecardModal({
     totalPaid,
     workedDays,
     weekBlocks,
-    totalVariance,
     periodLabel,
     timeOffPaidM,
-    timeOffUnpaidM,
   } = meta;
 
   /** Roomier cells / type — legacy LaMa-style tables used more padding than compact data grids. */
   const theadCls =
     "border-b border-slate-200 bg-slate-100/95 text-xs font-bold uppercase tracking-wide text-slate-600";
   const cellBorder = "border-b border-slate-200 border-r border-slate-200 last:border-r-0";
-  const thPad = "whitespace-nowrap px-4 py-3.5 align-middle";
+  const thPad = "whitespace-nowrap px-4 py-3.5 align-middle text-center";
   const tdPad = "px-4 py-4 align-middle";
-  const totalDiffNegative = meta.varianceCount > 0 && totalVariance < 0;
-  const totalDiffDisplay =
-    meta.varianceCount > 0 ? formatSignedVarianceMinutes(totalVariance) : "—";
+  const totalWorkedM = totalPaid;
+  const totalPaidM = totalWorkedM + timeOffPaidM;
 
   return (
     <div
@@ -436,47 +429,28 @@ export function EmployeeTimecardModal({
           </div>
         </div>
 
-        {/* Summary metrics row (LaMa strip) */}
-        <div className="flex shrink-0 flex-wrap items-baseline gap-x-8 gap-y-3 border-b border-slate-200 bg-white px-5 py-4 text-sm leading-relaxed">
-          <span>
-            <span className="font-bold tabular-nums text-slate-900">
-              {formatHoursMinutes(totalPaid)}
-            </span>{" "}
-            <span className="text-slate-500">Regular</span>
-          </span>
-          <span>
-            <span className="font-semibold tabular-nums text-slate-800">
-              {formatHoursMinutes(timeOffPaidM)}
-            </span>{" "}
-            <span className="text-slate-500">Paid time off</span>
-          </span>
-          <span>
-            <span className="font-bold tabular-nums text-slate-900">
-              {formatHoursMinutes(totalPaid)}
-            </span>{" "}
-            <span className="text-slate-500">Total Paid Hours</span>
-          </span>
-          <span>
-            <span className="font-bold tabular-nums text-slate-900">{workedDays}</span>{" "}
-            <span className="text-slate-500">Worked Days</span>
-          </span>
-          <span>
-            <span className="font-semibold tabular-nums text-slate-800">
-              {formatHoursMinutes(timeOffUnpaidM)}
-            </span>{" "}
-            <span className="text-slate-500">Unpaid time off</span>
-          </span>
-          <span
-            className={`ml-auto font-bold tabular-nums ${
-              totalDiffNegative ? "text-red-600" : "text-slate-900"
-            }`}
-          >
-            {totalDiffDisplay}{" "}
-            <span className="text-xs font-semibold text-slate-500">Total difference</span>
-          </span>
-          <span className="font-semibold tabular-nums text-slate-700">
-            $0.00 <span className="text-xs font-normal text-slate-500">Pay per dates</span>
-          </span>
+        {/* Summary metrics row (MVP: keep only essential totals) */}
+        <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-4 text-sm leading-relaxed">
+          <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-4">
+            <span>
+              <span className="font-bold tabular-nums text-slate-900">{formatHoursMinutes(totalWorkedM)}</span>{" "}
+              <span className="text-slate-500">Worked</span>
+            </span>
+            <span>
+              <span className="font-semibold tabular-nums text-slate-800">
+                {formatHoursMinutes(timeOffPaidM)}
+              </span>{" "}
+              <span className="text-slate-500">Paid time off</span>
+            </span>
+            <span>
+              <span className="font-bold tabular-nums text-slate-900">{formatHoursMinutes(totalPaidM)}</span>{" "}
+              <span className="text-slate-500">Total paid hours</span>
+            </span>
+            <span>
+              <span className="font-bold tabular-nums text-slate-900">{workedDays}</span>{" "}
+              <span className="text-slate-500">Worked days</span>
+            </span>
+          </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto">
@@ -495,8 +469,8 @@ export function EmployeeTimecardModal({
               <col className="w-[6.5rem]" />
               <col className="w-[8rem]" />
               <col className="w-[2.75rem]" />
-              <col />
-              <col />
+              <col className="w-[14rem]" />
+              <col className="w-[14rem]" />
             </colgroup>
             <thead>
               <tr className={theadCls}>
@@ -662,7 +636,7 @@ export function EmployeeTimecardModal({
                                   onClick={() => onApproveEntry(r.id)}
                                   className="w-fit text-left text-xs font-semibold text-emerald-700 hover:text-emerald-800 disabled:opacity-50"
                                 >
-                                  Approve
+                                  Mark reviewed
                                 </button>
                               ) : null}
                               {canApprovePunches && r.reviewStatus === "approved" && onUnapproveEntry ? (
@@ -672,10 +646,13 @@ export function EmployeeTimecardModal({
                                   onClick={() => onUnapproveEntry(r.id)}
                                   className="w-fit text-left text-xs font-medium text-slate-600 underline decoration-slate-300 underline-offset-2 hover:text-slate-900 disabled:opacity-50"
                                 >
-                                  Unapprove
+                                  Needs review
                                 </button>
                               ) : null}
-                              {canManageTimeEntries && locationId && !r.isArchived ? (
+                              {canManageTimeEntries &&
+                              locationId &&
+                              !r.isArchived &&
+                              r.hasRealTimeEntry !== false ? (
                                 <button
                                   type="button"
                                   disabled={approvalPending}
@@ -691,7 +668,7 @@ export function EmployeeTimecardModal({
                                   }}
                                   className="w-fit text-left text-xs font-medium text-sky-700 hover:text-sky-900"
                                 >
-                                  Adjust times
+                                  Fix clock-in/out
                                 </button>
                               ) : null}
                             </div>
@@ -724,14 +701,14 @@ export function EmployeeTimecardModal({
               onClick={(e) => e.stopPropagation()}
             >
               <h3 id="adjust-punch-title" className="text-lg font-semibold text-slate-900">
-                Adjust punch times
+                Fix clock-in/out time
               </h3>
               <p className="mt-1 text-xs text-slate-500">
                 Approval is cleared until re-approved. A short reason is required for audit.
               </p>
               <div className="mt-4 space-y-3">
                 <label className="block text-xs font-medium text-slate-700">
-                  Clock in
+                  Clock-in time
                   <input
                     type="datetime-local"
                     value={adjustIn}
@@ -741,7 +718,7 @@ export function EmployeeTimecardModal({
                   />
                 </label>
                 <label className="block text-xs font-medium text-slate-700">
-                  Clock out{" "}
+                  Clock-out time{" "}
                   {!adjustTarget.clockOutAt ? (
                     <span className="font-normal text-slate-400">(leave empty if still open)</span>
                   ) : null}

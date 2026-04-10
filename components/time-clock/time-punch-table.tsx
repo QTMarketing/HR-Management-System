@@ -48,7 +48,7 @@ type Props = {
   onUnapprove?: (entryId: string) => void;
   /** Active employees at this clock’s store — powers “Add time off” roster in the timecard modal. */
   storeEmployees?: StoreEmployeeOption[];
-  /** Required for manager “Adjust punch times” in the timecard. */
+  /** Required for manager “Fix clock-in/out time” in the timecard. */
   locationId?: string;
 };
 

@@ -41,9 +41,9 @@ Document anything that is **deferred** (e.g. “OT deferred to payroll”) so sc
 - [ ] **Export CSV** downloads rows matching the current period + filters (search/status) with columns: employee, times, breaks summary, status, job code, punch source.
 - [ ] Phase 1–2 paths still work after export (read-only client download).
 
-## Phase 4–7 (not implemented yet — track when you start)
+## Phase 4–7 (status)
 
-- **4 — OT rules:** weekly/daily thresholds, flags on punches or summary (schema + UI TBD).
-- **5 — PTO + ledger:** balances + requests tied to ledger (beyond time-off sidebar stubs).
+- **4 — OT rules:** not implemented — blocked until org defines thresholds (weekly/daily, flags on punches or summary).
+- **5 — PTO + ledger:** **partial** — `time_off_records` + manager log + **employee request (pending) + manager approve/deny** + surfacing in UI; **accrual ledger / balances** still TODO.
 - **6 — Notifications:** in-app/email for late punch / OT / approvals (TBD).
-- **7 — Payroll export:** CSV is started via Phase 3 export; extend with provider-specific columns / pay period close if needed.
+- **7 — Payroll export:** CSV from Phase 3; extend with provider-specific columns / pay period close if needed.

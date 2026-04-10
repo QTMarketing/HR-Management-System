@@ -4,6 +4,7 @@ export const TIME_OFF_TYPES = [
   "Holiday leave",
   "PTO",
   "Bereavement",
+  "Unavailability",
   "Other",
 ] as const;
 

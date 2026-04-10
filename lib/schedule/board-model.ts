@@ -8,12 +8,15 @@ export const JOB_ROW_NONE = "__no_job__";
 export type ShiftForBoard = {
   id: string;
   employee_id: string;
+  /** All assigned employees (from shift_assignments). */
+  assignedEmployeeIds: string[];
+  assignedEmployeeNames: string[];
   location_id: string;
   shift_start: string;
   shift_end: string;
   notes: string | null;
-  employeeName: string;
-  employeeRole: string;
+  /** Display label (single name or “N users”). */
+  assignedLabel: string;
   groupName: string;
   groupSort: number;
   /** Layer that defines groupName when using shift layers (e.g. “Schedule section”). */
@@ -44,6 +47,12 @@ export type JobRowDef = {
   label: string;
   sort: number;
   colorHex: string;
+};
+
+export type UserRowDef = {
+  employeeId: string;
+  label: string;
+  sort: number;
 };
 
 /** Connecteam-style hour display e.g. 33:00 */
@@ -82,7 +91,9 @@ export function buildDayColumns(
     const people = new Set<string>();
     for (const s of dayShifts) {
       totalHours += hoursBetween(s.shift_start, s.shift_end);
-      people.add(s.employee_id);
+      for (const eid of s.assignedEmployeeIds.length ? s.assignedEmployeeIds : [s.employee_id]) {
+        people.add(eid);
+      }
     }
 
     const date = addDays(weekMonday, d);
@@ -151,6 +162,49 @@ export function shiftsForCell(
   });
 }
 
+export function userRowsForSection(
+  shifts: ShiftForBoard[],
+  groupName: string,
+): UserRowDef[] {
+  const inSection = shifts.filter((s) => s.groupName === groupName);
+  const map = new Map<string, { label: string; sort: number }>();
+  for (const s of inSection) {
+    const ids = s.assignedEmployeeIds.length ? s.assignedEmployeeIds : [s.employee_id];
+    const names =
+      s.assignedEmployeeNames.length
+        ? s.assignedEmployeeNames
+        : s.assignedLabel && s.assignedLabel !== "0 users"
+          ? [s.assignedLabel]
+          : [];
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const label = names[i] ?? "—";
+      if (!map.has(id)) {
+        map.set(id, { label, sort: label === "—" ? 9999 : 0 });
+      }
+    }
+  }
+  return [...map.entries()]
+    .map(([employeeId, v]) => ({ employeeId, label: v.label, sort: v.sort }))
+    .sort((a, b) => a.sort - b.sort || a.label.localeCompare(b.label));
+}
+
+export function shiftsForUserCell(
+  shifts: ShiftForBoard[],
+  groupName: string,
+  employeeId: string,
+  weekMonday: Date,
+  dayIndex: number,
+): ShiftForBoard[] {
+  const { start, end } = dayBounds(weekMonday, dayIndex);
+  return shifts.filter((s) => {
+    if (s.groupName !== groupName) return false;
+    const ids = s.assignedEmployeeIds.length ? s.assignedEmployeeIds : [s.employee_id];
+    if (!ids.includes(employeeId)) return false;
+    return shiftStartsInRange(s.shift_start, start, end);
+  });
+}
+
 export function weekTotals(shifts: ShiftForBoard[]): {
   hours: number;
   shiftCount: number;
@@ -160,7 +214,9 @@ export function weekTotals(shifts: ShiftForBoard[]): {
   const people = new Set<string>();
   for (const s of shifts) {
     hours += hoursBetween(s.shift_start, s.shift_end);
-    people.add(s.employee_id);
+    for (const eid of s.assignedEmployeeIds.length ? s.assignedEmployeeIds : [s.employee_id]) {
+      people.add(eid);
+    }
   }
   return {
     hours: Math.round(hours * 100) / 100,
@@ -191,7 +247,8 @@ export function filterShiftsQuery(shifts: ShiftForBoard[], query: string): Shift
       s.groupName.toLowerCase().includes(q) ||
       (s.boardSectionLayerName?.toLowerCase().includes(q) ?? false) ||
       (s.jobName?.toLowerCase().includes(q) ?? false) ||
-      s.employeeName.toLowerCase().includes(q) ||
+      s.assignedEmployeeNames.some((n) => n.toLowerCase().includes(q)) ||
+      s.assignedLabel.toLowerCase().includes(q) ||
       (s.notes?.toLowerCase().includes(q) ?? false) ||
       extrasHit
     );

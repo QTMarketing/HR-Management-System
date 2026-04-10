@@ -10,6 +10,8 @@ import { TimeClockTodayMetricsStrip } from "@/components/time-clock/time-clock-t
 import { TimePunchTable } from "@/components/time-clock/time-punch-table";
 import type { StoreEmployeeOption } from "@/components/time-clock/time-off-request-sidebar";
 import type { TimeOffRecordForUi } from "@/lib/time-clock/time-off-display";
+import type { PendingTimeOffRequestRow } from "@/lib/time-clock/pending-time-off";
+import { PendingTimeOffQueue } from "@/components/time-clock/pending-time-off-queue";
 
 type Props = {
   timeClockId: string;
@@ -23,6 +25,8 @@ type Props = {
   employeeTimecardPool: EnrichedPunchRow[];
   /** Approved time off overlapping loaded punches — PTO column + timecard summary. */
   timeOffRecords?: TimeOffRecordForUi[];
+  /** Employee-submitted time off awaiting manager action (managers only). */
+  pendingTimeOffRequests?: PendingTimeOffRequestRow[];
   /** Viewer can manage time entries (enables edits in timecard modal). */
   canManage?: boolean;
   storeEmployees?: StoreEmployeeOption[];
@@ -30,6 +34,7 @@ type Props = {
   viewerEmployeeId?: string | null;
   viewerAtLocation?: boolean;
   viewerOpenEntryId?: string | null;
+  viewerOpenEntryClockInAt?: string | null;
   /** Phase 2: viewer has an unpaid/paid break in progress on the open punch. */
   viewerOpenBreakId?: string | null;
   geofenceActive?: boolean;
@@ -45,11 +50,13 @@ export function TimeClockPanel({
   todayMetrics = null,
   employeeTimecardPool,
   timeOffRecords = [],
+  pendingTimeOffRequests = [],
   canManage = false,
   storeEmployees,
   viewerEmployeeId = null,
   viewerAtLocation = false,
   viewerOpenEntryId = null,
+  viewerOpenEntryClockInAt = null,
   viewerOpenBreakId = null,
   geofenceActive = false,
   clockSelfServeDisabled = false,
@@ -94,12 +101,17 @@ export function TimeClockPanel({
         viewerEmployeeId={viewerEmployeeId}
         viewerAtLocation={viewerAtLocation}
         viewerOpenEntryId={viewerOpenEntryId}
+        viewerOpenEntryClockInAt={viewerOpenEntryClockInAt}
         viewerOpenBreakId={viewerOpenBreakId}
         geofenceActive={geofenceActive}
         disabled={clockSelfServeDisabled}
       />
 
       {todayMetrics ? <TimeClockTodayMetricsStrip metrics={todayMetrics} /> : null}
+
+      {canManage && pendingTimeOffRequests.length > 0 ? (
+        <PendingTimeOffQueue locationId={locationId} requests={pendingTimeOffRequests} />
+      ) : null}
 
       {message ? (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950" role="status">
@@ -110,7 +122,7 @@ export function TimeClockPanel({
       <TimePunchTable
         rows={entries}
         title="Latest punch per employee"
-        subtitle={`One row per person — most recent entry on this clock · ${clockName}`}
+        subtitle={`One row per person at this store — latest punch on this clock, or no punch yet · ${clockName}`}
         emptyMessage="No punches recorded for this clock yet."
         canManage={canManage}
         pending={pending}

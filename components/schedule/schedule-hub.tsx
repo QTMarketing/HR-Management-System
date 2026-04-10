@@ -21,12 +21,15 @@ type Props = {
   activeCards: ScheduleCard[];
   /** Archived modules — placeholder until you persist schedules in DB. */
   archivedCards: ScheduleCard[];
+  /** When set, “+ Add” opens the week board add-shift flow for the current week. */
+  addShiftHref: string | null;
 };
 
 export function ScheduleHub({
   locationLabel,
   activeCards,
   archivedCards,
+  addShiftHref,
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -75,14 +78,23 @@ export function ScheduleHub({
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          className={`${PRIMARY_ORANGE_CTA} inline-flex shrink-0 items-center justify-center px-4 py-2.5 text-sm disabled:opacity-50`}
-          disabled
-          title="Creating schedules in-app can be wired when schedule entities exist in the database."
-        >
-          + Add
-        </button>
+        {addShiftHref ? (
+          <Link
+            href={addShiftHref}
+            className={`${PRIMARY_ORANGE_CTA} inline-flex shrink-0 items-center justify-center px-4 py-2.5 text-sm`}
+          >
+            + Add
+          </Link>
+        ) : (
+          <button
+            type="button"
+            className={`${PRIMARY_ORANGE_CTA} inline-flex shrink-0 items-center justify-center px-4 py-2.5 text-sm disabled:opacity-50`}
+            disabled
+            title="You don’t have permission to add shifts."
+          >
+            + Add
+          </button>
+        )}
       </div>
 
       <div className="border-b border-slate-200">

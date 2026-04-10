@@ -159,15 +159,9 @@ export function demoTrendForLocation(locationId: string): AttendanceTrendPoint[]
 
 export function demoActivityForLocation(locationId: string): ActivityFeedItem[] {
   if (locationId === ALL_LOCATIONS_ID) {
-    const merged: ActivityFeedItem[] = [];
-    for (const loc of DEMO_LOCATIONS) {
-      merged.push(...demoActivityForLocation(loc.id));
-    }
-    merged.sort(
-      (a, b) =>
-        new Date(b.occurredAt).valueOf() - new Date(a.occurredAt).valueOf(),
-    );
-    return merged.slice(0, 12);
+    // One list for “All locations”: KPIs are still summed in `demoMetricsForLocation`;
+    // repeating the same people per fake store looked like broken duplicate data.
+    return demoActivityForLocation(DEMO_PRIMARY_LOCATION_ID);
   }
   const n = locationIndex(locationId);
   const suffix = ["", " @ LP", " @ 18"][n] ?? "";
@@ -180,15 +174,7 @@ export function demoActivityForLocation(locationId: string): ActivityFeedItem[] 
 
 export function demoStaffForLocation(locationId: string): StaffUpdateRow[] {
   if (locationId === ALL_LOCATIONS_ID) {
-    const merged: StaffUpdateRow[] = [];
-    for (const loc of DEMO_LOCATIONS) {
-      merged.push(...demoStaffForLocation(loc.id));
-    }
-    merged.sort(
-      (a, b) =>
-        new Date(b.createdAt).valueOf() - new Date(a.createdAt).valueOf(),
-    );
-    return merged.slice(0, 10);
+    return demoStaffForLocation(DEMO_PRIMARY_LOCATION_ID);
   }
   const n = locationIndex(locationId);
   const suffix = ["", " — LP", " — 18"][n] ?? "";

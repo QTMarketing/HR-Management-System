@@ -21,6 +21,79 @@ import { punchSourceLabel as punchSourceDisplay } from "@/lib/time-clock/punch-s
 import { formatHoursMinutes } from "@/lib/time-clock/timecard-rollup";
 import type { EnrichedPunchRow, TimeClockTodayMetrics } from "@/lib/time-clock/types";
 
+/** Synthetic `time_entries.id` prefix for “no punch yet” rows merged from the store roster. */
+export const NO_PUNCH_ROW_PREFIX = "__no_punch__";
+
+export function isNoPunchPlaceholderRowId(id: string): boolean {
+  return id.startsWith(NO_PUNCH_ROW_PREFIX);
+}
+
+export type StoreRosterLike = { id: string; fullName: string; role: string };
+
+function localNoonIsoForDate(d: Date): string {
+  const y = d.getFullYear();
+  const mo = d.getMonth();
+  const day = d.getDate();
+  return new Date(y, mo, day, 12, 0, 0, 0).toISOString();
+}
+
+function noPunchPlaceholderRow(e: StoreRosterLike, asOf: Date): EnrichedPunchRow {
+  const name = e.fullName.trim() || "Employee";
+  const role = e.role?.trim() || "—";
+  return {
+    id: `${NO_PUNCH_ROW_PREFIX}${e.id}`,
+    employeeId: e.id,
+    employeeName: name,
+    employeeRole: role,
+    initials: initialsFromName(name),
+    scheduleLabel: null,
+    shiftTypeLabel: "—",
+    jobTone: jobToneFromRole(role),
+    clockInAt: localNoonIsoForDate(asOf),
+    clockOutAt: null,
+    clockInDisplay: "—",
+    clockOutDisplay: "—",
+    lateInBadge: null,
+    lateOutBadge: null,
+    dailyTotalLabel: "—",
+    scheduledDurationLabel: null,
+    scheduleVarianceMinutes: null,
+    ptoLabel: "—",
+    status: "closed",
+    reviewStatus: "open",
+    reviewLabel: "No punch",
+    punchSourceLabel: null,
+    jobCodeAtPunch: null,
+    wasEdited: false,
+    breaksSummaryLabel: null,
+    unpaidBreakMinutes: null,
+    hasRealTimeEntry: false,
+  };
+}
+
+/**
+ * Today tab: show every active employee at the store, not only those with a punch on this clock.
+ * Real punch rows are preserved; missing employees get a synthetic row (`hasRealTimeEntry: false`).
+ */
+export function mergeLatestPunchesWithStoreRoster(
+  punchRows: EnrichedPunchRow[],
+  roster: StoreRosterLike[],
+  asOf: Date = new Date(),
+): EnrichedPunchRow[] {
+  if (!roster.length) return punchRows;
+  const seen = new Set(punchRows.map((r) => r.employeeId));
+  const extra: EnrichedPunchRow[] = [];
+  for (const e of roster) {
+    if (seen.has(e.id)) continue;
+    extra.push(noPunchPlaceholderRow(e, asOf));
+  }
+  const merged = [...punchRows, ...extra];
+  merged.sort((a, b) =>
+    a.employeeName.localeCompare(b.employeeName, undefined, { sensitivity: "base" }),
+  );
+  return merged;
+}
+
 type RawEntry = {
   id: string;
   employee_id: string;

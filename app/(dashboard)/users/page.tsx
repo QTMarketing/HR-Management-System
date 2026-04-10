@@ -44,8 +44,15 @@ const EMPLOYEE_SELECT = [
                       "admin_tab_enabled",
                     ].join(",");
 
-export default async function UsersPage() {
+type UsersPageProps = {
+  searchParams: Promise<{ q?: string; tab?: string }>;
+};
+
+export default async function UsersPage({ searchParams }: UsersPageProps) {
   await requirePermission(PERMISSIONS.USERS_VIEW);
+
+  const sp = await searchParams;
+  const initialSearchQ = typeof sp.q === "string" ? sp.q : "";
 
   const supabase = await createSupabaseServerClient();
   const {
@@ -153,6 +160,7 @@ export default async function UsersPage() {
           }
         >
           <UsersDirectory
+            key={`users-q:${initialSearchQ}`}
             employees={employees}
             locationLabel={locationName}
             assignmentLocationId={scopeAll ? null : selectedLocationId}
@@ -160,6 +168,7 @@ export default async function UsersPage() {
             canEditAdminAccess={canEditAdminAccess}
             canPromoteToAdmin={canPromoteToAdmin}
             canBulkAddFromAdminsTab={canBulkAddFromAdminsTab}
+            initialSearchQuery={initialSearchQ}
           />
         </Suspense>
       )}

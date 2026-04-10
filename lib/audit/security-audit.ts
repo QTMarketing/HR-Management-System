@@ -11,6 +11,9 @@ export const SECURITY_AUDIT_ACTIONS = {
   TIME_ENTRY_UNAPPROVED: "time_entry_unapproved",
   TIME_ENTRY_ADJUSTED: "time_entry_adjusted",
   TIME_OFF_RECORDED: "time_off_recorded",
+  TIME_OFF_REQUEST_SUBMITTED: "time_off_request_submitted",
+  TIME_OFF_REQUEST_APPROVED: "time_off_request_approved",
+  TIME_OFF_REQUEST_DENIED: "time_off_request_denied",
 } as const;
 
 export type SecurityAuditAction =

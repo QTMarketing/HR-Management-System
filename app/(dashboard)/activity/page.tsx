@@ -58,7 +58,7 @@ export default async function ActivityPage() {
         .from("activity_events")
         .select("id, employee_label, action, status, occurred_at")
         .order("occurred_at", { ascending: false })
-        .limit(24);
+        .limit(120);
       if (!scopeAll) {
         q = q.eq("location_id", locationId);
       }
@@ -66,13 +66,18 @@ export default async function ActivityPage() {
 
       if (activityRes.error) activityError = activityRes.error.message;
       else if (activityRes.data) {
-        activityItems = activityRes.data.map((row) => ({
-          id: row.id,
-          who: row.employee_label,
-          action: row.action,
-          status: mapActivityStatus(row.status),
-          occurredAt: row.occurred_at,
-        }));
+        activityItems = activityRes.data
+          .map((row) => ({
+            id: row.id,
+            who: row.employee_label,
+            action: row.action,
+            status: mapActivityStatus(row.status),
+            occurredAt: row.occurred_at,
+          }))
+          .sort(
+            (a, b) =>
+              new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime(),
+          );
       }
     } catch (e) {
       activityError =
@@ -114,6 +119,9 @@ export default async function ActivityPage() {
         enableRealtime={!forceMock && !usedDemoFallback && !scopeAll}
         errorMessage={activityError}
         emptyHint={activityError ? sqlHint : null}
+        exploreMode
+        maxFeedItems={120}
+        feedClassName="flex min-h-0 max-h-[min(40rem,80vh)] flex-col rounded-2xl border border-slate-200 bg-white shadow-sm"
       />
     </div>
   );

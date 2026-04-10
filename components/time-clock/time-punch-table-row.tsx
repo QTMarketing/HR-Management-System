@@ -239,7 +239,7 @@ export function TimePunchTableRow({
               disabled={pending}
               className="text-sm font-semibold text-emerald-700 hover:text-emerald-800 disabled:opacity-50"
             >
-              Approve
+              Mark reviewed
             </button>
           ) : row.reviewStatus === "approved" && onUnapprove ? (
             <button
@@ -251,7 +251,7 @@ export function TimePunchTableRow({
               disabled={pending}
               className="text-sm font-medium text-slate-600 underline decoration-slate-300 underline-offset-2 hover:text-slate-900 disabled:opacity-50"
             >
-              Unapprove
+              Needs review
             </button>
           ) : (
             <span className="text-xs text-slate-400">—</span>

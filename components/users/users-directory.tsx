@@ -123,6 +123,8 @@ type Props = {
   canPromoteToAdmin: boolean;
   /** Store Managers (and owners): bulk-add employees from Admins tab shortcut. */
   canBulkAddFromAdminsTab: boolean;
+  /** Prefill search from `?q=` (e.g. Activity → Users). */
+  initialSearchQuery?: string;
 };
 
 export function UsersDirectory({
@@ -133,11 +135,12 @@ export function UsersDirectory({
   canEditAdminAccess,
   canPromoteToAdmin,
   canBulkAddFromAdminsTab,
+  initialSearchQuery = "",
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => initialSearchQuery);
   const [addUsersOpen, setAddUsersOpen] = useState(false);
   const [addUsersModalKey, setAddUsersModalKey] = useState(0);
   const [addUsersBulkMode, setAddUsersBulkMode] = useState<"default" | "admin_create">("default");

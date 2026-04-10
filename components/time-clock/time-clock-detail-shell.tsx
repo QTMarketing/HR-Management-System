@@ -32,6 +32,7 @@ export function TimeClockDetailShell({
   const rawView = searchParams.get("view");
   const view: View =
     rawView === "timesheets" ? "timesheets" : rawView === "settings" ? "settings" : "today";
+  const effectiveView: View = view === "settings" && !canManage ? "today" : view;
 
   const setView = useCallback(
     (next: View) => {
@@ -109,7 +110,11 @@ export function TimeClockDetailShell({
         </nav>
       </div>
 
-      {view === "today" ? todayContent : view === "timesheets" ? timesheetsContent : settingsContent}
+      {effectiveView === "today"
+        ? todayContent
+        : effectiveView === "timesheets"
+          ? timesheetsContent
+          : settingsContent}
     </div>
   );
 }
