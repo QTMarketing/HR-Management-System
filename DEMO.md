@@ -14,7 +14,7 @@ Copy `.env.example` → `.env.local` and set at least:
 | Variable | Demo value | Why |
 |----------|------------|-----|
 | `RBAC_ENABLED` | *(unset or not `true`)* | Everyone gets full permissions; no `/forbidden` on Publish, etc. |
-| `NEXT_PUBLIC_AUTH_ENABLED` | *(unset)* | Matches current middleware: no forced login. |
+| `NEXT_PUBLIC_AUTH_ENABLED` | *(unset)* | No forced login. Set to `true` to require sign-in (`lib/supabase/middleware.ts`). |
 
 **Optional:**
 

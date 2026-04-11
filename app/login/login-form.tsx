@@ -1,19 +1,23 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { safeNextPath } from "@/lib/auth/safe-next-path";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type Props = {
   initialError?: string | null;
+  /** Return URL after sign-in (from server `next` search param). */
+  nextPath?: string;
 };
 
 /** Shown only in `next dev` — create this user once in Supabase → Authentication → Users. */
 const DEV_LOGIN_EMAIL = "dev@retailhr.local";
 const DEV_LOGIN_PASSWORD = "DevPassword123!";
 
-export function LoginForm({ initialError }: Props) {
+export function LoginForm({ initialError, nextPath }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const isDev = process.env.NODE_ENV === "development";
   const [email, setEmail] = useState(() => (isDev ? DEV_LOGIN_EMAIL : ""));
   const [password, setPassword] = useState(() => (isDev ? DEV_LOGIN_PASSWORD : ""));
@@ -34,8 +38,11 @@ export function LoginForm({ initialError }: Props) {
       setError(err.message);
       return;
     }
+    const dest = safeNextPath(
+      nextPath ?? searchParams.get("next"),
+    );
     router.refresh();
-    router.push("/");
+    router.push(dest);
   }
 
   return (
