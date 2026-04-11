@@ -573,10 +573,12 @@ export function ScheduleWeekBoard({
           contextUnavailability={unavailability}
           contextShifts={shiftsProp.map((s) => ({
             id: s.id,
+            employee_id: s.employee_id,
             location_id: s.location_id,
             shift_start: s.shift_start,
             shift_end: s.shift_end,
             jobName: s.jobName,
+            assignedEmployeeIds: s.assignedEmployeeIds,
             assignedEmployeeNames: s.assignedEmployeeNames,
             assignedLabel: s.assignedLabel,
           }))}

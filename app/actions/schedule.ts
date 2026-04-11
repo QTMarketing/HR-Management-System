@@ -40,6 +40,70 @@ async function anyUnavailabilityOverlap(
   }
 }
 
+/** True if any of `employeeIds` already has a planned shift overlapping [startIso, endIso) at this store. */
+async function anyShiftTimeOverlap(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  input: {
+    employeeIds: string[];
+    locationId: string;
+    startIso: string;
+    endIso: string;
+    excludeShiftId?: string;
+  },
+): Promise<boolean> {
+  if (input.employeeIds.length === 0) return false;
+  try {
+    const { data, error } = await supabase
+      .from("shifts")
+      .select("id, employee_id, shift_assignments(employee_id)")
+      .eq("location_id", input.locationId)
+      .lt("shift_start", input.endIso)
+      .gt("shift_end", input.startIso);
+    if (error) return false;
+    const want = new Set(input.employeeIds);
+    for (const row of data ?? []) {
+      const r = row as {
+        id: string;
+        employee_id: string;
+        shift_assignments: { employee_id: string }[] | null;
+      };
+      if (input.excludeShiftId && r.id === input.excludeShiftId) continue;
+      const onShift = new Set<string>();
+      onShift.add(r.employee_id);
+      for (const sa of r.shift_assignments ?? []) {
+        if (sa?.employee_id) onShift.add(sa.employee_id);
+      }
+      for (const eid of want) {
+        if (onShift.has(eid)) return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** Overlap with an existing employee_unavailability row (same employee + store). */
+async function anyUnavailabilityBlockOverlap(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  input: { employeeId: string; locationId: string; startIso: string; endIso: string },
+): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from("employee_unavailability")
+      .select("id")
+      .eq("employee_id", input.employeeId)
+      .eq("location_id", input.locationId)
+      .lt("start_at", input.endIso)
+      .gt("end_at", input.startIso)
+      .limit(1);
+    if (error) return false;
+    return (data ?? []).length > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function loadScheduleLocationScope(supabase: Awaited<
   ReturnType<typeof createSupabaseServerClient>
 >) {
@@ -155,6 +219,19 @@ export async function createShift(input: {
   });
   if (overlapsUnavailability) {
     return { ok: false, error: "One or more selected employees are unavailable during this time." };
+  }
+
+  const overlapsShift = await anyShiftTimeOverlap(supabase, {
+    employeeIds: uniqEmployeeIds,
+    locationId: input.locationId,
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+  });
+  if (overlapsShift) {
+    return {
+      ok: false,
+      error: "One or more selected employees already have another shift overlapping this time.",
+    };
   }
 
   const { data: emps, error: empErr } = await supabase
@@ -331,6 +408,20 @@ export async function updateShift(input: {
   });
   if (overlapsUnavailability) {
     return { ok: false, error: "One or more selected employees are unavailable during this time." };
+  }
+
+  const overlapsShift = await anyShiftTimeOverlap(supabase, {
+    employeeIds: uniqEmployeeIds,
+    locationId: input.locationId,
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+    excludeShiftId: input.shiftId,
+  });
+  if (overlapsShift) {
+    return {
+      ok: false,
+      error: "One or more selected employees already have another shift overlapping this time.",
+    };
   }
 
   const { data: emps, error: empErr } = await supabase
@@ -841,6 +932,32 @@ export async function createUnavailability(input: {
   const e = emp as { location_id: string; status?: string };
   if (e.status && e.status !== "active") return { ok: false, error: "Employee is not active." };
   if (e.location_id !== input.locationId) return { ok: false, error: "Employee does not belong to this store." };
+
+  const overlapsExistingUnavail = await anyUnavailabilityBlockOverlap(supabase, {
+    employeeId: input.employeeId,
+    locationId: input.locationId,
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+  });
+  if (overlapsExistingUnavail) {
+    return {
+      ok: false,
+      error: "An unavailability block already exists that overlaps this time.",
+    };
+  }
+
+  const overlapsShift = await anyShiftTimeOverlap(supabase, {
+    employeeIds: [input.employeeId],
+    locationId: input.locationId,
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+  });
+  if (overlapsShift) {
+    return {
+      ok: false,
+      error: "This employee is already scheduled during this time. Remove or shorten the shift first.",
+    };
+  }
 
   // Create linked leave record (“Unavailability”) unless a record already exists for same window.
   const { data: existingTor } = await supabase

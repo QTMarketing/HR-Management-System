@@ -97,13 +97,15 @@ type Props = {
     end_at: string;
     reason: string | null;
   }[];
-  /** Shifts in the currently loaded range (used for “Shift tasks” tab). */
+  /** Shifts in the currently loaded range (used for “Shift tasks” tab + overlap checks). */
   contextShifts?: {
     id: string;
+    employee_id?: string;
     location_id: string;
     shift_start: string;
     shift_end: string;
     jobName?: string | null;
+    assignedEmployeeIds?: string[];
     assignedEmployeeNames?: string[];
     assignedLabel?: string;
   }[];
@@ -279,7 +281,49 @@ export function AddShiftModal({
     return overlaps;
   }, [contextUnavailability, employeeIds, employees, endDt, endLocal, locationId, startDt, startLocal]);
 
-  const blockingOverlap = overlappingUnavailability.length > 0;
+  const overlappingOtherShifts = useMemo(() => {
+    if (!locationId || employeeIds.length === 0) return [];
+    if (!startLocal || !endLocal) return [];
+    if (Number.isNaN(startDt.getTime()) || Number.isNaN(endDt.getTime())) return [];
+    if (endDt <= startDt) return [];
+
+    const overlaps: { label: string }[] = [];
+    for (const s of contextShifts) {
+      if (s.location_id !== locationId) continue;
+      if (initialShift?.id && s.id === initialShift.id) continue;
+      const ids =
+        s.assignedEmployeeIds && s.assignedEmployeeIds.length > 0
+          ? s.assignedEmployeeIds
+          : s.employee_id
+            ? [s.employee_id]
+            : [];
+      if (!ids.some((id) => employeeIds.includes(id))) continue;
+      const sStart = new Date(s.shift_start);
+      const sEnd = new Date(s.shift_end);
+      if (Number.isNaN(sStart.getTime()) || Number.isNaN(sEnd.getTime())) continue;
+      if (!(startDt < sEnd && endDt > sStart)) continue;
+      const who =
+        s.assignedLabel?.trim() ||
+        (s.assignedEmployeeNames?.length ? s.assignedEmployeeNames.join(", ") : null) ||
+        "Shift";
+      const job = s.jobName?.trim();
+      overlaps.push({ label: job ? `${job} · ${who}` : who });
+    }
+    return overlaps;
+  }, [
+    contextShifts,
+    employeeIds,
+    endDt,
+    endLocal,
+    initialShift?.id,
+    locationId,
+    startDt,
+    startLocal,
+  ]);
+
+  const blockingUnavailability = overlappingUnavailability.length > 0;
+  const blockingShiftOverlap = overlappingOtherShifts.length > 0;
+  const blockingOverlap = blockingUnavailability || blockingShiftOverlap;
   const shiftOptionsForDate = useMemo(() => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(selectedYmd)) return [];
     return contextShifts
@@ -601,6 +645,19 @@ export function AddShiftModal({
                   </div>
                 ) : null}
 
+                {overlappingOtherShifts.length > 0 ? (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-900">
+                    <div className="font-semibold">Overlapping shift</div>
+                    <div className="mt-0.5 text-rose-800">
+                      {overlappingOtherShifts
+                        .slice(0, 3)
+                        .map((o) => o.label)
+                        .join(" • ")}
+                      {overlappingOtherShifts.length > 3 ? " • …" : null}
+                    </div>
+                  </div>
+                ) : null}
+
           {scopeAll ? (
             <div>
               <label htmlFor={`${baseId}-loc`} className="block text-xs font-medium text-slate-700">
@@ -739,7 +796,11 @@ export function AddShiftModal({
             ) : null}
             {blockingOverlap ? (
               <p className="mb-2 text-xs font-medium text-amber-700" role="alert">
-                Can’t save this shift because it overlaps an unavailability block.
+                {blockingUnavailability && blockingShiftOverlap
+                  ? "Can’t save: overlaps both unavailability and another shift for this time."
+                  : blockingUnavailability
+                    ? "Can’t save this shift because it overlaps an unavailability block."
+                    : "Can’t save: one or more selected people already have another shift at this time."}
               </p>
             ) : null}
             <div className="flex items-center justify-between gap-2">
