@@ -14,6 +14,9 @@ import { DASHBOARD_NAV, filterNavForRbac } from "@/lib/rbac/nav";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
+/** Cookie + session + Supabase — must not be statically prerendered at build time. */
+export const dynamic = "force-dynamic";
+
 export default async function DashboardLayout({
   children,
 }: Readonly<{
