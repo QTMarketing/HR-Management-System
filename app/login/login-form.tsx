@@ -11,7 +11,11 @@ type Props = {
   nextPath?: string;
 };
 
-/** Shown only in `next dev` — create this user once in Supabase → Authentication → Users. */
+/**
+ * Shown only in `next dev` — create this user once in Supabase → Authentication → Users.
+ * With `RBAC_ENABLED=true`, run `scripts/bootstrap-dev-org-owner.sql` (or equivalent) so
+ * `employees.email` matches this address and `role` is Org Owner.
+ */
 const DEV_LOGIN_EMAIL = "dev@retailhr.local";
 const DEV_LOGIN_PASSWORD = "DevPassword123!";
 
@@ -58,24 +62,36 @@ export function LoginForm({ initialError, nextPath }: Props) {
       </div>
 
       {isDev ? (
-        <div className="rounded-lg border border-orange-200 bg-orange-50/90 px-3 py-2.5 text-xs text-orange-950">
-          <p className="font-semibold text-orange-900">Development login</p>
-          <p className="mt-1 text-orange-900/90">
-            In Supabase Dashboard → <strong>Authentication</strong> → <strong>Users</strong> →{" "}
-            <strong>Add user</strong>, create:
+        <div className="rounded-xl border border-orange-200 bg-orange-50/90 px-3 py-3 text-xs text-orange-950">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-orange-800">
+            Development — demo sign-in
           </p>
-          <dl className="mt-2 space-y-1 font-mono text-[11px] text-orange-950">
-            <div className="flex justify-between gap-2">
-              <dt className="text-orange-800">Email</dt>
-              <dd className="break-all text-right">{DEV_LOGIN_EMAIL}</dd>
+          <p className="mt-1 text-[13px] font-semibold text-orange-950">Use these credentials</p>
+          <p className="mt-1 text-[11px] text-orange-900/90">
+            Supabase → <strong>Authentication</strong> → <strong>Users</strong>: add user with this email
+            &amp; password if missing.
+          </p>
+          <div className="mt-2 space-y-2">
+            <div className="rounded-lg border border-orange-200/80 bg-white px-2.5 py-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-orange-800">Email</div>
+              <div className="mt-0.5 select-all font-mono text-[13px] font-medium text-slate-900">
+                {DEV_LOGIN_EMAIL}
+              </div>
             </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-orange-800">Password</dt>
-              <dd className="break-all text-right">{DEV_LOGIN_PASSWORD}</dd>
+            <div className="rounded-lg border border-orange-200/80 bg-white px-2.5 py-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-orange-800">Password</div>
+              <div className="mt-0.5 select-all font-mono text-[13px] font-medium text-slate-900">
+                {DEV_LOGIN_PASSWORD}
+              </div>
             </div>
-          </dl>
-          <p className="mt-2 text-orange-800/90">
-            Fields below are pre-filled in dev. Remove this block before production.
+          </div>
+          <p className="mt-2 text-[11px] text-orange-900/90">
+            With <span className="font-mono">RBAC_ENABLED=true</span>, run{" "}
+            <span className="font-mono">scripts/bootstrap-dev-org-owner.sql</span> in the Supabase SQL
+            editor so this email is an <strong>Org Owner</strong> in <span className="font-mono">employees</span>.
+          </p>
+          <p className="mt-1 text-[11px] text-orange-800/90">
+            Remove this panel before production builds.
           </p>
         </div>
       ) : null}
@@ -109,7 +125,7 @@ export function LoginForm({ initialError, nextPath }: Props) {
           <input
             id="password"
             name="password"
-            type="password"
+            type={isDev ? "text" : "password"}
             autoComplete="current-password"
             required
             value={password}
