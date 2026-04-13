@@ -38,7 +38,7 @@ async function gateManageTime(): Promise<SeedTimeEntriesResult | null> {
   if (!hasPermission(ctx, PERMISSIONS.TIME_CLOCK_MANAGE)) {
     return {
       ok: false,
-      error: "You need time clock management permission to add sample punches.",
+      error: "You need time clock management permission to add sample time entries.",
     };
   }
   return null;

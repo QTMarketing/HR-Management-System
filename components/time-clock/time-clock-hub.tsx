@@ -194,7 +194,7 @@ export function TimeClockHub({
   const confirmDelete = (c: HubClock) => {
     setMenuOpenId(null);
     const ok = window.confirm(
-      `Delete “${c.name}”? This cannot be undone. Clocks with any punch history cannot be deleted — use Archive instead.`,
+      `Delete “${c.name}”? This cannot be undone. Clocks with any logged time history cannot be deleted — use Archive instead.`,
     );
     if (!ok) return;
     runAction(() => deleteTimeClock(c.id));
@@ -210,11 +210,11 @@ export function TimeClockHub({
             <Clock className="h-5 w-5" aria-hidden />
           </span>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-800">Time clock</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-800">Time Clock</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">
-              Hub for store clocks (Connecteam-style). Scope:{" "}
-              <span className="font-medium text-slate-700">{locationName}</span> — pick a clock,
-              then open it for Today / Timesheets.
+              Store clocks for tracking hours. Current scope:{" "}
+              <span className="font-medium text-slate-700">{locationName}</span>. Pick a clock to open
+              Today or Timesheets.
             </p>
           </div>
         </div>
@@ -249,7 +249,7 @@ export function TimeClockHub({
       ) : null}
 
       <div className="border-b border-slate-200">
-        <nav className="flex gap-8" aria-label="Time clock folders">
+        <nav className="flex gap-8" aria-label="Clock list sections">
           <button
             type="button"
             disabled={pending || busy}
@@ -308,7 +308,7 @@ export function TimeClockHub({
               ? "No time clocks match your search."
               : canManageClocks && locationsForAdd.length > 0
                 ? "No active time clocks yet. Use + Add to create a clock for a store."
-                : "No active time clocks yet. Run database migrations through 007, or add clocks in Supabase (time_clocks table)."}
+                : "No active time clocks yet. Ask your admin to add a clock for this store, or use + Add if you have access."}
         </div>
       ) : (
         <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -456,7 +456,7 @@ export function TimeClockHub({
               New time clock
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Attach a clock to a store so employees can punch in on Today / Timesheets.
+              Attach a clock to a store so employees can clock in from Today or Timesheets.
             </p>
 
             <div className="mt-5 space-y-4">

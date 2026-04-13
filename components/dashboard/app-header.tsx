@@ -1,8 +1,9 @@
 "use client";
 
-import { Bell, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { AccountMenu } from "@/components/dashboard/account-menu";
 import { LocationSwitcher } from "@/components/dashboard/location-switcher";
+import { NotificationMenu } from "@/components/dashboard/notification-menu";
 import type { LocationRow } from "@/lib/dashboard/resolve-location";
 
 type Props = {
@@ -18,6 +19,8 @@ type Props = {
   profileUnlinked?: boolean;
   /** RBAC: signed in but no employees row for this email */
   rbacProfileHint?: string | null;
+  pendingTimeOffCount?: number;
+  canManageTimeOff?: boolean;
 };
 
 export function AppHeader({
@@ -29,6 +32,8 @@ export function AppHeader({
   myProfileHref = null,
   profileUnlinked = false,
   rbacProfileHint = null,
+  pendingTimeOffCount = 0,
+  canManageTimeOff = false,
 }: Props) {
   return (
     <header className="sticky top-0 z-20 shrink-0 border-b border-slate-200 bg-white">
@@ -53,14 +58,10 @@ export function AppHeader({
 
         <LocationSwitcher locations={locations} selectedLocationId={selectedLocationId} />
 
-        <button
-          type="button"
-          className="relative shrink-0 rounded-lg p-2 text-slate-600 hover:bg-slate-100"
-          aria-label="Notifications"
-        >
-          <Bell className="h-5 w-5" />
-          <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-orange-500 ring-2 ring-white" />
-        </button>
+        <NotificationMenu
+          pendingTimeOffCount={pendingTimeOffCount}
+          canManageTimeOff={canManageTimeOff}
+        />
 
         <AccountMenu
           displayName={displayName}

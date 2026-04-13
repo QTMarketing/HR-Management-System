@@ -22,7 +22,7 @@ async function gateManageTime(): Promise<AdjustTimeEntryResult | null> {
   if (!hasPermission(ctx, PERMISSIONS.TIME_CLOCK_MANAGE)) {
     return {
       ok: false,
-      error: "You need time clock management permission to adjust punches.",
+      error: "You need time clock management permission to adjust time entries.",
     };
   }
   return null;
@@ -93,7 +93,7 @@ export async function adjustTimeEntry(params: {
     return { ok: false, error: "Entry does not belong to this location." };
   }
   if (r.archived_at) {
-    return { ok: false, error: "Archived punches cannot be edited." };
+    return { ok: false, error: "Archived entries cannot be edited." };
   }
 
   let nextIn = r.clock_in_at;

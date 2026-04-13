@@ -17,7 +17,7 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 const ERR_NO_EMPLOYEE_LINK =
   "Your login isn’t linked to an employee profile. Ask HR to add your work email under Users.";
 const ERR_SELF_ONLY_IN = "You can only clock in for yourself.";
-const ERR_SELF_ONLY_OUT = "You can only clock out your own open punch.";
+const ERR_SELF_ONLY_OUT = "You can only clock out your own open shift.";
 
 export type ClockInInput = {
   employeeId: string;
@@ -271,7 +271,7 @@ export async function clockOut(input: ClockOutInput): Promise<ActionResult> {
     return { ok: false, error: fetchErr?.message ?? "Entry not found." };
   }
   if ((row as { archived_at?: string | null }).archived_at) {
-    return { ok: false, error: "This punch is archived." };
+    return { ok: false, error: "This time entry is archived." };
   }
   if (row.location_id !== locationId) {
     return { ok: false, error: "Entry does not belong to this location." };

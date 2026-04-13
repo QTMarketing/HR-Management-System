@@ -22,7 +22,7 @@ async function gateManageTime(): Promise<TimeEntryApprovalResult | null> {
   if (!hasPermission(ctx, PERMISSIONS.TIME_CLOCK_MANAGE)) {
     return {
       ok: false,
-      error: "You need time clock management permission to approve punches.",
+      error: "You need time clock management permission to approve time entries.",
     };
   }
   return null;
@@ -62,13 +62,13 @@ export async function approveTimeEntry(entryId: string, locationId: string): Pro
     return { ok: false, error: "Entry does not belong to this location." };
   }
   if (r.archived_at) {
-    return { ok: false, error: "Archived punches cannot be approved." };
+    return { ok: false, error: "Archived entries cannot be approved." };
   }
   if (r.status !== "closed" || !r.clock_out_at) {
-    return { ok: false, error: "Only completed punches can be approved." };
+    return { ok: false, error: "Only completed clock-outs can be approved." };
   }
   if (r.approved_at) {
-    return { ok: false, error: "This punch is already approved." };
+    return { ok: false, error: "This entry is already approved." };
   }
 
   const now = new Date().toISOString();
@@ -132,10 +132,10 @@ export async function unapproveTimeEntry(entryId: string, locationId: string): P
     return { ok: false, error: "Entry does not belong to this location." };
   }
   if (r.archived_at) {
-    return { ok: false, error: "Archived punches cannot be changed." };
+    return { ok: false, error: "Archived entries cannot be changed." };
   }
   if (!r.approved_at) {
-    return { ok: false, error: "This punch is not approved." };
+    return { ok: false, error: "This entry is not approved yet." };
   }
 
   const { error: updErr } = await supabase

@@ -46,7 +46,7 @@ export function TotalAttendanceChart({ percent, scopeLabel, hasMetrics }: Props)
     : 0;
 
   return (
-    <div className="relative flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-xl bg-gradient-to-br from-orange-400 to-orange-600 px-4 py-2.5 shadow-md shadow-orange-600/30 sm:px-5 sm:py-3">
+    <div className="relative flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-xl bg-gradient-to-br from-orange-400 to-orange-600 py-2.5 pl-4 pr-6 shadow-md shadow-orange-600/30 sm:py-3 sm:pl-5 sm:pr-7">
       <div className="relative z-10 flex shrink-0 items-center gap-2">
         <span
           className="relative flex h-2 w-2 shrink-0"
@@ -60,7 +60,7 @@ export function TotalAttendanceChart({ percent, scopeLabel, hasMetrics }: Props)
           Total attendance
         </h3>
       </div>
-      <div className="relative z-10 flex min-h-0 flex-1 items-center gap-4 pt-2 sm:gap-5 sm:pt-2.5">
+      <div className="relative z-10 flex min-h-0 flex-1 items-center justify-start gap-3 pt-2 sm:gap-4 sm:pt-2.5">
         <div className="relative aspect-square w-full max-w-[170px] shrink-0 sm:max-w-[180px]">
           <svg
             viewBox="0 0 100 100"
@@ -91,7 +91,7 @@ export function TotalAttendanceChart({ percent, scopeLabel, hasMetrics }: Props)
             })}
           </svg>
         </div>
-        <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 pl-0.5 pr-3 sm:pl-1 sm:pr-5">
+        <div className="flex min-w-0 flex-col justify-center gap-1.5 pl-1 pr-0 sm:pl-1.5">
           <p className="whitespace-nowrap text-4xl font-bold leading-none tracking-tight text-white tabular-nums drop-shadow-sm sm:text-5xl lg:text-4xl xl:text-5xl 2xl:text-6xl">
             {display}
           </p>

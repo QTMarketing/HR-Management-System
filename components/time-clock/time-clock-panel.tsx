@@ -121,9 +121,9 @@ export function TimeClockPanel({
 
       <TimePunchTable
         rows={entries}
-        title="Latest punch per employee"
-        subtitle={`One row per person at this store — latest punch on this clock, or no punch yet · ${clockName}`}
-        emptyMessage="No punches recorded for this clock yet."
+        title="Latest entry per team member"
+        subtitle={`One row per person at this store—their most recent clock-in on this clock, or not clocked in yet · ${clockName}`}
+        emptyMessage="No one has clocked in on this clock yet."
         canManage={canManage}
         pending={pending}
         showToolbar

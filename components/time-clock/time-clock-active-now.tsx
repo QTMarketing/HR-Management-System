@@ -22,8 +22,8 @@ export function TimeClockActiveNow({ rows }: Props) {
         </span>
       </div>
       <p className="mt-1 text-xs text-slate-400">
-        Ending a shift is done by the worker on the store time clock or employee app — managers use
-        approve/archive here when needed.
+        To clock out, team members use this store&apos;s Time Clock or their usual app. Managers can
+        review or archive entries here when needed.
       </p>
       {rows.length === 0 ? (
         <p className="mt-2 text-sm text-slate-500">No one is clocked in on this clock right now.</p>

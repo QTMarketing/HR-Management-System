@@ -278,7 +278,7 @@ export async function deleteTimeClock(timeClockId: string): Promise<ActionResult
     return {
       ok: false,
       error:
-        "This clock has punch history and can’t be deleted. Archive it instead, or remove punches first.",
+        "This clock has logged time and can’t be deleted. Archive it instead, or remove entries first.",
     };
   }
 

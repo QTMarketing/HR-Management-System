@@ -10,7 +10,7 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 
 const ERR_NO_EMPLOYEE_LINK =
   "Your login isn’t linked to an employee profile. Ask HR to add your work email under Users.";
-const ERR_SELF_ONLY = "You can only start or end breaks on your own punch.";
+const ERR_SELF_ONLY = "You can only start or end breaks on your own open shift.";
 
 export type StartBreakInput = {
   timeEntryId: string;
@@ -23,7 +23,7 @@ export async function startBreak(input: StartBreakInput): Promise<ActionResult> 
   const timeEntryId = input.timeEntryId?.trim();
   const locationId = input.locationId?.trim();
   if (!timeEntryId || !locationId) {
-    return { ok: false, error: "Missing punch or location." };
+    return { ok: false, error: "Missing time entry or location." };
   }
   const isPaid = Boolean(input.isPaid);
 
@@ -54,7 +54,7 @@ export async function startBreak(input: StartBreakInput): Promise<ActionResult> 
     .maybeSingle();
 
   if (fetchErr || !entry) {
-    return { ok: false, error: fetchErr?.message ?? "Punch not found." };
+    return { ok: false, error: fetchErr?.message ?? "Time entry not found." };
   }
   const e = entry as {
     employee_id: string;
@@ -64,10 +64,10 @@ export async function startBreak(input: StartBreakInput): Promise<ActionResult> 
     time_clock_id: string | null;
   };
   if (e.archived_at) {
-    return { ok: false, error: "This punch is archived." };
+    return { ok: false, error: "This time entry is archived." };
   }
   if (e.location_id !== locationId) {
-    return { ok: false, error: "Punch does not belong to this location." };
+    return { ok: false, error: "This time entry does not belong to this location." };
   }
   if (e.clock_out_at) {
     return { ok: false, error: "Clock out before starting a break." };
@@ -157,7 +157,7 @@ export async function endBreak(input: EndBreakInput): Promise<ActionResult> {
     .maybeSingle();
 
   if (enErr || !entry) {
-    return { ok: false, error: enErr?.message ?? "Punch not found." };
+    return { ok: false, error: enErr?.message ?? "Time entry not found." };
   }
   const e = entry as {
     employee_id: string;
@@ -166,10 +166,10 @@ export async function endBreak(input: EndBreakInput): Promise<ActionResult> {
     time_clock_id: string | null;
   };
   if (e.archived_at) {
-    return { ok: false, error: "This punch is archived." };
+    return { ok: false, error: "This time entry is archived." };
   }
   if (e.location_id !== locationId) {
-    return { ok: false, error: "Punch does not belong to this location." };
+    return { ok: false, error: "This time entry does not belong to this location." };
   }
   if (e.employee_id !== actorEmployeeId) {
     return { ok: false, error: ERR_SELF_ONLY };

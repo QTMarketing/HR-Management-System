@@ -93,7 +93,7 @@ export const DEMO_STAFF: StaffUpdateRow[] = [
   {
     id: "demo-staff-2",
     employeeLabel: "Jamie L.",
-    updateText: "Missed punch",
+    updateText: "Missed clock-in",
     status: "review",
     createdAt: "2026-03-26T13:00:00.000Z",
   },

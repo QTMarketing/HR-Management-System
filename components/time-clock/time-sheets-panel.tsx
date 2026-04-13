@@ -290,7 +290,7 @@ export function TimeSheetsPanel({
         mins[di] += punchMinutes(r) ?? 0;
       }
 
-      // Automatic paid holiday hours (when store is closed: no punches).
+      // Automatic paid holiday hours when the store is closed (no logged time).
       for (let di = 0; di < days.length; di++) {
         if (mins[di] > 0) continue;
         const key = dayKeys[di];
@@ -476,10 +476,10 @@ export function TimeSheetsPanel({
                 disabled={rowsForExport.length === 0}
                 onClick={onExportCsv}
                 className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                title="Download punches for the visible period as CSV"
+                title="Download logged time for the visible period as a spreadsheet"
               >
                 <Download className="h-4 w-4 shrink-0" aria-hidden />
-                Export CSV
+                Export Report
               </button>
 
               {canArchive ? (
@@ -487,7 +487,7 @@ export function TimeSheetsPanel({
                   type="button"
                   disabled={seedPending}
                   className="h-10 shrink-0 rounded bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
-                  title="Insert sample punches (this + last week)"
+                  title="Insert sample clock-ins for this and last week (demo only)"
                   onClick={() => {
                     setErr(null);
                     setSeedPending(true);
@@ -578,7 +578,7 @@ export function TimeSheetsPanel({
 
         {filteredEmployees.length === 0 ? (
           <div className="px-5 py-10 text-center text-sm text-slate-500">
-            No employees match this period / search.
+            No team members match this period or search. Try a different date range or clear the search.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -642,7 +642,11 @@ export function TimeSheetsPanel({
                         setTimecardAnchorRow(e.rows[e.rows.length - 1] ?? null);
                       }}
                       disabled={!canOpenAnyTimecard}
-                      title={!canOpenAnyTimecard ? "No punches for this employee in this period." : "Open timecard"}
+                      title={
+                        !canOpenAnyTimecard
+                          ? "No logged time for this team member in this period."
+                          : "Open timecard"
+                      }
                     >
                       <div className="truncate text-sm font-semibold text-slate-900">{e.name}</div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
@@ -696,8 +700,8 @@ export function TimeSheetsPanel({
                                 }`}
                                 title={
                                   isHolidayPayCell
-                                    ? `${holiday?.name ?? "Holiday"} (paid) — no punches to open`
-                                    : "No punches to open"
+                                    ? `${holiday?.name ?? "Holiday"} (paid) — nothing to open`
+                                    : "Nothing to open"
                                 }
                               >
                                 {isHolidayPayCell ? `Holiday ${formatHoursMinutes(m)}` : formatHoursMinutes(m)}

@@ -62,7 +62,7 @@ export function TimeClockDetailShell({
           </Link>
           <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-800">{clockName}</h1>
           <p className="mt-1 text-sm text-slate-500">
-            {locationName} · open punches and schedules for this clock only.
+            {locationName} · who’s on the clock and schedules for this store only.
           </p>
         </div>
       </div>

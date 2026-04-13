@@ -534,6 +534,27 @@ export function ScheduleWeekBoard({
     router.push("/time-clock");
   };
 
+  /** Default day/time when opening the add-shift panel from an employee row (name column). */
+  const defaultCreateWindowFromNameRow = () => {
+    const dateForCell = displayedColumns[0]?.date ?? weekMonday;
+    const start = new Date(dateForCell);
+    start.setHours(9, 0, 0, 0);
+    const end = new Date(dateForCell);
+    end.setHours(17, 0, 0, 0);
+    return { start, end };
+  };
+
+  const openSchedulePanelForEmployee = (emp: ScheduleEmployeeOption) => {
+    if (!canEditSchedule) return;
+    const { start, end } = defaultCreateWindowFromNameRow();
+    openCreateShift({
+      locationId: emp.location_id,
+      employeeIds: [emp.id],
+      start,
+      end,
+    });
+  };
+
   return (
     <div className="min-h-0 space-y-3">
         {unavailSeed ? (
@@ -1242,10 +1263,32 @@ export function ScheduleWeekBoard({
                       }}
                     >
                       <div className="border-r border-slate-200 px-2 py-2">
-                        <div className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-700">
-                          {e.full_name}
-                        </div>
-                        <div className="mt-0.5 text-[10px] text-slate-500">No shifts yet</div>
+                        {canEditSchedule ? (
+                          <button
+                            type="button"
+                            className="w-full rounded-md px-1 py-0.5 text-left transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            onClick={() => openSchedulePanelForEmployee(e)}
+                            title="Add or edit shifts for this team member"
+                          >
+                            <div className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+                              {e.full_name}
+                            </div>
+                            <div className="mt-0.5 text-[10px] text-slate-500">
+                              No shifts yet — click to add
+                            </div>
+                          </button>
+                        ) : (
+                          <Link
+                            href={`/users/${e.id}`}
+                            className="block w-full rounded-md px-1 py-0.5 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            title="Open employee profile"
+                          >
+                            <div className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+                              {e.full_name}
+                            </div>
+                            <div className="mt-0.5 text-[10px] text-slate-500">No shifts yet</div>
+                          </Link>
+                        )}
                       </div>
                       {displayedColumns.map((col, di) => {
                         const isToday = sameCalendarDay(col.date, today);
@@ -1502,12 +1545,30 @@ export function ScheduleWeekBoard({
                           }}
                         >
                           <div className="border-r border-slate-200 px-2 py-2">
-                            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
-                              {emp.full_name}
-                            </span>
-                            <div className="mt-0.5 text-[10px] text-slate-500">
-                              View by users
-                            </div>
+                            {canEditSchedule ? (
+                              <button
+                                type="button"
+                                className="w-full rounded-md px-1 py-0.5 text-left transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                onClick={() => openSchedulePanelForEmployee(emp)}
+                                title="Add or edit shifts for this team member"
+                              >
+                                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+                                  {emp.full_name}
+                                </span>
+                                <div className="mt-0.5 text-[10px] text-slate-500">View by users</div>
+                              </button>
+                            ) : (
+                              <Link
+                                href={`/users/${emp.id}`}
+                                className="block w-full rounded-md px-1 py-0.5 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                title="Open employee profile"
+                              >
+                                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+                                  {emp.full_name}
+                                </span>
+                                <div className="mt-0.5 text-[10px] text-slate-500">View by users</div>
+                              </Link>
+                            )}
                           </div>
                           {displayedColumns.map((_, di) => {
                             const dayIndex = viewRange === "day"

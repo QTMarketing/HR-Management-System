@@ -9,7 +9,7 @@ function csvCell(value: string | number | null | undefined): string {
 }
 
 /**
- * One row per punch for the active period — Phase 3 / 7 friendly payroll handoff.
+ * One row per clock-in/clock-out period for the active range — payroll-friendly export.
  */
 export function buildTimesheetPunchesCsv(
   rows: EnrichedPunchRow[],
@@ -24,7 +24,7 @@ export function buildTimesheetPunchesCsv(
     "Breaks",
     "Status",
     "Job code",
-    "Punch source",
+    "Clock-in source",
     "Period",
   ];
 

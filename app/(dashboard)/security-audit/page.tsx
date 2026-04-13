@@ -10,10 +10,10 @@ const ACTION_LABEL: Record<string, string> = {
   [SECURITY_AUDIT_ACTIONS.LOCATION_STORE_LEAD_CHANGED]: "Store lead changed",
   [SECURITY_AUDIT_ACTIONS.ORGANIZATION_OWNER_CHANGED]: "Organization owner changed",
   [SECURITY_AUDIT_ACTIONS.EMPLOYEE_ARCHIVED]: "User archived",
-  [SECURITY_AUDIT_ACTIONS.TIME_ENTRY_ARCHIVED]: "Time punch archived",
-  [SECURITY_AUDIT_ACTIONS.TIME_ENTRY_APPROVED]: "Time punch approved",
-  [SECURITY_AUDIT_ACTIONS.TIME_ENTRY_UNAPPROVED]: "Time punch unapproved",
-  [SECURITY_AUDIT_ACTIONS.TIME_ENTRY_ADJUSTED]: "Time punch times edited",
+  [SECURITY_AUDIT_ACTIONS.TIME_ENTRY_ARCHIVED]: "Time entry archived",
+  [SECURITY_AUDIT_ACTIONS.TIME_ENTRY_APPROVED]: "Time entry approved",
+  [SECURITY_AUDIT_ACTIONS.TIME_ENTRY_UNAPPROVED]: "Time entry review removed",
+  [SECURITY_AUDIT_ACTIONS.TIME_ENTRY_ADJUSTED]: "Clock-in/out times edited",
   [SECURITY_AUDIT_ACTIONS.TIME_OFF_RECORDED]: "Time off recorded",
   [SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_SUBMITTED]: "Time off request submitted",
   [SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_APPROVED]: "Time off request approved",
@@ -180,7 +180,7 @@ export default async function SecurityAuditPage() {
                     : "—";
                   const loc =
                     (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
-                  detail = `Punch ${String(meta.time_entry_id ?? "").slice(0, 8)}… · ${emp} · ${loc}`;
+                  detail = `Entry ${String(meta.time_entry_id ?? "").slice(0, 8)}… · ${emp} · ${loc}`;
                 } else if (
                   r.action === SECURITY_AUDIT_ACTIONS.TIME_ENTRY_APPROVED ||
                   r.action === SECURITY_AUDIT_ACTIONS.TIME_ENTRY_UNAPPROVED
@@ -190,14 +190,14 @@ export default async function SecurityAuditPage() {
                     : "—";
                   const loc =
                     (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
-                  detail = `Punch ${String(meta.time_entry_id ?? "").slice(0, 8)}… · ${emp} · ${loc}`;
+                  detail = `Entry ${String(meta.time_entry_id ?? "").slice(0, 8)}… · ${emp} · ${loc}`;
                 } else if (r.action === SECURITY_AUDIT_ACTIONS.TIME_ENTRY_ADJUSTED) {
                   const emp = r.target_employee_id
                     ? nameById.get(r.target_employee_id) ?? r.target_employee_id
                     : "—";
                   const loc =
                     (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
-                  detail = `Punch ${String(meta.time_entry_id ?? "").slice(0, 8)}… · ${emp} · ${loc}`;
+                  detail = `Entry ${String(meta.time_entry_id ?? "").slice(0, 8)}… · ${emp} · ${loc}`;
                 } else if (r.action === SECURITY_AUDIT_ACTIONS.TIME_OFF_RECORDED) {
                   const emp = r.target_employee_id
                     ? nameById.get(r.target_employee_id) ?? r.target_employee_id

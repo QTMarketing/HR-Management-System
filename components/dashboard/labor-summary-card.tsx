@@ -5,7 +5,7 @@ export function LaborSummaryCard() {
     <div className="rounded-2xl border border-white/10 bg-black p-5 shadow-sm">
       <h2 className="text-sm font-semibold text-white">Weekly labor summary</h2>
       <p className="mt-1 text-xs text-white/75">
-        Hours and attendance rollup for this location.
+        Scheduled vs worked hours for the week, by person, with CSV export.
       </p>
       <Link
         href="/reports/labor"

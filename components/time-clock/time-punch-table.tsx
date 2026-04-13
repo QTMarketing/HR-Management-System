@@ -106,8 +106,7 @@ export function TimePunchTable({
         <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
         {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
         <p className="mt-2 text-xs text-slate-400">
-          Click any row to open that employee&apos;s timecard for this clock (schedule, job/position,
-          hours by week).
+          Click a row to open that team member&apos;s timecard—schedule, role, and hours by week.
         </p>
       </div>
 

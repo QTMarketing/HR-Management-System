@@ -165,7 +165,7 @@ export function TimeClockSelfServe({
   if (!viewerEmployeeId) {
     return (
       <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-        <span className="font-medium text-slate-800">Self-serve punch</span> — Your login email must
+        <span className="font-medium text-slate-800">Self-serve clock in</span> — Your login email must
         match an active employee in Users to clock in here.
       </div>
     );
@@ -182,7 +182,7 @@ export function TimeClockSelfServe({
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="text-sm font-semibold text-slate-800">Your punch</h3>
+      <h3 className="text-sm font-semibold text-slate-800">Your time today</h3>
       {viewerOpenEntryId && viewerOpenEntryClockInAt ? (
         <p className="mt-1 text-xs text-slate-600">
           Status:{" "}
@@ -205,7 +205,7 @@ export function TimeClockSelfServe({
         </p>
       ) : (
         <p className="mt-1 text-xs text-slate-500">
-          Optional job code is stored on the punch for payroll rules.
+          Optional job code is saved with your clock-in for payroll.
         </p>
       )}
       <div className="mt-3 flex flex-wrap items-end gap-3">

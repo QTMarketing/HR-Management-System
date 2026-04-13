@@ -176,7 +176,7 @@ export function TimePunchTableRow({
       <td className="max-w-[8rem] px-3 py-2.5 align-middle">
         <span
           className="block truncate text-slate-500"
-          title={`${row.ptoLabel}. Today tab: time off in the same Mon–Sun week as clock-in. Timesheets: time off on that punch’s calendar day.`}
+          title={`${row.ptoLabel}. On Today, time off is shown for the same week as the clock-in. On Timesheets, it follows that day’s calendar date.`}
         >
           {row.ptoLabel}
         </span>

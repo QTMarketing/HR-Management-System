@@ -414,16 +414,17 @@ export function EmployeeTimecardModal({
               <Download className="h-4 w-4" />
             </button>
             {/*
-              Approval column = manager sign-off on closed punches for payroll (optional policy).
+              Approval column = manager sign-off on completed shifts for payroll (optional policy).
               Hint only when something needs action — avoids noisy “no pending” copy.
             */}
             {canApprovePunches && pendingApprovalCount > 0 ? (
               <span
                 className="max-w-[14rem] text-right text-xs leading-snug text-slate-600"
-                title="Managers approve closed punches before payroll when your org uses that workflow"
+                title="Managers mark completed clock-outs as reviewed before payroll when your org uses that workflow"
               >
-                <span className="font-semibold text-sky-800">{pendingApprovalCount}</span> punch
-                {pendingApprovalCount === 1 ? "" : "es"} need approval — use the Approval column.
+                <span className="font-semibold text-sky-800">{pendingApprovalCount}</span>{" "}
+                {pendingApprovalCount === 1 ? "entry needs" : "entries need"} review — use the Approval
+                column.
               </span>
             ) : null}
           </div>

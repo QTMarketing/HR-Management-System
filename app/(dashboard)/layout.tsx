@@ -4,9 +4,14 @@ import { AppHeader } from "@/components/dashboard/app-header";
 import { AppSidebar } from "@/components/dashboard/app-sidebar";
 import { displayNameFromUser } from "@/lib/auth/display-name";
 import { locationsForSession } from "@/lib/dashboard/locations-for-session";
-import { resolveSelectedLocationId, type LocationRow } from "@/lib/dashboard/resolve-location";
-import { getRbacContext } from "@/lib/rbac/context";
+import {
+  isAllLocations,
+  resolveSelectedLocationId,
+  type LocationRow,
+} from "@/lib/dashboard/resolve-location";
+import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { DASHBOARD_NAV, filterNavForRbac } from "@/lib/rbac/nav";
+import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export default async function DashboardLayout({
@@ -47,6 +52,21 @@ export default async function DashboardLayout({
     locations,
     cookieStore.get("hr_location_id")?.value,
   );
+
+  let pendingTimeOffCount = 0;
+  const canManageTimeOff = hasPermission(rbac, PERMISSIONS.TIME_CLOCK_MANAGE);
+  if (canManageTimeOff) {
+    const scopeAll = isAllLocations(selectedLocationId);
+    let torQuery = supabase
+      .from("time_off_records")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending");
+    if (!scopeAll) {
+      torQuery = torQuery.eq("location_id", selectedLocationId);
+    }
+    const { count } = await torQuery;
+    pendingTimeOffCount = count ?? 0;
+  }
 
   let displayName = displayNameFromUser(user);
   let profileEmployeeId = rbac.employeeId;
@@ -113,6 +133,8 @@ export default async function DashboardLayout({
           myProfileHref={myProfileHref}
           profileUnlinked={profileUnlinked}
           rbacProfileHint={rbacProfileHint}
+          pendingTimeOffCount={pendingTimeOffCount}
+          canManageTimeOff={canManageTimeOff}
         />
         <main className="flex-1 py-6">
           <div className="mx-auto w-full max-w-[1600px] px-4 sm:px-6 lg:px-8">

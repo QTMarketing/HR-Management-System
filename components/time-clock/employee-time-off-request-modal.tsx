@@ -125,8 +125,7 @@ export function EmployeeTimeOffRequestModal({
           </button>
         </div>
         <p className="mb-3 text-xs text-slate-500">
-          Your manager will review this request. You’ll see approved time off on the time clock after
-          approval.
+          Your manager will review this request. After approval, you’ll see the time off on Time Clock.
         </p>
         <form onSubmit={onSubmit} className="flex flex-col gap-3">
           {formError ? (

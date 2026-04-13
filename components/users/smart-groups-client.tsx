@@ -106,7 +106,7 @@ function assignmentTriggerTitle(group: SmartGroupsPayload["segments"][0]["groups
   return group.assignments
     .map((a) =>
       a.type === "time_clock"
-        ? (a.timeClockName ? `${a.timeClockName} (${a.locationName ?? "Store"})` : "Time clock")
+        ? (a.timeClockName ? `${a.timeClockName} (${a.locationName ?? "Store"})` : "Time Clock")
         : a.locationName
           ? `Schedule: ${a.locationName}`
           : "Schedule",
@@ -120,7 +120,7 @@ type Props = {
   payload: SmartGroupsPayload;
   canManage: boolean;
   dbError: string | null;
-  /** Deep link from Time clock → Edit assignments */
+  /** Deep link from Time Clock → Edit assignments */
   focusTimeClockId?: string | null;
 };
 
@@ -236,17 +236,17 @@ export function SmartGroupsClient({
       {focusTimeClockId ? (
         <div className="rounded-xl border border-orange-200 bg-orange-50/95 px-4 py-3 text-sm text-orange-950">
           <span className="font-semibold tracking-tight">
-            {payload.timeClocks.find((t) => t.id === focusTimeClockId)?.name ?? "Time clock"}
+            {payload.timeClocks.find((t) => t.id === focusTimeClockId)?.name ?? "Time Clock"}
           </span>
           {" — "}
           Use each group’s <strong className="font-semibold">Assignments</strong> control to attach or detach this
-          clock for who can punch in.
+          clock for who can clock in.
           {" "}
           <Link
             href="/time-clock"
             className="font-medium text-orange-900 underline underline-offset-2 hover:text-orange-950"
           >
-            Back to Time clock
+            Back to Time Clock
           </Link>
         </div>
       ) : null}
@@ -531,8 +531,7 @@ export function SmartGroupsClient({
           <strong>Assignments</strong> control which clocks and which store schedules use this group for
           access targeting. Employee <strong>membership</strong> is stored in{" "}
           <code className="rounded bg-white px-1">smart_group_members</code>. Changes apply after
-          refresh; wire punch rules to these assignments when you enforce clock eligibility in app
-          logic.
+          refresh; tie clock-in rules to these assignments when you enforce who can clock in from the app.
         </p>
       </div>
 

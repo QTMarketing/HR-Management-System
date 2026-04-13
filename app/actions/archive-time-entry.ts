@@ -22,7 +22,7 @@ async function gateManageTime(): Promise<ArchiveTimeEntryResult | null> {
   if (!hasPermission(ctx, PERMISSIONS.TIME_CLOCK_MANAGE)) {
     return {
       ok: false,
-      error: "You need time clock management permission to archive punches.",
+      error: "You need time clock management permission to archive time entries.",
     };
   }
   return null;

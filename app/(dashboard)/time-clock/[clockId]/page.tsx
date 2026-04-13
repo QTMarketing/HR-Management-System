@@ -266,7 +266,9 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
     todayMetrics = computeTodayMetrics(shiftsToday, enrichedToday, clockedInNowRows.length);
   } catch (e) {
     entriesError =
-      e instanceof Error ? e.message : "Could not load punches. Run migrations 006–007.";
+      e instanceof Error
+        ? e.message
+        : "Could not load time entries. If this persists, ask your admin to confirm the database is set up.";
   }
 
   /** Wider pool for timecard drill-down and Today context */
@@ -484,8 +486,9 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
           <div className="space-y-4">
             {isArchived ? (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-                This time clock is <strong>archived</strong>. New clock-ins are disabled. Use
-                Timesheets to review history, or set status back to active in the database.
+                This Time Clock is <strong>archived</strong>. New clock-ins are disabled. You can still open
+                Timesheets to review past hours. Ask your admin to restore the clock if it should be active
+                again.
               </div>
             ) : null}
             {entriesError ? (

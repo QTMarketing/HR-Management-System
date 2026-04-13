@@ -99,7 +99,7 @@ export default async function TimeClockHubPage() {
           hint:
             st === "archived"
               ? "Archived — open for read-only timesheet history."
-              : "Opens Today and Timesheets: punches and approvals for this store.",
+              : "Opens Today and Timesheets: logged time and approvals for this store.",
         };
         if (st === "archived") archivedClocks.push(item);
         else activeClocks.push(item);
@@ -133,7 +133,7 @@ export default async function TimeClockHubPage() {
           hint:
             st === "archived"
               ? "Archived — open for read-only timesheet history."
-              : "Opens Today and Timesheets: punches and approvals for this store.",
+              : "Opens Today and Timesheets: logged time and approvals for this store.",
         };
         if (st === "archived") archivedClocks.push(item);
         else activeClocks.push(item);
