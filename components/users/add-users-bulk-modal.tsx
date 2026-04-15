@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  CalendarDays,
   ChevronDown,
   Columns3,
   FileText,
@@ -469,10 +468,9 @@ export function AddUsersBulkModal({
                     {visibleOptional.birthday && (
                       <td className="border-b border-slate-100 px-2 py-2.5 align-top">
                         <div className="relative min-w-[140px]">
-                          <CalendarDays className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                           <input
                             type="date"
-                            className={`${inputClass()} w-full pr-9 [&::-webkit-calendar-picker-indicator]:opacity-0`}
+                            className={`${inputClass()} w-full pr-2`}
                             value={row.birthday}
                             onChange={(e) =>
                               updateRow(row.id, { birthday: e.target.value })
@@ -484,10 +482,9 @@ export function AddUsersBulkModal({
                     {visibleOptional.employmentStart && (
                       <td className="border-b border-slate-100 px-2 py-2.5 align-top">
                         <div className="relative min-w-[160px]">
-                          <CalendarDays className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                           <input
                             type="date"
-                            className={`${inputClass()} w-full pr-9 [&::-webkit-calendar-picker-indicator]:opacity-0`}
+                            className={`${inputClass()} w-full pr-2`}
                             value={row.employmentStart}
                             onChange={(e) =>
                               updateRow(row.id, {

@@ -290,7 +290,7 @@ export function AddShiftModal({
     const overlaps: { label: string }[] = [];
     for (const s of contextShifts) {
       if (s.location_id !== locationId) continue;
-      if (initialShift?.id && s.id === initialShift.id) continue;
+      if (initialShift && s.id === initialShift.id) continue;
       const ids =
         s.assignedEmployeeIds && s.assignedEmployeeIds.length > 0
           ? s.assignedEmployeeIds
@@ -315,7 +315,7 @@ export function AddShiftModal({
     employeeIds,
     endDt,
     endLocal,
-    initialShift?.id,
+    initialShift,
     locationId,
     startDt,
     startLocal,
