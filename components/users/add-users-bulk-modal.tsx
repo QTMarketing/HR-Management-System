@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Columns3,
   FileText,
+  Plus,
   RefreshCw,
   Sun,
   Trash2,
@@ -21,6 +22,7 @@ import {
   type FormEvent,
 } from "react";
 import { bulkCreateEmployees } from "@/app/actions/users-bulk";
+import { createJobTitle, listJobTitles, type JobTitleRow } from "@/app/actions/job-titles";
 import {
   PRIMARY_ORANGE_CTA,
   SECONDARY_ORANGE_PILL,
@@ -68,11 +70,14 @@ export type BulkUserDraft = {
   id: string;
   firstName: string;
   lastName: string;
+  email: string;
   phoneDial: string;
   phoneNational: string;
   birthday: string;
   employmentStart: string;
   directManagerId: string;
+  primaryJobTitleId: string;
+  secondaryJobTitleId: string;
   payRules: string;
   timeOff: string;
   schedulingRules: string;
@@ -99,11 +104,14 @@ function emptyRow(directManagerId = ""): BulkUserDraft {
     id: crypto.randomUUID(),
     firstName: "",
     lastName: "",
+    email: "",
     phoneDial: PHONE_COUNTRIES[2].dial, // NP as in reference
     phoneNational: "",
     birthday: "",
     employmentStart: "",
     directManagerId,
+    primaryJobTitleId: "",
+    secondaryJobTitleId: "",
     payRules: PAY_OPTIONS[0],
     timeOff: TIME_OFF_OPTIONS[0],
     schedulingRules: SCHEDULE_OPTIONS[0],
@@ -114,6 +122,7 @@ function rowHasAnyInput(row: BulkUserDraft): boolean {
   return (
     row.firstName.trim() !== "" ||
     row.lastName.trim() !== "" ||
+    row.email.trim() !== "" ||
     row.phoneNational.replace(/\D/g, "").trim() !== ""
   );
 }
@@ -122,6 +131,7 @@ function rowIsComplete(row: BulkUserDraft): boolean {
   return (
     Boolean(row.firstName.trim()) &&
     Boolean(row.lastName.trim()) &&
+    Boolean(row.email.trim()) &&
     Boolean(row.phoneNational.replace(/\D/g, "").trim())
   );
 }
@@ -158,6 +168,9 @@ export function AddUsersBulkModal({
   const menuRef = useRef<HTMLDivElement>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitPending, startSubmitTransition] = useTransition();
+  const [jobTitles, setJobTitles] = useState<JobTitleRow[]>([]);
+  const [newJobTitle, setNewJobTitle] = useState("");
+  const [jobTitleError, setJobTitleError] = useState<string | null>(null);
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [visibleOptional, setVisibleOptional] = useState<Record<OptionalColumnKey, boolean>>(() =>
     Object.fromEntries(OPTIONAL_COLUMNS.map((c) => [c.key, true])) as Record<
@@ -212,6 +225,22 @@ export function AddUsersBulkModal({
 
   useEffect(() => {
     if (!open) return;
+    queueMicrotask(() => {
+      setJobTitleError(null);
+      setNewJobTitle("");
+    });
+    startSubmitTransition(async () => {
+      const r = await listJobTitles();
+      if (!r.ok) {
+        setJobTitleError(r.error);
+        return;
+      }
+      setJobTitles(r.data);
+    });
+  }, [open, startSubmitTransition]);
+
+  useEffect(() => {
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") close();
     };
@@ -262,11 +291,14 @@ export function AddUsersBulkModal({
       const payload = completeRows.map((row) => ({
         firstName: row.firstName,
         lastName: row.lastName,
+        email: row.email,
         phoneDial: row.phoneDial,
         phoneNational: row.phoneNational,
         birthday: row.birthday,
         employmentStart: row.employmentStart,
         directManagerId: row.directManagerId,
+        primaryJobTitleId: row.primaryJobTitleId || null,
+        secondaryJobTitleId: row.secondaryJobTitleId || null,
       }));
       const result = await bulkCreateEmployees(payload, assignmentLocationId, scopeAll);
       if (!result.ok) {
@@ -331,10 +363,59 @@ export function AddUsersBulkModal({
           {touched && (invalidRows.length > 0 || completeRows.length === 0) ? (
             <p className="mx-5 mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-center text-sm text-amber-950 sm:mx-8">
               {invalidRows.length > 0
-                ? "Complete first name, last name, and mobile phone for each row you started, or clear those fields."
-                : "Add at least one user with first name, last name, and mobile phone."}
+                ? "Complete first name, last name, email, and mobile phone for each row you started, or clear those fields."
+                : "Add at least one user with first name, last name, email, and mobile phone."}
             </p>
           ) : null}
+
+          <div className="mx-5 mb-3 flex flex-col gap-2 sm:mx-8 sm:flex-row sm:items-end sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-slate-700">Job titles</p>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Add new titles here, then pick them in Position/Title dropdowns.
+              </p>
+              {jobTitleError ? (
+                <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                  {jobTitleError}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex w-full max-w-xl gap-2">
+              <input
+                value={newJobTitle}
+                onChange={(e) => setNewJobTitle(e.target.value)}
+                placeholder="Create new job title (e.g. Barista)"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+              />
+              <button
+                type="button"
+                disabled={submitPending || !newJobTitle.trim()}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                onClick={() => {
+                  const name = newJobTitle.trim();
+                  if (!name) return;
+                  setJobTitleError(null);
+                  startSubmitTransition(async () => {
+                    const r = await createJobTitle(name);
+                    if (!r.ok) {
+                      setJobTitleError(r.error);
+                      return;
+                    }
+                    setJobTitles((prev) => {
+                      const next = [...prev];
+                      if (!next.some((t) => t.id === r.data.id)) next.push(r.data);
+                      next.sort((a, b) => a.name.localeCompare(b.name));
+                      return next;
+                    });
+                    setNewJobTitle("");
+                  });
+                }}
+              >
+                <Plus className="h-4 w-4" />
+                Add
+              </button>
+            </div>
+          </div>
 
           <div className="overflow-x-auto px-2 pb-2 sm:px-4">
             <table className="w-full min-w-[1100px] border-separate border-spacing-0 text-left text-sm">
@@ -347,7 +428,16 @@ export function AddUsersBulkModal({
                     Last name<span className="text-orange-600">*</span>
                   </th>
                   <th className="sticky top-0 z-10 border-b border-slate-200 px-2 py-3 whitespace-nowrap">
+                    Email<span className="text-orange-600">*</span>
+                  </th>
+                  <th className="sticky top-0 z-10 border-b border-slate-200 px-2 py-3 whitespace-nowrap">
                     Mobile phone<span className="text-orange-600">*</span>
+                  </th>
+                  <th className="sticky top-0 z-10 border-b border-slate-200 px-2 py-3 whitespace-nowrap">
+                    Position
+                  </th>
+                  <th className="sticky top-0 z-10 border-b border-slate-200 px-2 py-3 whitespace-nowrap">
+                    Title
                   </th>
                   {OPTIONAL_COLUMNS.map(
                     (c) =>
@@ -432,6 +522,15 @@ export function AddUsersBulkModal({
                       />
                     </td>
                     <td className="border-b border-slate-100 px-2 py-2.5 align-top">
+                      <input
+                        className={inputClass()}
+                        placeholder="Email"
+                        value={row.email}
+                        onChange={(e) => updateRow(row.id, { email: e.target.value })}
+                        aria-invalid={flagIncomplete && !row.email.trim() ? true : undefined}
+                      />
+                    </td>
+                    <td className="border-b border-slate-100 px-2 py-2.5 align-top">
                       <div
                         className={`flex min-w-[220px] overflow-hidden rounded-lg border bg-white focus-within:border-orange-400 focus-within:ring-2 focus-within:ring-orange-500/20 ${
                           flagIncomplete &&
@@ -464,6 +563,34 @@ export function AddUsersBulkModal({
                           }
                         />
                       </div>
+                    </td>
+                    <td className="border-b border-slate-100 px-2 py-2.5 align-top">
+                      <select
+                        className={`${inputClass()} w-full min-w-[160px]`}
+                        value={row.primaryJobTitleId}
+                        onChange={(e) => updateRow(row.id, { primaryJobTitleId: e.target.value })}
+                      >
+                        <option value="">Select position…</option>
+                        {jobTitles.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="border-b border-slate-100 px-2 py-2.5 align-top">
+                      <select
+                        className={`${inputClass()} w-full min-w-[160px]`}
+                        value={row.secondaryJobTitleId}
+                        onChange={(e) => updateRow(row.id, { secondaryJobTitleId: e.target.value })}
+                      >
+                        <option value="">Select title…</option>
+                        {jobTitles.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                     {visibleOptional.birthday && (
                       <td className="border-b border-slate-100 px-2 py-2.5 align-top">

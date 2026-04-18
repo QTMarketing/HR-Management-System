@@ -407,6 +407,7 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
 
   /** Phase 1: self-serve punch + geofence hint */
   let viewerEmployeeId: string | null = null;
+  let viewerEmployeeName: string | null = null;
   let viewerAtLocation = false;
   let viewerOpenEntryId: string | null = null;
   let viewerOpenEntryClockInAt: string | null = null;
@@ -418,13 +419,14 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
   if (userEmail) {
     const { data: viewerEmp } = await supabase
       .from("employees")
-      .select("id, location_id")
+      .select("id, location_id, full_name")
       .ilike("email", userEmail)
       .eq("status", "active")
       .maybeSingle();
     if (viewerEmp) {
-      const ve = viewerEmp as { id: string; location_id: string | null };
+      const ve = viewerEmp as { id: string; location_id: string | null; full_name?: string | null };
       viewerEmployeeId = ve.id;
+      viewerEmployeeName = (ve.full_name && String(ve.full_name).trim()) || null;
       viewerAtLocation = ve.location_id === effectiveLocationId;
       if (viewerAtLocation) {
         const { data: openRow } = await supabase
@@ -509,6 +511,7 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
               canManage={canArchiveTimeEntries}
               storeEmployees={storeEmployees}
               viewerEmployeeId={viewerEmployeeId}
+              viewerEmployeeName={viewerEmployeeName}
               viewerAtLocation={viewerAtLocation}
               viewerOpenEntryId={viewerOpenEntryId}
               viewerOpenEntryClockInAt={viewerOpenEntryClockInAt}

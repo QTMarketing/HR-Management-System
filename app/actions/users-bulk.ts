@@ -9,11 +9,14 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export type BulkEmployeeRow = {
   firstName: string;
   lastName: string;
+  email: string;
   phoneDial: string;
   phoneNational: string;
   birthday: string;
   employmentStart: string;
   directManagerId: string;
+  primaryJobTitleId: string | null;
+  secondaryJobTitleId: string | null;
 };
 
 export type BulkCreateResult =
@@ -51,16 +54,18 @@ export async function bulkCreateEmployees(
 
   const supabase = await createSupabaseServerClient();
   const inserts: Record<string, unknown>[] = [];
+  const jobAssignments: { index: number; primaryId: string | null; secondaryId: string | null }[] = [];
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const first = r.firstName.trim();
     const last = r.lastName.trim();
+    const email = r.email.trim();
     const digits = r.phoneNational.replace(/\D/g, "");
-    if (!first || !last || digits.length < 7) {
+    if (!first || !last || !email || digits.length < 7) {
       return {
         ok: false,
-        error: `Row ${i + 1}: first name, last name, and a valid mobile number are required.`,
+        error: `Row ${i + 1}: first name, last name, email, and a valid mobile number are required.`,
       };
     }
 
@@ -133,6 +138,7 @@ export async function bulkCreateEmployees(
       full_name,
       first_name: first,
       last_name: last,
+      email,
       mobile_phone,
       birth_date,
       employment_start_date,
@@ -142,11 +148,33 @@ export async function bulkCreateEmployees(
       status: "active",
       direct_manager_id: directManagerId,
     });
+    jobAssignments.push({
+      index: i,
+      primaryId: r.primaryJobTitleId?.trim() || null,
+      secondaryId: r.secondaryJobTitleId?.trim() || null,
+    });
   }
 
-  const { error } = await supabase.from("employees").insert(inserts);
-  if (error) {
-    return { ok: false, error: error.message };
+  const { data: created, error } = await supabase
+    .from("employees")
+    .insert(inserts)
+    .select("id");
+  if (error) return { ok: false, error: error.message };
+
+  // Insert job title assignments (rank 1/2) when provided.
+  const createdRows = (created ?? []) as unknown as Array<{ id?: string }>;
+  const ejtInserts: Array<{ employee_id: string; job_title_id: string; rank: 1 | 2 }> = [];
+  for (let i = 0; i < createdRows.length; i++) {
+    const employeeId = String(createdRows[i]?.id ?? "");
+    if (!employeeId) continue;
+    const ja = jobAssignments[i];
+    if (!ja) continue;
+    if (ja.primaryId) ejtInserts.push({ employee_id: employeeId, job_title_id: ja.primaryId, rank: 1 });
+    if (ja.secondaryId) ejtInserts.push({ employee_id: employeeId, job_title_id: ja.secondaryId, rank: 2 });
+  }
+  if (ejtInserts.length > 0) {
+    const { error: ejtErr } = await supabase.from("employee_job_titles").insert(ejtInserts);
+    if (ejtErr) return { ok: false, error: ejtErr.message };
   }
 
   revalidatePath("/users");

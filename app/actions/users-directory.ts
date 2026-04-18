@@ -25,10 +25,11 @@ async function gateOrgOwner(): Promise<ActionResult> {
     data: { user },
   } = await supabase.auth.getUser();
   const ctx = await getRbacContext(supabase, user);
-  if (!hasPermission(ctx, PERMISSIONS.ORG_OWNER)) {
+  // Admins (Store Managers) with `users.manage` can promote to Admin; Owners can too.
+  if (!hasPermission(ctx, PERMISSIONS.ORG_OWNER) && !hasPermission(ctx, PERMISSIONS.USERS_MANAGE)) {
     return {
       ok: false,
-      error: "Only organization owners can promote users to Store Manager.",
+      error: "You don’t have permission to promote users to Admin.",
     };
   }
   return { ok: true };

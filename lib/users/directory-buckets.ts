@@ -1,6 +1,8 @@
 import { normalizeRoleLabel } from "@/lib/rbac/matrix";
 import type { AdminAccess } from "@/lib/users/admin-access";
 
+export type EmployeeJobTitle = { id: string; name: string };
+
 export type DirectoryEmployee = {
   id: string;
   full_name: string;
@@ -32,6 +34,10 @@ export type DirectoryEmployee = {
   /** Store Manager module access; null = all modules. */
   admin_access: AdminAccess | null;
   admin_tab_enabled: boolean | null;
+  /** Position (primary job title) */
+  primaryJobTitle: EmployeeJobTitle | null;
+  /** Title (secondary job title) */
+  secondaryJobTitle: EmployeeJobTitle | null;
 };
 
 export type DirectoryTab = "users" | "admins" | "archived";

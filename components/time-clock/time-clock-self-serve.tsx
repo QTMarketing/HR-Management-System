@@ -10,6 +10,8 @@ type Props = {
   timeClockId: string;
   locationId: string;
   viewerEmployeeId: string | null;
+  /** Display name from `employees.full_name` for the logged-in viewer. */
+  viewerEmployeeName?: string | null;
   /** True when the viewer’s employee row matches this clock’s location. */
   viewerAtLocation: boolean;
   /** Open punch id on this clock for the viewer, if any. */
@@ -35,6 +37,7 @@ export function TimeClockSelfServe({
   timeClockId,
   locationId,
   viewerEmployeeId,
+  viewerEmployeeName = null,
   viewerAtLocation,
   viewerOpenEntryId,
   viewerOpenEntryClockInAt = null,
@@ -172,56 +175,82 @@ export function TimeClockSelfServe({
   }
 
   if (!viewerAtLocation) {
+    const who =
+      viewerEmployeeName && viewerEmployeeName.trim().length > 0
+        ? viewerEmployeeName.trim()
+        : "You";
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-        You’re assigned to a different store. Use the location selector in the header to choose this
-        clock’s store, or ask HR to update your assignment.
+        <span className="font-medium text-amber-950">{who}</span> — You’re assigned to a different store.
+        Use the location selector in the header to choose this clock’s store, or ask HR to update your
+        assignment.
       </div>
     );
   }
 
+  const displayName =
+    viewerEmployeeName && viewerEmployeeName.trim().length > 0
+      ? viewerEmployeeName.trim()
+      : "Employee";
+
+  const clockInTimeLabel =
+    viewerOpenEntryClockInAt != null && viewerOpenEntryClockInAt !== ""
+      ? new Date(viewerOpenEntryClockInAt).toLocaleTimeString(undefined, {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        })
+      : null;
+
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <h3 className="text-sm font-semibold text-slate-800">Your time today</h3>
-      {viewerOpenEntryId && viewerOpenEntryClockInAt ? (
-        <p className="mt-1 text-xs text-slate-600">
-          Status:{" "}
-          <span className="font-semibold text-emerald-700">
-            Clocked in
-          </span>{" "}
-          since{" "}
-          <span className="tabular-nums font-medium text-slate-800">
-            {new Date(viewerOpenEntryClockInAt).toLocaleTimeString(undefined, {
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            })}
-          </span>
-        </p>
-      ) : null}
+      <p className="mt-1 text-sm text-slate-700">
+        Clocking in as <span className="font-semibold text-slate-900">{displayName}</span>
+      </p>
       {geofenceActive ? (
         <p className="mt-1 text-xs text-slate-500">
           This store requires GPS for clock-in (browser will ask for location).
         </p>
       ) : (
         <p className="mt-1 text-xs text-slate-500">
-          Optional job code is saved with your clock-in for payroll.
+          Punch in/out is saved to the time clock with a timestamp. Optional job code is for payroll
+          coding only.
         </p>
       )}
-      <div className="mt-3 flex flex-wrap items-end gap-3">
-        <label className="block text-xs font-medium text-slate-600">
-          Job code (optional)
-          <input
-            value={jobCode}
-            onChange={(e) => setJobCode(e.target.value)}
-            className="mt-1 block w-44 rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-800"
-            placeholder="e.g. CASHIER"
-            disabled={pending || Boolean(viewerOpenEntryId)}
-            autoComplete="off"
-          />
-        </label>
+      {!viewerOpenEntryId ? (
+        <details className="mt-3 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2">
+          <summary className="cursor-pointer text-xs font-medium text-slate-600">
+            Optional job code (payroll)
+          </summary>
+          <label className="mt-2 block text-xs font-medium text-slate-600">
+            Job code
+            <input
+              value={jobCode}
+              onChange={(e) => setJobCode(e.target.value)}
+              className="mt-1 block w-full max-w-xs rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800"
+              placeholder="e.g. CASHIER"
+              disabled={pending}
+              autoComplete="off"
+            />
+          </label>
+        </details>
+      ) : null}
+      <div className="mt-3 flex flex-wrap items-center gap-3">
         {viewerOpenEntryId ? (
           <>
+            <div
+              className="inline-flex items-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm"
+              role="status"
+              aria-live="polite"
+            >
+              Clocked in
+              {clockInTimeLabel ? (
+                <span className="ml-2 tabular-nums font-medium text-emerald-100">
+                  since {clockInTimeLabel}
+                </span>
+              ) : null}
+            </div>
             {viewerOpenBreakId ? (
               <button
                 type="button"
@@ -269,7 +298,7 @@ export function TimeClockSelfServe({
             type="button"
             disabled={pending}
             onClick={onClockIn}
-            className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:opacity-50"
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
           >
             {pending ? "…" : "Clock in"}
           </button>
@@ -280,6 +309,7 @@ export function TimeClockSelfServe({
           type="button"
           onClick={() => setTimeOffOpen(true)}
           disabled={pending}
+          aria-haspopup="dialog"
           className="text-sm font-medium text-orange-700 underline decoration-orange-300 underline-offset-2 hover:text-orange-900 disabled:opacity-50"
         >
           Request time off

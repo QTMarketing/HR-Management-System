@@ -13,6 +13,7 @@ import { requirePermission } from "@/lib/rbac/guard";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { AdminAccess } from "@/lib/users/admin-access";
+import type { EmployeeJobTitle } from "@/lib/users/directory-buckets";
 
 const EMPLOYEE_SELECT = [
                       "id",
@@ -62,9 +63,17 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
   const canEditAdminAccess =
     !rbac.enabled || hasPermission(rbac, PERMISSIONS.ORG_OWNER);
   const canPromoteToAdmin =
-    !rbac.enabled || hasPermission(rbac, PERMISSIONS.ORG_OWNER);
+    !rbac.enabled ||
+    hasPermission(rbac, PERMISSIONS.ORG_OWNER) ||
+    hasPermission(rbac, PERMISSIONS.USERS_MANAGE);
   const canBulkAddFromAdminsTab =
     !rbac.enabled || hasPermission(rbac, PERMISSIONS.USERS_MANAGE);
+  const canEditJobTitles =
+    !rbac.enabled ||
+    hasPermission(rbac, PERMISSIONS.USERS_MANAGE) ||
+    hasPermission(rbac, PERMISSIONS.ORG_OWNER);
+  const canSetOrgOwner =
+    !rbac.enabled || hasPermission(rbac, PERMISSIONS.ORG_OWNER);
 
   const { data: locRows } = await supabase
     .from("locations")
@@ -94,9 +103,30 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
   }
   const { data: rows, error } = await employeesQuery;
 
+  const ids = (rows ?? []).map((r) => String((r as { id?: string }).id ?? "")).filter(Boolean);
+  const titleByEmployeeRank = new Map<string, { primary: EmployeeJobTitle | null; secondary: EmployeeJobTitle | null }>();
+  if (ids.length > 0) {
+    const { data: ejtRows } = await supabase
+      .from("employee_job_titles")
+      .select("employee_id, rank, job_title:job_titles(id,name)")
+      .in("employee_id", ids);
+    for (const row of (ejtRows ?? []) as unknown as Array<Record<string, unknown>>) {
+      const employeeId = String(row.employee_id ?? "");
+      const rank = Number(row.rank ?? 0);
+      const jt = row.job_title as { id?: string; name?: string } | null;
+      if (!employeeId || !jt?.id) continue;
+      const entry = titleByEmployeeRank.get(employeeId) ?? { primary: null, secondary: null };
+      const t: EmployeeJobTitle = { id: String(jt.id), name: String(jt.name ?? "").trim() };
+      if (rank === 1) entry.primary = t;
+      if (rank === 2) entry.secondary = t;
+      titleByEmployeeRank.set(employeeId, entry);
+    }
+  }
+
   const employees: DirectoryEmployee[] = (rows ?? []).map((r) => {
     const rec = r as unknown as Record<string, unknown>;
     const lid = rec.location_id as string | null;
+    const t = titleByEmployeeRank.get(String(rec.id)) ?? { primary: null, secondary: null };
     return {
       id: String(rec.id),
       full_name: String(rec.full_name ?? ""),
@@ -126,6 +156,8 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
       permissions_label: (rec.permissions_label as string | null) ?? null,
       admin_access: (rec.admin_access as AdminAccess | null) ?? null,
       admin_tab_enabled: Boolean(rec.admin_tab_enabled),
+      primaryJobTitle: t.primary,
+      secondaryJobTitle: t.secondary,
     };
   });
 
@@ -168,6 +200,8 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
             canEditAdminAccess={canEditAdminAccess}
             canPromoteToAdmin={canPromoteToAdmin}
             canBulkAddFromAdminsTab={canBulkAddFromAdminsTab}
+            canEditJobTitles={canEditJobTitles}
+            canSetOrgOwner={canSetOrgOwner}
             initialSearchQuery={initialSearchQ}
           />
         </Suspense>

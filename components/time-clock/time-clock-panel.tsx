@@ -32,6 +32,7 @@ type Props = {
   storeEmployees?: StoreEmployeeOption[];
   /** Logged-in user’s employee id when email matches Users (self-serve punch). */
   viewerEmployeeId?: string | null;
+  viewerEmployeeName?: string | null;
   viewerAtLocation?: boolean;
   viewerOpenEntryId?: string | null;
   viewerOpenEntryClockInAt?: string | null;
@@ -54,6 +55,7 @@ export function TimeClockPanel({
   canManage = false,
   storeEmployees,
   viewerEmployeeId = null,
+  viewerEmployeeName = null,
   viewerAtLocation = false,
   viewerOpenEntryId = null,
   viewerOpenEntryClockInAt = null,
@@ -99,6 +101,7 @@ export function TimeClockPanel({
         timeClockId={timeClockId}
         locationId={locationId}
         viewerEmployeeId={viewerEmployeeId}
+        viewerEmployeeName={viewerEmployeeName}
         viewerAtLocation={viewerAtLocation}
         viewerOpenEntryId={viewerOpenEntryId}
         viewerOpenEntryClockInAt={viewerOpenEntryClockInAt}

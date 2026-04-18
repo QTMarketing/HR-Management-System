@@ -1,15 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import {
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Download,
-  Filter,
-  Plus,
-  Search,
-} from "lucide-react";
+import { ChevronDown, Download, Filter, Plus, Search } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 import { approveTimeEntry, unapproveTimeEntry } from "@/app/actions/time-entry-approval";
 import { seedSampleTimesheetPunches } from "@/app/actions/seed-time-entries";
@@ -388,71 +380,46 @@ export function TimeSheetsPanel({
                 />
               </div>
 
-              <div className="inline-flex min-w-0 flex-wrap items-center gap-1 rounded border border-slate-200 bg-white pl-1 pr-1 shadow-sm">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (rangeFromYmd && rangeToYmd) {
-                      const n = shiftCustomRangeYmd(rangeFromYmd, rangeToYmd, -1);
-                      if (n) {
-                        pushTimesheetsQuery({ rangeFrom: n.from, rangeTo: n.to });
-                      }
-                      return;
+              <TimesheetRangePicker
+                key={`${periodStartIso}-${periodEndExclusiveIso}`}
+                rangeLabel={rangeLabel}
+                periodStart={new Date(periodStartIso)}
+                periodEndInclusive={periodEndInclusive}
+                hasCustomRange={hasCustomRange}
+                onApplyCustomRange={(fromYmd, toYmd) =>
+                  pushTimesheetsQuery({ rangeFrom: fromYmd, rangeTo: toYmd })
+                }
+                onClearCustomRange={() =>
+                  pushTimesheetsQuery({ anchor: new Date(), clearCustomRange: true })
+                }
+                onNavigatePrev={() => {
+                  if (rangeFromYmd && rangeToYmd) {
+                    const n = shiftCustomRangeYmd(rangeFromYmd, rangeToYmd, -1);
+                    if (n) {
+                      pushTimesheetsQuery({ rangeFrom: n.from, rangeTo: n.to });
                     }
-                    const start = new Date(periodStartIso);
-                    const newStart = shiftPeriodAnchor(start, periodKind, periodConfig, -1);
-                    pushTimesheetsQuery({ anchor: newStart, clearCustomRange: true });
-                  }}
-                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded text-slate-600 hover:bg-slate-100"
-                  aria-label="Previous period"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    pushTimesheetsQuery({ anchor: new Date(), clearCustomRange: true })
+                    return;
                   }
-                  className="min-w-[8.5rem] cursor-pointer rounded-md px-2 py-2 text-center text-sm font-semibold tabular-nums text-slate-900 transition-colors hover:bg-slate-100 active:bg-slate-200 sm:min-w-[10rem]"
-                  title="Jump to the period that contains today (clears a custom date range). If you already see this week, the grid may not change."
-                >
-                  {rangeLabel}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (rangeFromYmd && rangeToYmd) {
-                      const n = shiftCustomRangeYmd(rangeFromYmd, rangeToYmd, 1);
-                      if (n) {
-                        pushTimesheetsQuery({ rangeFrom: n.from, rangeTo: n.to });
-                      }
-                      return;
+                  const start = new Date(periodStartIso);
+                  const newStart = shiftPeriodAnchor(start, periodKind, periodConfig, -1);
+                  pushTimesheetsQuery({ anchor: newStart, clearCustomRange: true });
+                }}
+                onNavigateNext={() => {
+                  if (rangeFromYmd && rangeToYmd) {
+                    const n = shiftCustomRangeYmd(rangeFromYmd, rangeToYmd, 1);
+                    if (n) {
+                      pushTimesheetsQuery({ rangeFrom: n.from, rangeTo: n.to });
                     }
-                    const start = new Date(periodStartIso);
-                    const newStart = shiftPeriodAnchor(start, periodKind, periodConfig, 1);
-                    pushTimesheetsQuery({ anchor: newStart, clearCustomRange: true });
-                  }}
-                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded text-slate-600 hover:bg-slate-100"
-                  aria-label="Next period"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-                <div className="border-l border-slate-200 pl-2">
-                  <TimesheetRangePicker
-                    key={`${periodStartIso}-${periodEndExclusiveIso}`}
-                    rangeLabel={rangeLabel}
-                    periodStart={new Date(periodStartIso)}
-                    periodEndInclusive={periodEndInclusive}
-                    hasCustomRange={hasCustomRange}
-                    onApplyCustomRange={(fromYmd, toYmd) =>
-                      pushTimesheetsQuery({ rangeFrom: fromYmd, rangeTo: toYmd })
-                    }
-                    onClearCustomRange={() =>
-                      pushTimesheetsQuery({ anchor: new Date(), clearCustomRange: true })
-                    }
-                  />
-                </div>
-              </div>
+                    return;
+                  }
+                  const start = new Date(periodStartIso);
+                  const newStart = shiftPeriodAnchor(start, periodKind, periodConfig, 1);
+                  pushTimesheetsQuery({ anchor: newStart, clearCustomRange: true });
+                }}
+                onJumpToToday={() =>
+                  pushTimesheetsQuery({ anchor: new Date(), clearCustomRange: true })
+                }
+              />
 
               <div className="relative min-w-[11rem] shrink-0">
                 <select

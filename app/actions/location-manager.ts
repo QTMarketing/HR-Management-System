@@ -20,10 +20,11 @@ async function gateOrgOwner(): Promise<LocationManagerResult | null> {
     data: { user },
   } = await supabase.auth.getUser();
   const ctx = await getRbacContext(supabase, user);
-  if (!hasPermission(ctx, PERMISSIONS.ORG_OWNER)) {
+  // Admins (Store Managers) + Owners can manage stores/leads.
+  if (!hasPermission(ctx, PERMISSIONS.ORG_OWNER) && !hasPermission(ctx, PERMISSIONS.USERS_MANAGE)) {
     return {
       ok: false,
-      error: "Only organization owners can assign store leads.",
+      error: "You don’t have permission to assign store leads.",
     };
   }
   return null;

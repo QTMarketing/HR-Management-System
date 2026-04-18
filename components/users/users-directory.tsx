@@ -1,11 +1,12 @@
 "use client";
 
-import { ChevronDown, Search, SlidersHorizontal, Upload } from "lucide-react";
+import { ChevronDown, MoreHorizontal, Search, SlidersHorizontal, Upload } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { AddUsersBulkModal } from "@/components/users/add-users-bulk-modal";
 import { AdminPermissionsPopover } from "@/components/users/admin-permissions-popover";
+import { JobTitlesPopover } from "@/components/users/job-titles-popover";
 import {
   PromoteAdminModal,
   usersTabPromoteCandidates,
@@ -22,6 +23,8 @@ import {
 import { formatAdminAccessSummary } from "@/lib/users/admin-access";
 import { EllipsisTd } from "@/components/ui/ellipsis-td";
 import { normalizeRoleLabel } from "@/lib/rbac/matrix";
+import { promoteEmployeeToAdmin } from "@/app/actions/users-directory";
+import { setEmployeeOrgOwner } from "@/app/actions/org-owner-role";
 
 function fmtDate(s: string | null | undefined): string {
   if (!s) return "—";
@@ -123,6 +126,10 @@ type Props = {
   canPromoteToAdmin: boolean;
   /** Store Managers (and owners): bulk-add employees from Admins tab shortcut. */
   canBulkAddFromAdminsTab: boolean;
+  /** Admins + owners: edit job title assignments and create job titles. */
+  canEditJobTitles: boolean;
+  /** Owners only: grant/revoke organization owner access. */
+  canSetOrgOwner: boolean;
   /** Prefill search from `?q=` (e.g. Activity → Users). */
   initialSearchQuery?: string;
 };
@@ -135,6 +142,8 @@ export function UsersDirectory({
   canEditAdminAccess,
   canPromoteToAdmin,
   canBulkAddFromAdminsTab,
+  canEditJobTitles,
+  canSetOrgOwner,
   initialSearchQuery = "",
 }: Props) {
   const router = useRouter();
@@ -147,6 +156,9 @@ export function UsersDirectory({
   const [adminAddMenuOpen, setAdminAddMenuOpen] = useState(false);
   const [promoteAdminOpen, setPromoteAdminOpen] = useState(false);
   const adminAddMenuRef = useRef<HTMLDivElement>(null);
+  const [rowMenuOpenId, setRowMenuOpenId] = useState<string | null>(null);
+  const rowMenuRef = useRef<HTMLDivElement>(null);
+  const [rowActionError, setRowActionError] = useState<string | null>(null);
 
   const promoteCandidates = useMemo(() => usersTabPromoteCandidates(employees), [employees]);
 
@@ -160,6 +172,17 @@ export function UsersDirectory({
     window.addEventListener("mousedown", onPointer);
     return () => window.removeEventListener("mousedown", onPointer);
   }, [adminAddMenuOpen]);
+
+  useEffect(() => {
+    if (!rowMenuOpenId) return;
+    const onPointer = (e: MouseEvent) => {
+      if (rowMenuRef.current && !rowMenuRef.current.contains(e.target as Node)) {
+        setRowMenuOpenId(null);
+      }
+    };
+    window.addEventListener("mousedown", onPointer);
+    return () => window.removeEventListener("mousedown", onPointer);
+  }, [rowMenuOpenId]);
 
   const tabParam = searchParams.get("tab");
   const tab: DirectoryTab =
@@ -228,7 +251,10 @@ export function UsersDirectory({
       </th>
       <th className={`${stickyHeadName} whitespace-nowrap`}>First name</th>
       <th className={`${cell} whitespace-nowrap min-w-[7.5rem]`}>Last name</th>
+      <th className={`${cell} whitespace-nowrap min-w-[14rem]`}>Email</th>
+      <th className={`${cell} whitespace-nowrap min-w-[10rem]`}>Store assigned</th>
       <th className={`${cell} whitespace-nowrap min-w-[10rem]`}>Position</th>
+      <th className={`${cell} whitespace-nowrap min-w-[10rem]`}>Title</th>
       <th className={`${cellNowrap} min-w-[11rem]`}>Employment start date</th>
       <th className={`${cell} whitespace-nowrap min-w-[8rem]`}>Team</th>
       <th className={`${cell} whitespace-nowrap min-w-[9rem]`}>Department</th>
@@ -236,8 +262,8 @@ export function UsersDirectory({
       <th className={`${cellNowrap} min-w-[9rem]`}>Date added</th>
       <th className={`${cellNowrap} min-w-[11rem]`}>Last login</th>
       <th className={`${cell} whitespace-nowrap min-w-[8rem]`}>Added by</th>
-      <th className={`w-12 min-w-12 px-3 py-3.5 text-right`} aria-label="Column settings">
-        <span className="text-slate-400">▤</span>
+      <th className={`w-12 min-w-12 px-3 py-3.5 text-right`} aria-label="Actions">
+        <span className="text-slate-400">⋯</span>
       </th>
     </tr>
   );
@@ -345,6 +371,12 @@ export function UsersDirectory({
           </nav>
         </div>
 
+        {rowActionError ? (
+          <p className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            {rowActionError}
+          </p>
+        ) : null}
+
         <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-1 flex-wrap items-center gap-2">
             <div className="relative min-w-[200px] max-w-md flex-1">
@@ -449,7 +481,7 @@ export function UsersDirectory({
           aria-label="User directory table"
         >
           {tab === "users" && (
-            <table className="min-w-[1620px] w-full table-auto text-left text-sm">
+            <table className="min-w-[1920px] w-full table-auto text-left text-sm">
               <thead>{theadUsers}</thead>
               <tbody className="text-slate-800">
                 {filtered.length === 0 ? (
@@ -491,9 +523,30 @@ export function UsersDirectory({
                           {displayLast(e)}
                         </Link>
                       </EllipsisTd>
-                      <EllipsisTd maxClass="max-w-[10rem]" title={e.role || undefined}>
-                        {e.role || "—"}
+                      <EllipsisTd maxClass="max-w-[14rem]" title={e.email ?? undefined}>
+                        <span className="text-slate-600">{e.email ?? "—"}</span>
                       </EllipsisTd>
+                      <EllipsisTd maxClass="max-w-[10rem]" title={e.locationName ?? undefined}>
+                        <span className="text-slate-600">{e.locationName ?? "—"}</span>
+                      </EllipsisTd>
+                      <td className={`${cell} min-w-[10rem] text-slate-600`}>
+                        <JobTitlesPopover
+                          employeeId={e.id}
+                          primary={e.primaryJobTitle}
+                          secondary={e.secondaryJobTitle}
+                          canEdit={canEditJobTitles}
+                          mode="primary"
+                        />
+                      </td>
+                      <td className={`${cell} min-w-[10rem] text-slate-600`}>
+                        <JobTitlesPopover
+                          employeeId={e.id}
+                          primary={e.primaryJobTitle}
+                          secondary={e.secondaryJobTitle}
+                          canEdit={canEditJobTitles}
+                          mode="secondary"
+                        />
+                      </td>
                       <EllipsisTd maxClass="max-w-[11rem]" title={fmtDate(e.employment_start_date)}>
                         <span className="text-slate-600">{fmtDate(e.employment_start_date)}</span>
                       </EllipsisTd>
@@ -515,7 +568,63 @@ export function UsersDirectory({
                       <EllipsisTd maxClass="max-w-[8rem]" title={e.added_by ?? undefined}>
                         <span className="text-slate-600">{e.added_by ?? "—"}</span>
                       </EllipsisTd>
-                      <td className={`${cell} w-12 min-w-12`} />
+                      <td className={`${cell} w-12 min-w-12 text-right`}>
+                        {(canPromoteToAdmin || canSetOrgOwner) ? (
+                          <div className="relative inline-flex justify-end" ref={rowMenuRef}>
+                            <button
+                              type="button"
+                              className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                              aria-label="Row actions"
+                              aria-expanded={rowMenuOpenId === e.id}
+                              onClick={() => {
+                                setRowActionError(null);
+                                setRowMenuOpenId((cur) => (cur === e.id ? null : e.id));
+                              }}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </button>
+                            {rowMenuOpenId === e.id ? (
+                              <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-slate-200 bg-white py-1 shadow-lg">
+                                {canPromoteToAdmin ? (
+                                  <button
+                                    type="button"
+                                    className="block w-full px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-50"
+                                    onClick={() => {
+                                      setRowMenuOpenId(null);
+                                      setRowActionError(null);
+                                      startTransition(async () => {
+                                        const r = await promoteEmployeeToAdmin(e.id);
+                                        if (!r.ok) setRowActionError(r.error);
+                                        else router.refresh();
+                                      });
+                                    }}
+                                  >
+                                    Promote to Admin
+                                  </button>
+                                ) : null}
+                                {canSetOrgOwner ? (
+                                  <button
+                                    type="button"
+                                    className="block w-full px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-50"
+                                    onClick={() => {
+                                      const isOwner = normalizeRoleLabel(e.role) === "owner";
+                                      setRowMenuOpenId(null);
+                                      setRowActionError(null);
+                                      startTransition(async () => {
+                                        const r = await setEmployeeOrgOwner(e.id, !isOwner);
+                                        if (!r.ok) setRowActionError(r.error);
+                                        else router.refresh();
+                                      });
+                                    }}
+                                  >
+                                    Toggle Owner
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </td>
                     </tr>
                   ))
                 )}

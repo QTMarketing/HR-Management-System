@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/rbac/guard";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import type { AdminAccess } from "@/lib/users/admin-access";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import type { LocationStatus } from "@/app/actions/location-status";
 
 const EMPLOYEE_SELECT = [
   "id",
@@ -25,12 +26,14 @@ export default async function LocationsPage() {
     data: { user },
   } = await supabase.auth.getUser();
   const rbac = await getRbacContext(supabase, user);
-  const canAssignStoreLead =
-    !rbac.enabled || hasPermission(rbac, PERMISSIONS.ORG_OWNER);
+  const canManageStores =
+    !rbac.enabled ||
+    hasPermission(rbac, PERMISSIONS.ORG_OWNER) ||
+    hasPermission(rbac, PERMISSIONS.USERS_MANAGE);
 
   const { data: locRows, error: locErr } = await supabase
     .from("locations")
-    .select("id, name, manager_employee_id")
+    .select("id, name, manager_employee_id, status")
     .order("sort_order", { ascending: true });
 
   const migrationHint = (
@@ -87,6 +90,8 @@ export default async function LocationsPage() {
       permissions_label: null,
       admin_access: null as AdminAccess | null,
       admin_tab_enabled: false,
+      primaryJobTitle: null,
+      secondaryJobTitle: null,
     };
   });
 
@@ -114,9 +119,10 @@ export default async function LocationsPage() {
             name: r.name,
             manager_employee_id:
               (r as { manager_employee_id?: string | null }).manager_employee_id ?? null,
+            status: ((r as { status?: string | null }).status ?? "running") as LocationStatus,
           }))}
           employees={employees}
-          canAssignStoreLead={canAssignStoreLead}
+          canManageStores={canManageStores}
         />
       )}
     </div>
