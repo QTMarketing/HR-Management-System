@@ -609,32 +609,44 @@ function AddSegmentModal({
           </label>
           <label className="block text-sm font-medium text-slate-700">
             Color
-            <select
-              value={color}
-              onChange={(e) => setColor(e.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
-            >
-              {["slate", "violet", "amber", "blue", "rose", "emerald"].map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+            <div className="relative mt-1">
+              <select
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                className="h-10 w-full cursor-pointer appearance-none rounded-md border border-slate-200 bg-white px-3 pr-12 text-sm text-slate-800 shadow-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+              >
+                {["slate", "violet", "amber", "blue", "rose", "emerald"].map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+                aria-hidden
+              />
+            </div>
           </label>
           <label className="block text-sm font-medium text-slate-700">
             Location scope
-            <select
-              value={loc}
-              onChange={(e) => setLoc(e.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
-            >
-              <option value="">All locations in view</option>
-              {locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
+            <div className="relative mt-1">
+              <select
+                value={loc}
+                onChange={(e) => setLoc(e.target.value)}
+                className="h-10 w-full cursor-pointer appearance-none rounded-md border border-slate-200 bg-white px-3 pr-12 text-sm text-slate-800 shadow-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+              >
+                <option value="">All locations in view</option>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+                aria-hidden
+              />
+            </div>
           </label>
         </div>
         <div className="mt-6 flex justify-end gap-2">

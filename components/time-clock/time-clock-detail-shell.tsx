@@ -104,7 +104,7 @@ export function TimeClockDetailShell({
                   : "border-transparent text-slate-500 hover:text-slate-800"
               }`}
             >
-              Settings
+              Setup
             </button>
           ) : null}
         </nav>

@@ -40,15 +40,14 @@ export async function saveTimeClockTimesheetPeriod(params: {
   if (!id) return { ok: false, error: "Missing time clock." };
 
   const kind = params.timesheet_period_kind;
-  if (!["weekly", "monthly", "semi_monthly", "custom"].includes(kind)) {
+  if (!["weekly", "bi_weekly", "monthly", "semi_monthly", "custom"].includes(kind)) {
     return { ok: false, error: "Invalid period type." };
   }
 
   const config = normalizePeriodConfig(params.timesheet_period_config, kind);
-  const payload =
-    kind === "semi_monthly" || kind === "custom"
-      ? { split_after_day: config.split_after_day ?? 15 }
-      : null;
+  // Persist the full config so UI dropdowns stay sticky (week start, monthly cutoff, reminders, etc).
+  // `normalizePeriodConfig` already scopes the required fields per kind.
+  const payload = config;
 
   const { error } = await supabase
     .from("time_clocks")
@@ -62,5 +61,43 @@ export async function saveTimeClockTimesheetPeriod(params: {
 
   revalidatePath("/time-clock");
   revalidatePath(`/time-clock/${id}`);
+  return { ok: true };
+}
+
+export async function bulkApplyTimeClockTimesheetPeriod(params: {
+  timeClockIds: string[];
+  timesheet_period_kind: TimesheetPeriodKind;
+  timesheet_period_config: TimesheetPeriodConfig | null;
+}): Promise<SavePeriodResult> {
+  const gate = await gateManage();
+  if (!gate.ok) return { ok: false, error: gate.error };
+  const { supabase } = gate;
+
+  const ids = (params.timeClockIds ?? []).map((x) => String(x ?? "").trim()).filter(Boolean);
+  if (ids.length === 0) return { ok: false, error: "Pick at least one time clock." };
+  if (ids.length > 200) return { ok: false, error: "Too many targets selected." };
+
+  const kind = params.timesheet_period_kind;
+  if (!["weekly", "bi_weekly", "monthly", "semi_monthly", "custom"].includes(kind)) {
+    return { ok: false, error: "Invalid period type." };
+  }
+
+  const config = normalizePeriodConfig(params.timesheet_period_config, kind);
+  const payload = config;
+
+  const { error } = await supabase
+    .from("time_clocks")
+    .update({
+      timesheet_period_kind: kind,
+      timesheet_period_config: payload,
+    })
+    .in("id", ids);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/time-clock");
+  for (const id of ids) {
+    revalidatePath(`/time-clock/${id}`);
+  }
   return { ok: true };
 }

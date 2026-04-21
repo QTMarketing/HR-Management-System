@@ -47,6 +47,8 @@ type LocationOption = { id: string; name: string };
 
 type Props = {
   locationName: string;
+  /** When false, clock cards can fall back to `locationName` for the store label (single-store scope). */
+  scopeAll: boolean;
   activeClocks: HubClock[];
   archivedClocks: HubClock[];
   employeeCount: number;
@@ -62,8 +64,19 @@ function assignedLabel(c: HubClock, employeeCount: number): string {
   return `All employees at this store (${employeeCount})`;
 }
 
+function storeLabelForCard(
+  c: HubClock,
+  locationName: string,
+  scopeAll: boolean,
+): string | null {
+  if (c.storeName) return c.storeName;
+  if (!scopeAll && locationName !== "All locations") return locationName;
+  return null;
+}
+
 export function TimeClockHub({
   locationName,
+  scopeAll,
   activeClocks,
   archivedClocks,
   employeeCount,
@@ -99,13 +112,15 @@ export function TimeClockHub({
     if (!q) return list;
     return list.filter((c) => {
       const assign = assignedLabel(c, employeeCount).toLowerCase();
+      const store = storeLabelForCard(c, locationName, scopeAll)?.toLowerCase() ?? "";
       return (
         c.name.toLowerCase().includes(q) ||
         assign.includes(q) ||
+        store.includes(q) ||
         (c.storeName?.toLowerCase().includes(q) ?? false)
       );
     });
-  }, [list, query, employeeCount]);
+  }, [list, query, employeeCount, locationName, scopeAll]);
 
   const [showAdd, setShowAdd] = useState(false);
   const [addLocationId, setAddLocationId] = useState(
@@ -315,7 +330,20 @@ export function TimeClockHub({
           {filtered.map((c) => (
             <li key={c.id}>
               <div className="flex h-full flex-col rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
-                <h2 className="text-base font-semibold text-slate-900">{c.name}</h2>
+                <h2 className="text-base font-semibold text-slate-900">
+                  {(() => {
+                    const store = storeLabelForCard(c, locationName, scopeAll);
+                    return store ? (
+                      <>
+                        <span className="text-slate-800">{store}</span>
+                        <span className="font-normal text-slate-400"> — </span>
+                        <span>{c.name}</span>
+                      </>
+                    ) : (
+                      c.name
+                    );
+                  })()}
+                </h2>
                 <p className="mt-3 text-xs text-slate-500">
                   <span className="font-medium text-slate-600">Assigned:</span>{" "}
                   <span className="rounded-md bg-orange-50 px-2 py-0.5 text-orange-950 ring-1 ring-orange-200/60">

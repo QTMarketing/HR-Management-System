@@ -34,6 +34,7 @@ import {
 import {
   Bell,
   CalendarDays,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -873,45 +874,59 @@ export function ScheduleWeekBoard({
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <label className="block">
                       <span className="sr-only">Month</span>
-                      <select
-                        className="h-7 w-full rounded-xl border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-800 shadow-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                        value={calendarMonth.getMonth()}
-                        onChange={(e) => {
-                          const m = Number(e.target.value);
-                          if (Number.isNaN(m)) return;
-                          setCalendarMonth(new Date(calendarMonth.getFullYear(), m, 1));
-                        }}
-                      >
-                        {Array.from({ length: 12 }, (_, i) => {
-                          const label = new Date(2000, i, 1).toLocaleString(undefined, { month: "long" });
-                          return (
-                            <option key={i} value={i}>
-                              {label}
-                            </option>
-                          );
-                        })}
-                      </select>
+                      <div className="relative">
+                        <select
+                          className="h-7 w-full cursor-pointer appearance-none rounded-xl border border-slate-200 bg-white pl-2 pr-7 text-[11px] font-semibold text-slate-800 shadow-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          value={calendarMonth.getMonth()}
+                          onChange={(e) => {
+                            const m = Number(e.target.value);
+                            if (Number.isNaN(m)) return;
+                            setCalendarMonth(new Date(calendarMonth.getFullYear(), m, 1));
+                          }}
+                        >
+                          {Array.from({ length: 12 }, (_, i) => {
+                            const label = new Date(2000, i, 1).toLocaleString(undefined, {
+                              month: "long",
+                            });
+                            return (
+                              <option key={i} value={i}>
+                                {label}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        <ChevronDown
+                          className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500"
+                          aria-hidden
+                        />
+                      </div>
                     </label>
                     <label className="block">
                       <span className="sr-only">Year</span>
-                      <select
-                        className="h-7 w-full rounded-xl border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-800 shadow-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                        value={calendarMonth.getFullYear()}
-                        onChange={(e) => {
-                          const y = Number(e.target.value);
-                          if (Number.isNaN(y)) return;
-                          setCalendarMonth(new Date(y, calendarMonth.getMonth(), 1));
-                        }}
-                      >
-                        {Array.from({ length: 9 }, (_, i) => {
-                          const y = today.getFullYear() - 4 + i;
-                          return (
-                            <option key={y} value={y}>
-                              {y}
-                            </option>
-                          );
-                        })}
-                      </select>
+                      <div className="relative">
+                        <select
+                          className="h-7 w-full cursor-pointer appearance-none rounded-xl border border-slate-200 bg-white pl-2 pr-7 text-[11px] font-semibold text-slate-800 shadow-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          value={calendarMonth.getFullYear()}
+                          onChange={(e) => {
+                            const y = Number(e.target.value);
+                            if (Number.isNaN(y)) return;
+                            setCalendarMonth(new Date(y, calendarMonth.getMonth(), 1));
+                          }}
+                        >
+                          {Array.from({ length: 9 }, (_, i) => {
+                            const y = today.getFullYear() - 4 + i;
+                            return (
+                              <option key={y} value={y}>
+                                {y}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        <ChevronDown
+                          className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500"
+                          aria-hidden
+                        />
+                      </div>
                     </label>
                   </div>
 

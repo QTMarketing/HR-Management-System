@@ -22,6 +22,16 @@ type Props = {
   viewerOpenBreakId?: string | null;
   /** Location has geofence columns set — clock-in requires GPS. */
   geofenceActive: boolean;
+  /** Connecteam-like setting: capture GPS at punch time (off / in-out / future breadcrumbs). */
+  locationTrackingMode: "off" | "clock_in_out" | "breadcrumbs" | string;
+  /** When true and trackingMode != off, GPS must be provided even if no geofence is set. */
+  requireLocationForPunch: boolean;
+  /** Extra punch dimension captured at clock-in (none / job / location). */
+  categorizationMode: "none" | "job" | "location" | string;
+  /** When true, employee must pick a code for the chosen categorizationMode before clock-in succeeds. */
+  requireCategorization: boolean;
+  jobCodes: { id: string; label: string }[];
+  locationCodes: { id: string; label: string }[];
   /** Archived clock — hide widget. */
   disabled?: boolean;
 };
@@ -43,13 +53,20 @@ export function TimeClockSelfServe({
   viewerOpenEntryClockInAt = null,
   viewerOpenBreakId = null,
   geofenceActive,
+  locationTrackingMode,
+  requireLocationForPunch,
+  categorizationMode,
+  requireCategorization,
+  jobCodes,
+  locationCodes,
   disabled = false,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
   const [timeOffOpen, setTimeOffOpen] = useState(false);
-  const [jobCode, setJobCode] = useState("");
+  const [jobCodeId, setJobCodeId] = useState("");
+  const [locationCodeId, setLocationCodeId] = useState("");
   const [breakPaid, setBreakPaid] = useState(false);
 
   function getPosition(): Promise<{ lat: number; lng: number } | null> {
@@ -72,21 +89,38 @@ export function TimeClockSelfServe({
       if (!viewerEmployeeId || !viewerAtLocation) return;
       let clockInLat: number | undefined;
       let clockInLng: number | undefined;
-      if (geofenceActive) {
+      const trackingOn =
+        locationTrackingMode === "clock_in_out" || locationTrackingMode === "breadcrumbs";
+      if (geofenceActive || trackingOn) {
         const pos = await getPosition();
         if (!pos) {
-          setMsg("Location access is required to clock in at this store.");
-          return;
+          if (geofenceActive || requireLocationForPunch) {
+            setMsg("Location access is required to clock in at this store.");
+            return;
+          }
+        } else {
+          clockInLat = pos.lat;
+          clockInLng = pos.lng;
         }
-        clockInLat = pos.lat;
-        clockInLng = pos.lng;
       }
       const clientRequestId =
         typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
           : `${Date.now()}-${Math.random()}`;
 
-      const jc = jobCode.trim();
+      const cm = categorizationMode;
+      const needsCode = requireCategorization && (cm === "job" || cm === "location");
+      if (needsCode) {
+        if (cm === "job" && !jobCodeId) {
+          setMsg("Pick a job before clocking in.");
+          return;
+        }
+        if (cm === "location" && !locationCodeId) {
+          setMsg("Pick a location before clocking in.");
+          return;
+        }
+      }
+
       const r = await clockIn({
         employeeId: viewerEmployeeId,
         locationId,
@@ -95,13 +129,15 @@ export function TimeClockSelfServe({
         clientRequestId,
         clockInLat,
         clockInLng,
-        jobCode: jc.length > 0 ? jc : undefined,
+        jobCodeId: categorizationMode === "job" && jobCodeId ? jobCodeId : undefined,
+        locationCodeId: categorizationMode === "location" && locationCodeId ? locationCodeId : undefined,
       });
       if (!r.ok) {
         setMsg(r.error);
         return;
       }
-      setJobCode("");
+      setJobCodeId("");
+      setLocationCodeId("");
       router.refresh();
     });
   }
@@ -112,9 +148,16 @@ export function TimeClockSelfServe({
     startTransition(async () => {
       let clockOutLat: number | undefined;
       let clockOutLng: number | undefined;
-      if (geofenceActive) {
+      const trackingOn =
+        locationTrackingMode === "clock_in_out" || locationTrackingMode === "breadcrumbs";
+      if (geofenceActive || trackingOn) {
         const pos = await getPosition();
-        if (pos) {
+        if (!pos) {
+          if (geofenceActive || requireLocationForPunch) {
+            setMsg("Location access is required to clock out at this store.");
+            return;
+          }
+        } else {
           clockOutLat = pos.lat;
           clockOutLng = pos.lng;
         }
@@ -208,9 +251,9 @@ export function TimeClockSelfServe({
       <p className="mt-1 text-sm text-slate-700">
         Clocking in as <span className="font-semibold text-slate-900">{displayName}</span>
       </p>
-      {geofenceActive ? (
+      {geofenceActive || locationTrackingMode === "clock_in_out" ? (
         <p className="mt-1 text-xs text-slate-500">
-          This store requires GPS for clock-in (browser will ask for location).
+          Location can be captured at clock-in/out (browser may ask for location).
         </p>
       ) : (
         <p className="mt-1 text-xs text-slate-500">
@@ -218,23 +261,52 @@ export function TimeClockSelfServe({
           coding only.
         </p>
       )}
-      {!viewerOpenEntryId ? (
-        <details className="mt-3 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2">
-          <summary className="cursor-pointer text-xs font-medium text-slate-600">
-            Optional job code (payroll)
-          </summary>
-          <label className="mt-2 block text-xs font-medium text-slate-600">
-            Job code
-            <input
-              value={jobCode}
-              onChange={(e) => setJobCode(e.target.value)}
-              className="mt-1 block w-full max-w-xs rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800"
-              placeholder="e.g. CASHIER"
-              disabled={pending}
-              autoComplete="off"
-            />
-          </label>
-        </details>
+      {!viewerOpenEntryId && categorizationMode !== "none" ? (
+        <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-3">
+          <p className="text-xs font-semibold text-slate-700">
+            {categorizationMode === "job"
+              ? `Job${requireCategorization ? " (required)" : " (optional)"}`
+              : `Location${requireCategorization ? " (required)" : " (optional)"}`}
+          </p>
+          <div className="mt-2 max-w-xs">
+            {categorizationMode === "job" ? (
+              <select
+                value={jobCodeId}
+                onChange={(e) => setJobCodeId(e.target.value)}
+                disabled={pending}
+                className="h-10 w-full cursor-pointer appearance-none rounded-md border border-slate-200 bg-white px-3 pr-10 text-sm text-slate-800 shadow-sm focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/15 disabled:opacity-60"
+                aria-label="Pick job"
+              >
+                <option value="">Select job</option>
+                {jobCodes.map((j) => (
+                  <option key={j.id} value={j.id}>
+                    {j.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <select
+                value={locationCodeId}
+                onChange={(e) => setLocationCodeId(e.target.value)}
+                disabled={pending}
+                className="h-10 w-full cursor-pointer appearance-none rounded-md border border-slate-200 bg-white px-3 pr-10 text-sm text-slate-800 shadow-sm focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/15 disabled:opacity-60"
+                aria-label="Pick location code"
+              >
+                <option value="">Select location</option>
+                {locationCodes.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            {categorizationMode === "job"
+              ? "Tags this shift for reporting and payroll export."
+              : "Tags this shift for reporting and store costing."}
+          </p>
+        </div>
       ) : null}
       <div className="mt-3 flex flex-wrap items-center gap-3">
         {viewerOpenEntryId ? (

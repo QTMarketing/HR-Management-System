@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { setSelectedLocationId } from "@/app/actions/location";
@@ -34,7 +35,7 @@ export function LocationSwitcher({ locations, selectedLocationId }: Props) {
             router.refresh();
           });
         }}
-        className="cursor-pointer rounded-lg border border-slate-200 bg-white py-2 pl-3 pr-8 text-sm font-medium text-slate-700 hover:border-orange-200 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:opacity-60"
+        className="h-10 w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white py-2 pl-3 pr-12 text-sm font-medium text-slate-700 shadow-sm hover:border-orange-200 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:opacity-60"
       >
         {locations.map((loc) => (
           <option key={loc.id} value={loc.id}>
@@ -42,6 +43,10 @@ export function LocationSwitcher({ locations, selectedLocationId }: Props) {
           </option>
         ))}
       </select>
+      <ChevronDown
+        className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+        aria-hidden
+      />
     </div>
   );
 }

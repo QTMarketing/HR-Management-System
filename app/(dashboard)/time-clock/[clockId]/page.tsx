@@ -31,6 +31,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { takeLatestPunchPerEmployee } from "@/lib/time-clock/dedupe-punches";
 import type { TimeEntryBreakRow } from "@/lib/time-clock/breaks";
 import { loadBreaksByEntryIds } from "@/lib/time-clock/load-entry-breaks";
+import { loadSmartGroupsPayload } from "@/lib/smart-groups/load-data";
 import {
   attachPtoLabels,
   type TimeOffRecordForUi,
@@ -55,10 +56,13 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
   const rbac = await getRbacContext(supabase, user);
   const canArchiveTimeEntries =
     !rbac.enabled || hasPermission(rbac, PERMISSIONS.TIME_CLOCK_MANAGE);
+  const canManageSmartGroups =
+    !rbac.enabled || hasPermission(rbac, PERMISSIONS.USERS_MANAGE);
 
   const { data: locRows } = await supabase
     .from("locations")
     .select("id, name")
+    .neq("status", "archived")
     .order("sort_order", { ascending: true });
 
   let rawLocations: LocationRow[] = (locRows ?? []).map((r) => ({ id: r.id, name: r.name }));
@@ -78,7 +82,7 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
   const { data: clock, error: clockErr } = await supabase
     .from("time_clocks")
     .select(
-      "id, name, status, location_id, timesheet_period_kind, timesheet_period_config",
+      "id, name, status, location_id, timesheet_period_kind, timesheet_period_config, location_tracking_mode, require_location_for_punch, categorization_mode, require_categorization",
     )
     .eq("id", clockId)
     .maybeSingle();
@@ -103,6 +107,95 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
     (clock as { timesheet_period_config?: unknown }).timesheet_period_config,
     defaultKind,
   );
+
+  const locationTrackingMode =
+    (clock as { location_tracking_mode?: string | null }).location_tracking_mode ?? "off";
+  const requireLocationForPunch = Boolean(
+    (clock as { require_location_for_punch?: boolean | null }).require_location_for_punch,
+  );
+  const categorizationMode =
+    (clock as { categorization_mode?: string | null }).categorization_mode ?? "none";
+  const requireCategorization = Boolean(
+    (clock as { require_categorization?: boolean | null }).require_categorization,
+  );
+
+  // Code lists (Option A: shared company-wide).
+  const [{ data: jobCodesRaw }, { data: locationCodesRaw }] = await Promise.all([
+    supabase
+      .from("job_codes")
+      .select("id, label, color_token, sort_order")
+      .eq("active", true)
+      .order("sort_order", { ascending: true })
+      .order("label", { ascending: true }),
+    supabase
+      .from("location_codes")
+      .select("id, label, color_token, sort_order")
+      .eq("active", true)
+      .order("sort_order", { ascending: true })
+      .order("label", { ascending: true }),
+  ]);
+
+  const jobCodes = (jobCodesRaw ?? []).map((r) => ({
+    id: (r as { id: string }).id,
+    label: (r as { label: string }).label,
+    colorToken: (r as { color_token?: string | null }).color_token ?? "slate",
+  }));
+  const locationCodes = (locationCodesRaw ?? []).map((r) => ({
+    id: (r as { id: string }).id,
+    label: (r as { label: string }).label,
+    colorToken: (r as { color_token?: string | null }).color_token ?? "slate",
+  }));
+
+  // Smart groups: show + toggle which groups are allowed on this clock.
+  // We scope segments/groups to the clock’s store so managers don’t see unrelated locations.
+  let smartGroupsForClock: { id: string; label: string; assigned: boolean }[] = [];
+  try {
+    const { data: sgPayload } = await loadSmartGroupsPayload(supabase, {
+      scopeLocationIds: [effectiveLocationId],
+      scopeAll: false,
+      selectedLocationId: effectiveLocationId,
+    });
+    if (sgPayload) {
+      const rows: typeof smartGroupsForClock = [];
+      for (const seg of sgPayload.segments) {
+        for (const g of seg.groups) {
+          const assigned = g.assignments.some(
+            (a) => a.type === "time_clock" && a.timeClockId === clockId,
+          );
+          rows.push({
+            id: g.id,
+            label: `${seg.name} · ${g.name}`,
+            assigned,
+          });
+        }
+      }
+      smartGroupsForClock = rows.sort((a, b) => a.label.localeCompare(b.label));
+    }
+  } catch {
+    smartGroupsForClock = [];
+  }
+
+  // Bulk apply: list active clocks so admins can apply the same payroll rules to many stores.
+  let clocksForBulkApply: { id: string; label: string }[] = [];
+  try {
+    const { data: clockRows } = await supabase
+      .from("time_clocks")
+      .select("id, name, location_id, locations(name)")
+      .eq("status", "active")
+      .order("sort_order", { ascending: true });
+    clocksForBulkApply = (clockRows ?? [])
+      .map((r) => {
+        const locNested =
+          (r as { locations?: { name?: string } | { name?: string }[] | null }).locations ?? null;
+        const storeName = Array.isArray(locNested) ? locNested[0]?.name : locNested?.name;
+        const clockName = (r as { name?: string }).name ?? "Clock";
+        const label = storeName ? `${storeName} — ${clockName}` : clockName;
+        return { id: (r as { id: string }).id, label };
+      })
+      .filter((c) => c.id !== clockId);
+  } catch {
+    clocksForBulkApply = [];
+  }
 
   const periodParam = typeof sp.period === "string" ? sp.period : undefined;
   const anchorParam = typeof sp.anchor === "string" ? sp.anchor : undefined;
@@ -214,7 +307,7 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
       const { data: fallbackRaw, error: fbErr } = await supabase
         .from("time_entries")
         .select(
-          "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, edited_at, edit_reason",
+          "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, job_code_id, location_code_id, job_codes(label), location_codes(label), edited_at, edit_reason",
         )
         .eq("location_id", effectiveLocationId)
         .eq("time_clock_id", clockId)
@@ -238,7 +331,7 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
     const { data: entriesToday } = await supabase
       .from("time_entries")
       .select(
-        "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, edited_at, edit_reason",
+        "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, job_code_id, location_code_id, job_codes(label), location_codes(label), edited_at, edit_reason",
       )
       .eq("time_clock_id", clockId)
       .is("archived_at", null)
@@ -248,7 +341,7 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
     const { data: openEntriesRaw } = await supabase
       .from("time_entries")
       .select(
-        "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, edited_at, edit_reason",
+        "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, job_code_id, location_code_id, job_codes(label), location_codes(label), edited_at, edit_reason",
       )
       .eq("time_clock_id", clockId)
       .eq("location_id", effectiveLocationId)
@@ -278,7 +371,7 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
   const { data: poolRaw } = await supabase
     .from("time_entries")
     .select(
-      "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, edited_at, edit_reason",
+      "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, job_code_id, location_code_id, job_codes(label), location_codes(label), edited_at, edit_reason",
     )
     .eq("time_clock_id", clockId)
     .is("archived_at", null)
@@ -294,7 +387,7 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
   const { data: tsRaw } = await supabase
     .from("time_entries")
     .select(
-      "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, edited_at, edit_reason",
+      "id, employee_id, clock_in_at, clock_out_at, status, archived_at, approved_at, punch_source, job_code, job_code_id, location_code_id, job_codes(label), location_codes(label), edited_at, edit_reason",
     )
     .eq("time_clock_id", clockId)
     .is("archived_at", null)
@@ -517,6 +610,12 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
               viewerOpenEntryClockInAt={viewerOpenEntryClockInAt}
               viewerOpenBreakId={viewerOpenBreakId}
               geofenceActive={geofenceActive}
+              locationTrackingMode={locationTrackingMode}
+              requireLocationForPunch={requireLocationForPunch}
+              categorizationMode={categorizationMode}
+              requireCategorization={requireCategorization}
+              jobCodes={jobCodes}
+              locationCodes={locationCodes}
               clockSelfServeDisabled={isArchived}
             />
           </div>
@@ -547,6 +646,16 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
             initialKind={defaultKind}
             initialConfig={defaultConfig}
             canEdit={canArchiveTimeEntries}
+            storeLocationId={clock.location_id}
+            smartGroupsForClock={smartGroupsForClock}
+            canManageSmartGroups={canManageSmartGroups}
+            clocksForBulkApply={clocksForBulkApply}
+            initialLocationTrackingMode={locationTrackingMode as any}
+            initialRequireLocationForPunch={requireLocationForPunch}
+            initialCategorizationMode={categorizationMode as any}
+            initialRequireCategorization={requireCategorization}
+            jobCodes={jobCodes}
+            locationCodes={locationCodes}
           />
         }
         canManage={canArchiveTimeEntries}

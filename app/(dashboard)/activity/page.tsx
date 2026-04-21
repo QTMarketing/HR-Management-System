@@ -28,6 +28,7 @@ export default async function ActivityPage() {
     const { data } = await supabase
       .from("locations")
       .select("id, name")
+      .neq("status", "archived")
       .order("sort_order", { ascending: true });
     rawLocations = (data ?? []).map((r) => ({ id: r.id, name: r.name }));
   }

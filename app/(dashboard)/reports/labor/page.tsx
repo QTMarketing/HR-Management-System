@@ -64,6 +64,7 @@ export default async function WeeklyLaborReportPage() {
   const { data: locRows } = await supabase
     .from("locations")
     .select("id, name")
+    .neq("status", "archived")
     .order("sort_order", { ascending: true });
 
   let rawLocations: LocationRow[] = (locRows ?? []).map((r) => ({ id: r.id, name: r.name }));

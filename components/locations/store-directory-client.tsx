@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, Archive } from "lucide-react";
+import { Plus, Archive, ChevronDown } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { setLocationStatus, type LocationStatus } from "@/app/actions/location-status";
@@ -168,28 +168,34 @@ export function StoreDirectoryClient({ locations, employees, canManageStores }: 
                   </td>
                   <td className="px-4 py-3 align-middle">
                     {canManageStores ? (
-                      <select
-                        className="w-40 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:opacity-50"
-                        disabled={pending}
-                        value={status}
-                        onChange={(ev) => {
-                          const next = ev.target.value as LocationStatus;
-                          setError(null);
-                          startTransition(async () => {
-                            const r = await setLocationStatus(loc.id, next);
-                            if (!r.ok) {
-                              setError(r.error);
-                              return;
-                            }
-                            router.refresh();
-                          });
-                        }}
-                        aria-label="Store status"
-                        title="Set store running status"
-                      >
-                        <option value="running">Running</option>
-                        <option value="not_running">Not running</option>
-                      </select>
+                      <div className="relative w-40">
+                        <select
+                          className="w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white px-3 pr-12 py-2 text-sm text-slate-800 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:opacity-50"
+                          disabled={pending}
+                          value={status}
+                          onChange={(ev) => {
+                            const next = ev.target.value as LocationStatus;
+                            setError(null);
+                            startTransition(async () => {
+                              const r = await setLocationStatus(loc.id, next);
+                              if (!r.ok) {
+                                setError(r.error);
+                                return;
+                              }
+                              router.refresh();
+                            });
+                          }}
+                          aria-label="Store status"
+                          title="Set store running status"
+                        >
+                          <option value="running">Running</option>
+                          <option value="not_running">Not running</option>
+                        </select>
+                        <ChevronDown
+                          className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+                          aria-hidden
+                        />
+                      </div>
                     ) : (
                       <span
                         className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
@@ -211,33 +217,39 @@ export function StoreDirectoryClient({ locations, employees, canManageStores }: 
                   </td>
                   <td className="min-w-0 px-4 py-3 align-middle">
                     {canManageStores ? (
-                      <select
-                        className="max-w-md w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:opacity-50"
-                        disabled={pending}
-                        value={loc.manager_employee_id ?? ""}
-                        onChange={(ev) => {
-                          const v = ev.target.value;
-                          setError(null);
-                          startTransition(async () => {
-                            const r = await updateLocationStoreManager(
-                              loc.id,
-                              v === "" ? null : v,
-                            );
-                            if (!r.ok) {
-                              setError(r.error);
-                              return;
-                            }
-                            router.refresh();
-                          });
-                        }}
-                      >
-                        <option value="">— None —</option>
-                        {options.map((o) => (
-                          <option key={o.id} value={o.id}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="relative min-w-0 w-full max-w-md">
+                        <select
+                          className="w-full min-w-0 cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white px-3 pr-12 py-2 text-sm text-slate-800 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:opacity-50"
+                          disabled={pending}
+                          value={loc.manager_employee_id ?? ""}
+                          onChange={(ev) => {
+                            const v = ev.target.value;
+                            setError(null);
+                            startTransition(async () => {
+                              const r = await updateLocationStoreManager(
+                                loc.id,
+                                v === "" ? null : v,
+                              );
+                              if (!r.ok) {
+                                setError(r.error);
+                                return;
+                              }
+                              router.refresh();
+                            });
+                          }}
+                        >
+                          <option value="">— None —</option>
+                          {options.map((o) => (
+                            <option key={o.id} value={o.id}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown
+                          className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+                          aria-hidden
+                        />
+                      </div>
                     ) : (
                       <span
                         className="block max-w-md truncate text-slate-600"

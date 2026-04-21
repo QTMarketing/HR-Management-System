@@ -39,6 +39,12 @@ type Props = {
   /** Phase 2: viewer has an unpaid/paid break in progress on the open punch. */
   viewerOpenBreakId?: string | null;
   geofenceActive?: boolean;
+  locationTrackingMode?: "off" | "clock_in_out" | "breadcrumbs" | string;
+  requireLocationForPunch?: boolean;
+  categorizationMode?: "none" | "job" | "location" | string;
+  requireCategorization?: boolean;
+  jobCodes?: { id: string; label: string; colorToken?: string }[];
+  locationCodes?: { id: string; label: string; colorToken?: string }[];
   clockSelfServeDisabled?: boolean;
 };
 
@@ -61,6 +67,12 @@ export function TimeClockPanel({
   viewerOpenEntryClockInAt = null,
   viewerOpenBreakId = null,
   geofenceActive = false,
+  locationTrackingMode = "off",
+  requireLocationForPunch = false,
+  categorizationMode = "none",
+  requireCategorization = false,
+  jobCodes = [],
+  locationCodes = [],
   clockSelfServeDisabled = false,
 }: Props) {
   const router = useRouter();
@@ -107,6 +119,12 @@ export function TimeClockPanel({
         viewerOpenEntryClockInAt={viewerOpenEntryClockInAt}
         viewerOpenBreakId={viewerOpenBreakId}
         geofenceActive={geofenceActive}
+        locationTrackingMode={locationTrackingMode}
+        requireLocationForPunch={requireLocationForPunch}
+        categorizationMode={categorizationMode}
+        requireCategorization={requireCategorization}
+        jobCodes={jobCodes}
+        locationCodes={locationCodes}
         disabled={clockSelfServeDisabled}
       />
 

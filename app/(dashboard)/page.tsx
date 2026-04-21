@@ -59,6 +59,7 @@ export default async function DashboardPage() {
     const { data } = await supabase
       .from("locations")
       .select("id, name")
+      .neq("status", "archived")
       .order("sort_order", { ascending: true });
     const rows = (data ?? []).map((r) => ({ id: r.id, name: r.name }));
     locationsFromDatabase = rows.length > 0;

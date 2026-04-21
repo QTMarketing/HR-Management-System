@@ -1,6 +1,6 @@
 "use client";
 
-import { X } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useState, useTransition } from "react";
 import { createLocation } from "@/app/actions/location-create";
@@ -224,29 +224,41 @@ export function AddStoreModal({ open, onOpenChange, employees, canManageStores }
               </label>
               <label className="block text-sm font-medium text-slate-700">
                 Status
-                <select
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as LocationStatus)}
-                  className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
-                >
-                  <option value="running">Running</option>
-                  <option value="not_running">Not running</option>
-                </select>
+                <div className="relative mt-1.5">
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value as LocationStatus)}
+                    className="h-10 w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white px-3 pr-12 text-sm text-slate-800 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+                  >
+                    <option value="running">Running</option>
+                    <option value="not_running">Not running</option>
+                  </select>
+                  <ChevronDown
+                    className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+                    aria-hidden
+                  />
+                </div>
               </label>
               <label className="block text-sm font-medium text-slate-700">
                 Store lead (optional)
-                <select
-                  value={managerId}
-                  onChange={(e) => setManagerId(e.target.value)}
-                  className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
-                >
-                  <option value="">— None —</option>
-                  {managers.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative mt-1.5">
+                  <select
+                    value={managerId}
+                    onChange={(e) => setManagerId(e.target.value)}
+                    className="h-10 w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white px-3 pr-12 text-sm text-slate-800 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+                  >
+                    <option value="">— None —</option>
+                    {managers.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+                    aria-hidden
+                  />
+                </div>
               </label>
             </div>
 

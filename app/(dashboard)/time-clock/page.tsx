@@ -31,6 +31,7 @@ export default async function TimeClockHubPage() {
   const { data: locRows } = await supabase
     .from("locations")
     .select("id, name")
+    .neq("status", "archived")
     .order("sort_order", { ascending: true });
 
   let rawLocations: LocationRow[] = (locRows ?? []).map((r) => ({ id: r.id, name: r.name }));
@@ -73,9 +74,11 @@ export default async function TimeClockHubPage() {
       byLocation.set(e.location_id, (byLocation.get(e.location_id) ?? 0) + 1);
     }
 
+    const locIds = (locRows ?? []).map((l) => l.id as string);
     const { data: clockRows, error: clockErr } = await supabase
       .from("time_clocks")
       .select("id, name, status, location_id, locations(name)")
+      .in("location_id", locIds.length > 0 ? locIds : ["00000000-0000-0000-0000-000000000000"])
       .order("sort_order", { ascending: true });
 
     if (clockErr) {
@@ -130,6 +133,8 @@ export default async function TimeClockHubPage() {
           id: row.id,
           name: row.name,
           status: st,
+          storeName: locationName,
+          employeesAtStore: employeeCount,
           hint:
             st === "archived"
               ? "Archived — open for read-only timesheet history."
@@ -151,6 +156,7 @@ export default async function TimeClockHubPage() {
     >
       <TimeClockHub
         locationName={locationName}
+        scopeAll={scopeAll}
         activeClocks={activeClocks}
         archivedClocks={archivedClocks}
         employeeCount={employeeCount}

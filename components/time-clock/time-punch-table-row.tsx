@@ -132,6 +132,18 @@ export function TimePunchTableRow({
           ) : null}
         </span>
       </td>
+      <td className="max-w-[11rem] px-3 py-2.5 align-middle">
+        {row.locationCodeAtPunch ? (
+          <span
+            className="inline-flex max-w-full min-w-0 truncate rounded bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-800 ring-1 ring-slate-200/80"
+            title={row.locationCodeAtPunch}
+          >
+            {row.locationCodeAtPunch}
+          </span>
+        ) : (
+          <span className="text-slate-400">—</span>
+        )}
+      </td>
       <td className="max-w-[200px] px-3 py-2.5 align-middle">
         <div className="flex min-w-0 flex-nowrap items-center gap-2">
           <span

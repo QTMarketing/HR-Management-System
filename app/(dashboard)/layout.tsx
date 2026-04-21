@@ -41,6 +41,7 @@ export default async function DashboardLayout({
   const { data: locRows } = await supabase
     .from("locations")
     .select("id, name")
+    .neq("status", "archived")
     .order("sort_order", { ascending: true });
 
   const locations: LocationRow[] = locationsForSession(

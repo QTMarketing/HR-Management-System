@@ -1,18 +1,35 @@
 /**
- * Timesheet / pay-period windows per clock (weekly, monthly, semi-monthly, custom split).
+ * Timesheet / pay-period windows per clock (weekly, bi-weekly, monthly, semi-monthly, custom split).
  * Boundaries use the viewer's local timezone when computed on the client; server uses the same
  * calendar-day logic with JS Date in UTC for query bounds (see `periodBoundsToQueryIso`).
  */
 
-export type TimesheetPeriodKind = "weekly" | "monthly" | "semi_monthly" | "custom";
+export type TimesheetPeriodKind = "weekly" | "bi_weekly" | "monthly" | "semi_monthly" | "custom";
 
 /** Stored in `time_clocks.timesheet_period_config`. */
 export type TimesheetPeriodConfig = {
+  /**
+   * 0=Sunday … 6=Saturday. Used by weekly + bi-weekly navigation and calendar rendering.
+   * Default 1 (Monday) to match the app’s historical Mon–Sun week grid.
+   */
+  week_starts_on?: number;
+  /**
+   * Monthly pay-period cutoff day (calendar day). Mirrors Connecteam’s “Pay period ends”.
+   * When set, the “monthly” period becomes (cutoff+1 of prior month) … (cutoff of current month).
+   * Allowed: 26–30, or "last_day" (default when omitted).
+   */
+  monthly_ends_on?: 26 | 27 | 28 | 29 | 30 | "last_day";
   /**
    * Last day of the "first half" of the month (1-based). Second half is split_after_day+1 … last day.
    * Default 15. Valid range 1–27 for semi_monthly and custom.
    */
   split_after_day?: number;
+  /**
+   * Optional reminders (do not affect calculations).
+   */
+  payroll_software?: string;
+  payroll_handled?: string;
+  payroll_owner?: string;
 };
 
 export const DEFAULT_PERIOD_KIND: TimesheetPeriodKind = "weekly";
@@ -22,18 +39,44 @@ export function normalizePeriodConfig(
   kind: TimesheetPeriodKind,
 ): TimesheetPeriodConfig {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return {};
+    return { week_starts_on: 1 };
   }
   const o = raw as Record<string, unknown>;
+  const wso = o.week_starts_on;
+  const weekStartsOn =
+    typeof wso === "number" && Number.isInteger(wso) && wso >= 0 && wso <= 6 ? wso : 1;
+
+  const meo = o.monthly_ends_on;
+  const monthlyEndsOn =
+    meo === "last_day" ||
+    meo === 26 ||
+    meo === 27 ||
+    meo === 28 ||
+    meo === 29 ||
+    meo === 30
+      ? (meo as TimesheetPeriodConfig["monthly_ends_on"])
+      : undefined;
+
   const split = o.split_after_day;
   const splitNum =
     typeof split === "number" && Number.isInteger(split) && split >= 1 && split <= 27
       ? split
       : undefined;
+  const payroll_software = typeof o.payroll_software === "string" ? o.payroll_software : undefined;
+  const payroll_handled = typeof o.payroll_handled === "string" ? o.payroll_handled : undefined;
+  const payroll_owner = typeof o.payroll_owner === "string" ? o.payroll_owner : undefined;
+
+  const base: TimesheetPeriodConfig = {
+    week_starts_on: weekStartsOn,
+    monthly_ends_on: monthlyEndsOn,
+    payroll_software,
+    payroll_handled,
+    payroll_owner,
+  };
   if (kind === "semi_monthly" || kind === "custom") {
-    return { split_after_day: splitNum ?? 15 };
+    return { ...base, split_after_day: splitNum ?? 15 };
   }
-  return splitNum != null ? { split_after_day: splitNum } : {};
+  return splitNum != null ? { ...base, split_after_day: splitNum } : base;
 }
 
 function splitDay(config: TimesheetPeriodConfig, kind: TimesheetPeriodKind): number {
@@ -49,12 +92,13 @@ function startOfDayLocal(d: Date): Date {
   return x;
 }
 
-/** Monday 00:00 local of the ISO week containing `d`. */
-export function startOfWeekMonday(d: Date): Date {
+/** Week start 00:00 local containing `d` (0=Sun…6=Sat). */
+export function startOfWeek(d: Date, weekStartsOn: number): Date {
+  const wso = Number.isInteger(weekStartsOn) && weekStartsOn >= 0 && weekStartsOn <= 6 ? weekStartsOn : 1;
   const day = d.getDay();
-  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const offset = ((day - wso + 7) % 7) * -1;
   const m = new Date(d);
-  m.setDate(d.getDate() + mondayOffset);
+  m.setDate(d.getDate() + offset);
   m.setHours(0, 0, 0, 0);
   return m;
 }
@@ -88,17 +132,59 @@ export function getPeriodBounds(
   config: TimesheetPeriodConfig,
 ): PeriodBounds {
   const split = splitDay(config, kind);
+  const weekStartsOn =
+    typeof config.week_starts_on === "number" && config.week_starts_on >= 0 && config.week_starts_on <= 6
+      ? config.week_starts_on
+      : 1;
 
   if (kind === "weekly") {
-    const start = startOfWeekMonday(anchor);
+    const start = startOfWeek(anchor, weekStartsOn);
     const endExclusive = new Date(start);
     endExclusive.setDate(endExclusive.getDate() + 7);
     return { start, endExclusive };
   }
 
+  if (kind === "bi_weekly") {
+    const start = startOfBiWeekContaining(anchor, weekStartsOn);
+    const endExclusive = new Date(start);
+    endExclusive.setDate(endExclusive.getDate() + 14);
+    return { start, endExclusive };
+  }
+
   if (kind === "monthly") {
-    const start = startOfMonth(anchor);
-    const endExclusive = addMonths(start, 1);
+    const monthlyEndsOn = config.monthly_ends_on ?? "last_day";
+    if (monthlyEndsOn === "last_day" || monthlyEndsOn == null) {
+      const start = startOfMonth(anchor);
+      const endExclusive = addMonths(start, 1);
+      return { start, endExclusive };
+    }
+
+    const cutoff = monthlyEndsOn;
+    const y = anchor.getFullYear();
+    const m = anchor.getMonth();
+    const day = anchor.getDate();
+
+    const lastDay = (yy: number, mm: number) => new Date(yy, mm + 1, 0).getDate();
+    const clampCutoff = (yy: number, mm: number) => Math.min(cutoff, lastDay(yy, mm));
+
+    const endDayThisMonth = clampCutoff(y, m);
+    // period ends on endDayThisMonth, starting day is (endDayPrevMonth+1)
+    const endExclusive = new Date(y, m, endDayThisMonth + 1, 0, 0, 0, 0);
+    // If anchor is after the cutoff day in this month, the “current” period ends next month.
+    if (day > endDayThisMonth) {
+      const ny = m === 11 ? y + 1 : y;
+      const nm = (m + 1) % 12;
+      const endDayNextMonth = clampCutoff(ny, nm);
+      const nextEndEx = new Date(ny, nm, endDayNextMonth + 1, 0, 0, 0, 0);
+      const start = new Date(y, m, endDayThisMonth + 1, 0, 0, 0, 0);
+      return { start, endExclusive: nextEndEx };
+    }
+    // anchor is on/before cutoff => start is after prev month cutoff
+    const pyDate = addMonths(new Date(y, m, 1), -1);
+    const py = pyDate.getFullYear();
+    const pm = pyDate.getMonth();
+    const endDayPrevMonth = clampCutoff(py, pm);
+    const start = new Date(py, pm, endDayPrevMonth + 1, 0, 0, 0, 0);
     return { start, endExclusive };
   }
 
@@ -133,6 +219,10 @@ export function shiftPeriodAnchor(
   direction: -1 | 1,
 ): Date {
   const split = splitDay(config, kind);
+  const weekStartsOn =
+    typeof config.week_starts_on === "number" && config.week_starts_on >= 0 && config.week_starts_on <= 6
+      ? config.week_starts_on
+      : 1;
 
   if (kind === "weekly") {
     const d = new Date(currentStart);
@@ -140,8 +230,23 @@ export function shiftPeriodAnchor(
     return d;
   }
 
+  if (kind === "bi_weekly") {
+    const d = new Date(currentStart);
+    d.setDate(d.getDate() + direction * 14);
+    return d;
+  }
+
   if (kind === "monthly") {
-    return addMonths(currentStart, direction);
+    const endsOn = config.monthly_ends_on ?? "last_day";
+    if (endsOn === "last_day" || endsOn == null) {
+      return addMonths(currentStart, direction);
+    }
+    // Move by one cutoff period (variable month lengths handled by `getPeriodBounds` on the target anchor).
+    const probe = new Date(currentStart);
+    probe.setDate(probe.getDate() + direction * 32);
+    // Align probe to the same week start rules for stability when UI jumps through weeks.
+    const aligned = startOfDayLocal(probe);
+    return getPeriodBounds(aligned, kind, { ...config, week_starts_on: weekStartsOn }).start;
   }
 
   // semi / custom: alternate between 1st and (split+1) within / across months
@@ -202,10 +307,37 @@ export function periodBoundsToQueryIso(bounds: PeriodBounds): { gte: string; lt:
 
 export function parsePeriodKind(raw: string | undefined | null): TimesheetPeriodKind | null {
   if (!raw) return null;
-  if (raw === "weekly" || raw === "monthly" || raw === "semi_monthly" || raw === "custom") {
+  if (
+    raw === "weekly" ||
+    raw === "bi_weekly" ||
+    raw === "monthly" ||
+    raw === "semi_monthly" ||
+    raw === "custom"
+  ) {
     return raw;
   }
   return null;
+}
+
+/**
+ * Fixed Monday anchor so every calendar has the same 14-day blocks (Mon–Sun × 2).
+ * 2020-01-06 is a Monday in the Gregorian calendar used by `Date` in all locales.
+ */
+function biweekEpoch(weekStartsOn: number): Date {
+  // 2020-01-05 is a Sunday; using it as the base and normalizing to week start gives a stable epoch for any start day.
+  return startOfWeek(new Date(2020, 0, 5), weekStartsOn);
+}
+
+function startOfBiWeekContaining(anchor: Date, weekStartsOn: number): Date {
+  const epoch = biweekEpoch(weekStartsOn);
+  const weekStart = startOfWeek(anchor, weekStartsOn);
+  const msPerDay = 86400000;
+  const diffDays = Math.round((weekStart.getTime() - epoch.getTime()) / msPerDay);
+  const block = Math.floor(diffDays / 14);
+  const start = new Date(epoch);
+  start.setDate(start.getDate() + block * 14);
+  start.setHours(0, 0, 0, 0);
+  return start;
 }
 
 const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;

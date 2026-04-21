@@ -4,14 +4,58 @@ import type { StaffUpdateRow } from "@/components/dashboard/recent-staff-updates
 import { aggregateLocationMetrics, averageTrendByDay } from "@/lib/dashboard/aggregate-dashboard";
 import { ALL_LOCATIONS_ID, type LocationRow } from "@/lib/dashboard/resolve-location";
 
-/** Matches seed in migration 003 so cookie / DB stay consistent when you migrate. */
-export const DEMO_PRIMARY_LOCATION_ID = "a0000000-0000-4000-8000-000000000001";
+/** Stable demo UUIDs (`a000…000001` …) match historical seed migrations when only the first rows exist. */
+function demoLocationId(index: number): string {
+  return `a0000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+}
 
-export const DEMO_LOCATIONS: LocationRow[] = [
-  { id: DEMO_PRIMARY_LOCATION_ID, name: "Downtown Flagship" },
-  { id: "a0000000-0000-4000-8000-000000000002", name: "Store LP" },
-  { id: "a0000000-0000-4000-8000-000000000003", name: "Store 18" },
-];
+/** Fallback list when Supabase has no `locations` rows: real store labels and addresses. */
+const DEMO_STORE_NAMES = [
+  "East · 118 — 34911 Hwy 96",
+  "East · 119 — 13391 FM1013",
+  "East · 123 — 12234 HWY 190 E",
+  "East · 124 — 102 N Wheeler",
+  "East · 125 — 200 Hwy 87",
+  "East · 127 — 898 N Wheeler St",
+  "East · 128 — 12183 N Wheeler St",
+  "East · 18 — 105 Broadway",
+  "East · 51 — 504 Front Street",
+  "East · Pot of Gold — 911 W Arch St, Coal Township, PA 17866",
+  "East · Irish Isle — 911 W Arch St, Coal Township, PA 17866",
+  "East · Lama Wholesale — 1501 Pipeline Rd E, Ste B, Bedford, TX 76022",
+  "East · Field Visit — Field / route",
+  "East · 94 — 509 S Washington Ave",
+  "East · 96 — 1011 E End Blvd N",
+  "East · 97 — 2700 Victory Dr",
+  "East · 99 — 5601 E End Blvd S",
+  "East · 101 — 6182 State Highway 300 (East Mountain)",
+  "East · 102 — 4665 E US Highway 80",
+  "East · 104 — 101 E US Highway 80",
+  "East · 106 — 308 E Goode St",
+  "East · 110 — 1105 Business Hwy 37 N",
+  "East · HQ — Time clock",
+  "East · LP Food Mart — Address on file",
+  "West · 67 — 8109 Indiana Ave",
+  "West · 68 — 2318 19th St",
+  "West · 73 — 2455 Kermit Highway",
+  "West · 77 — 1509 FM 1936",
+  "West · 78 — 13920 W Highway 80 E",
+  "West · 79 — 801 Golder Ave",
+  "West · 80 — 1523 Harless Ave",
+  "West · 81 — 4324 Andrews Hwy",
+  "West · 82 — 4401 W Illinois St",
+  "West · 83 — 300 Owens St",
+  "West · 108 — 317 N Dixie Blvd",
+  "West · 109 — 721 N County Rd W",
+  "Other · QT29 — 5101 Little Rd",
+] as const;
+
+export const DEMO_PRIMARY_LOCATION_ID = demoLocationId(1);
+
+export const DEMO_LOCATIONS: LocationRow[] = DEMO_STORE_NAMES.map((name, i) => ({
+  id: demoLocationId(i + 1),
+  name,
+}));
 
 export type DemoMetrics = {
   total_employees: number;
@@ -116,6 +160,14 @@ function locationIndex(locationId: string): number {
   return i >= 0 ? i : 0;
 }
 
+/** Short label for demo feed lines when switching stores (avoids huge full addresses). */
+function demoLocationShortLabel(locationId: string): string {
+  const loc = DEMO_LOCATIONS.find((l) => l.id === locationId);
+  if (!loc) return "";
+  const head = loc.name.split(" — ")[0]?.trim() ?? loc.name;
+  return head.length > 28 ? `${head.slice(0, 25)}…` : head;
+}
+
 /** Vary demo KPIs slightly when switching stores in mock mode. */
 export function demoMetricsForLocation(locationId: string): DemoMetrics {
   if (locationId === ALL_LOCATIONS_ID) {
@@ -123,15 +175,16 @@ export function demoMetricsForLocation(locationId: string): DemoMetrics {
     return aggregateLocationMetrics(rows)!;
   }
   const n = locationIndex(locationId);
+  const k = n % 5;
   return {
     ...DEMO_METRICS,
-    total_employees: 128 - n * 22,
-    active_now: 28 - n * 2,
-    late_arrivals: Number([3, 1, 2][n] ?? 0),
-    scheduled_today: 42 - n * 5,
-    clocked_in_now: 28 - n * 2,
-    late_clock_ins: Number([3, 1, 2][n] ?? 0),
-    late_clock_outs: n,
+    total_employees: Math.max(12, 128 - k * 22),
+    active_now: Math.max(0, 28 - k * 2),
+    late_arrivals: [3, 1, 2][n % 3]!,
+    scheduled_today: Math.max(0, 42 - k * 5),
+    clocked_in_now: Math.max(0, 28 - k * 2),
+    late_clock_ins: [3, 1, 2][n % 3]!,
+    late_clock_outs: n % 4,
   };
 }
 
@@ -151,9 +204,10 @@ export function demoTrendForLocation(locationId: string): AttendanceTrendPoint[]
     return averageTrendByDay(merged);
   }
   const n = locationIndex(locationId);
+  const shift = n % 8;
   return DEMO_TREND.map((p) => ({
     ...p,
-    onTimePct: Math.min(100, Math.max(0, p.onTimePct - n * 2 + (p.dayIndex % 3))),
+    onTimePct: Math.min(100, Math.max(0, p.onTimePct - shift * 2 + (p.dayIndex % 3))),
   }));
 }
 
@@ -164,7 +218,7 @@ export function demoActivityForLocation(locationId: string): ActivityFeedItem[] 
     return demoActivityForLocation(DEMO_PRIMARY_LOCATION_ID);
   }
   const n = locationIndex(locationId);
-  const suffix = ["", " @ LP", " @ 18"][n] ?? "";
+  const suffix = demoLocationShortLabel(locationId) ? ` @ ${demoLocationShortLabel(locationId)}` : "";
   return DEMO_ACTIVITY.map((a, i) => ({
     ...a,
     id: `${a.id}-loc-${n}-${i}`,
@@ -177,7 +231,8 @@ export function demoStaffForLocation(locationId: string): StaffUpdateRow[] {
     return demoStaffForLocation(DEMO_PRIMARY_LOCATION_ID);
   }
   const n = locationIndex(locationId);
-  const suffix = ["", " — LP", " — 18"][n] ?? "";
+  const tail = demoLocationShortLabel(locationId);
+  const suffix = tail ? ` — ${tail}` : "";
   return DEMO_STAFF.map((s, i) => ({
     ...s,
     id: `${s.id}-loc-${n}-${i}`,

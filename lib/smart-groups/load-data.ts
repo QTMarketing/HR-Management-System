@@ -153,7 +153,11 @@ export async function loadSmartGroupsPayload(
       .select("id, full_name, first_name, last_name, location_id, status")
       .not("status", "eq", "archived"),
     supabase.from("time_clocks").select("id, name, location_id").eq("status", "active"),
-    supabase.from("locations").select("id, name").order("sort_order", { ascending: true }),
+    supabase
+      .from("locations")
+      .select("id, name")
+      .neq("status", "archived")
+      .order("sort_order", { ascending: true }),
   ]);
 
   if (memRes.error) return { data: null, error: memRes.error.message };
@@ -378,7 +382,11 @@ async function emptyPickers(
       .select("id, full_name, first_name, last_name, location_id, status")
       .not("status", "eq", "archived"),
     supabase.from("time_clocks").select("id, name, location_id").eq("status", "active"),
-    supabase.from("locations").select("id, name").order("sort_order", { ascending: true }),
+    supabase
+      .from("locations")
+      .select("id, name")
+      .neq("status", "archived")
+      .order("sort_order", { ascending: true }),
   ]);
 
   const empRows = (empRes.data ?? []) as {

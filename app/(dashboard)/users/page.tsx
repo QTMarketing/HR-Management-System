@@ -78,6 +78,7 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
   const { data: locRows } = await supabase
     .from("locations")
     .select("id, name")
+    .neq("status", "archived")
     .order("sort_order", { ascending: true });
 
   const locations: LocationRow[] = locationsForSession(

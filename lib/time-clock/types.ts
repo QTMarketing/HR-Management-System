@@ -39,6 +39,8 @@ export type EnrichedPunchRow = {
   punchSourceLabel?: string | null;
   /** Job/labor code at clock-in when set. */
   jobCodeAtPunch?: string | null;
+  /** Optional location categorization label at clock-in when set. */
+  locationCodeAtPunch?: string | null;
   /** Manager edited clock times after the fact. */
   wasEdited?: boolean;
   /** Phase 2: paid/unpaid break summary for this punch (when breaks exist). */

@@ -28,7 +28,8 @@ export type ClockInInput = {
   clientRequestId?: string | null;
   clockInLat?: number | null;
   clockInLng?: number | null;
-  jobCode?: string | null;
+  jobCodeId?: string | null;
+  locationCodeId?: string | null;
 };
 
 export async function clockIn(input: ClockInInput): Promise<ActionResult> {
@@ -41,7 +42,8 @@ export async function clockIn(input: ClockInInput): Promise<ActionResult> {
 
   const punchSource = normalizePunchSource(input.punchSource);
   const clientRequestId = input.clientRequestId?.trim() || null;
-  const jobCode = input.jobCode?.trim() || null;
+  const jobCodeId = input.jobCodeId?.trim() || null;
+  const locationCodeId = input.locationCodeId?.trim() || null;
 
   const supabase = await createSupabaseServerClient();
 
@@ -145,19 +147,35 @@ export async function clockIn(input: ClockInInput): Promise<ActionResult> {
 
   const { data: clock, error: clockErr } = await supabase
     .from("time_clocks")
-    .select("id, location_id, status")
+    .select("id, location_id, status, categorization_mode, require_categorization")
     .eq("id", timeClockId)
     .maybeSingle();
 
   if (clockErr || !clock) {
     return { ok: false, error: clockErr?.message ?? "Time clock not found." };
   }
-  const c = clock as { location_id: string; status: string };
+  const c = clock as {
+    location_id: string;
+    status: string;
+    categorization_mode?: string | null;
+    require_categorization?: boolean | null;
+  };
   if (c.location_id !== locationId) {
     return { ok: false, error: "Time clock does not belong to this store." };
   }
   if (c.status !== "active") {
     return { ok: false, error: "This time clock is archived." };
+  }
+
+  const catMode = (c.categorization_mode ?? "none") as string;
+  const reqCat = Boolean(c.require_categorization);
+  if (reqCat) {
+    if (catMode === "job" && !jobCodeId) {
+      return { ok: false, error: "Pick a job to clock in." };
+    }
+    if (catMode === "location" && !locationCodeId) {
+      return { ok: false, error: "Pick a location to clock in." };
+    }
   }
 
   const gate = await getTimeClockSmartGate(supabase, timeClockId);
@@ -191,8 +209,9 @@ export async function clockIn(input: ClockInInput): Promise<ActionResult> {
     clock_in_at: new Date().toISOString(),
     status: "open",
     punch_source: punchSource,
-    job_code: jobCode,
   };
+  if (jobCodeId) insertPayload.job_code_id = jobCodeId;
+  if (locationCodeId) insertPayload.location_code_id = locationCodeId;
 
   if (clientRequestId) {
     insertPayload.client_request_id = clientRequestId;

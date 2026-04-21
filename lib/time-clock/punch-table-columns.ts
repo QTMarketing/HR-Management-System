@@ -15,7 +15,7 @@
 import type { EnrichedPunchRow } from "@/lib/time-clock/types";
 
 /** Minimum scroll width for the table wrapper (update if you add wide columns). */
-export const PUNCH_TABLE_MIN_WIDTH_PX = 1280;
+export const PUNCH_TABLE_MIN_WIDTH_PX = 1380;
 
 export type PunchTableColumnDef = {
   /** Stable id for keys; align with comments in `time-punch-table-row.tsx`. */
@@ -36,6 +36,7 @@ export const PUNCH_TABLE_COLUMNS: readonly PunchTableColumnDef[] = [
   },
   { id: "type", header: "Type", headerClassName: "whitespace-nowrap px-3 py-3" },
   { id: "job", header: "Job", headerClassName: "whitespace-nowrap px-3 py-3" },
+  { id: "locCode", header: "Location", headerClassName: "whitespace-nowrap px-3 py-3" },
   {
     id: "clockIn",
     header: "Clock in",
@@ -80,6 +81,7 @@ export function matchesPunchTableSearch(row: EnrichedPunchRow, queryTrimmed: str
     row.employeeRole.toLowerCase().includes(q) ||
     row.reviewLabel.toLowerCase().includes(q) ||
     (row.jobCodeAtPunch?.toLowerCase().includes(q) ?? false) ||
+    (row.locationCodeAtPunch?.toLowerCase().includes(q) ?? false) ||
     (row.punchSourceLabel?.toLowerCase().includes(q) ?? false) ||
     (row.breaksSummaryLabel?.toLowerCase().includes(q) ?? false) ||
     row.ptoLabel.toLowerCase().includes(q)

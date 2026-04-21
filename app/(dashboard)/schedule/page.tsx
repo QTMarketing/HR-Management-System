@@ -22,6 +22,7 @@ export default async function SchedulePage() {
   const { data: locRows } = await supabase
     .from("locations")
     .select("id, name, manager_employee_id")
+    .neq("status", "archived")
     .order("sort_order", { ascending: true });
 
   let rawLocations: LocationRow[] = (locRows ?? []).map((r) => ({ id: r.id, name: r.name }));

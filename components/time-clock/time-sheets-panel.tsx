@@ -53,6 +53,8 @@ function periodKindLabel(k: TimesheetPeriodKind): string {
   switch (k) {
     case "weekly":
       return "Week";
+    case "bi_weekly":
+      return "Bi-week";
     case "monthly":
       return "Month";
     case "semi_monthly":
@@ -366,16 +368,17 @@ export function TimeSheetsPanel({
                       clearCustomRange: true,
                     });
                   }}
-                  className="h-10 w-full cursor-pointer appearance-none rounded border border-slate-200 bg-white py-2 pl-4 pr-10 text-sm font-medium text-slate-800 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-400/25"
+                  className="h-10 w-full cursor-pointer appearance-none rounded border border-slate-200 bg-white py-2 pl-4 pr-12 text-sm font-medium text-slate-800 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-400/25"
                   aria-label="Period type"
                 >
                   <option value="weekly">Week</option>
+                  <option value="bi_weekly">Bi-week</option>
                   <option value="monthly">Month</option>
                   <option value="semi_monthly">Semi-month</option>
                   <option value="custom">Custom split</option>
                 </select>
                 <ChevronDown
-                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+                  className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
                   aria-hidden
                 />
               </div>
@@ -385,6 +388,11 @@ export function TimeSheetsPanel({
                 rangeLabel={rangeLabel}
                 periodStart={new Date(periodStartIso)}
                 periodEndInclusive={periodEndInclusive}
+                weekStartsOn={
+                  ((typeof periodConfig.week_starts_on === "number"
+                    ? periodConfig.week_starts_on
+                    : 1) as 0 | 1 | 2 | 3 | 4 | 5 | 6)
+                }
                 hasCustomRange={hasCustomRange}
                 onApplyCustomRange={(fromYmd, toYmd) =>
                   pushTimesheetsQuery({ rangeFrom: fromYmd, rangeTo: toYmd })
@@ -425,7 +433,7 @@ export function TimeSheetsPanel({
                 <select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
-                  className="h-10 w-full cursor-pointer appearance-none rounded border border-slate-200 bg-white py-2 pl-4 pr-10 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-400/25"
+                  className="h-10 w-full cursor-pointer appearance-none rounded border border-slate-200 bg-white py-2 pl-4 pr-12 text-sm font-medium text-slate-700 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-400/25"
                   aria-label="Status filter"
                 >
                   <option value="all">All statuses</option>
@@ -433,7 +441,7 @@ export function TimeSheetsPanel({
                   <option value="pending">Pending review</option>
                 </select>
                 <ChevronDown
-                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+                  className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
                   aria-hidden
                 />
               </div>

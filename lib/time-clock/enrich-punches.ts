@@ -104,6 +104,10 @@ type RawEntry = {
   approved_at?: string | null;
   punch_source?: string | null;
   job_code?: string | null;
+  job_code_id?: string | null;
+  location_code_id?: string | null;
+  job_codes?: { label?: string | null } | { label?: string | null }[] | null;
+  location_codes?: { label?: string | null } | { label?: string | null }[] | null;
   edited_at?: string | null;
   edit_reason?: string | null;
 };
@@ -203,6 +207,10 @@ export function enrichPunchRows(
     const isArchived = Boolean(row.archived_at);
     const review = reviewFromRaw(row);
     const jc = row.job_code?.trim();
+    const jobNested = row.job_codes as { label?: string | null } | { label?: string | null }[] | null;
+    const jobLabel = Array.isArray(jobNested) ? jobNested[0]?.label : jobNested?.label;
+    const locNested = row.location_codes as { label?: string | null } | { label?: string | null }[] | null;
+    const locLabel = Array.isArray(locNested) ? locNested[0]?.label : locNested?.label;
     return {
       id: row.id,
       employeeId: row.employee_id,
@@ -227,7 +235,8 @@ export function enrichPunchRows(
       reviewStatus: review.reviewStatus,
       reviewLabel: review.reviewLabel,
       punchSourceLabel: punchSourceDisplay(row.punch_source ?? undefined),
-      jobCodeAtPunch: jc && jc.length > 0 ? jc : null,
+      jobCodeAtPunch: (jobLabel && String(jobLabel).trim().length > 0 ? String(jobLabel).trim() : (jc && jc.length > 0 ? jc : null)),
+      locationCodeAtPunch: locLabel && String(locLabel).trim().length > 0 ? String(locLabel).trim() : null,
       wasEdited: Boolean(row.edited_at),
     };
   });
