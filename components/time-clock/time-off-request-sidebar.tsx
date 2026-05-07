@@ -28,6 +28,10 @@ type Props = {
   locationId?: string;
   /** After a successful save (e.g. router.refresh). */
   onSaved?: () => void;
+  /** Optional: prefill a single date (YYYY-MM-DD). */
+  defaultDayYmd?: string | null;
+  /** Optional: preselect time off type (e.g. PTO, Sick leave). */
+  defaultTimeOffType?: string | null;
 };
 
 /**
@@ -41,6 +45,8 @@ export function TimeOffRequestSidebar({
   storeEmployees,
   locationId,
   onSaved,
+  defaultDayYmd = null,
+  defaultTimeOffType = null,
 }: Props) {
   const baseId = useId();
   const [employeeId, setEmployeeId] = useState(defaultEmployeeId);
@@ -70,6 +76,22 @@ export function TimeOffRequestSidebar({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    // Prefill date/type when provided (used by timesheet Add dropdown).
+    if (
+      defaultTimeOffType &&
+      TIME_OFF_TYPES.includes(defaultTimeOffType as (typeof TIME_OFF_TYPES)[number])
+    ) {
+      setTimeOffType(defaultTimeOffType as (typeof TIME_OFF_TYPES)[number]);
+    }
+    if (defaultDayYmd && /^\d{4}-\d{2}-\d{2}$/.test(defaultDayYmd)) {
+      setAllDay(true);
+      setStartAt(defaultDayYmd);
+      setEndAt(defaultDayYmd);
+    }
+  }, [open, defaultDayYmd, defaultTimeOffType]);
 
   if (!open) return null;
 

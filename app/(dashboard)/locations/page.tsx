@@ -33,7 +33,7 @@ export default async function LocationsPage() {
 
   const { data: locRows, error: locErr } = await supabase
     .from("locations")
-    .select("id, name, manager_employee_id, status")
+    .select("id, name, manager_employee_id, status, chain_id")
     .order("sort_order", { ascending: true });
 
   const migrationHint = (
@@ -117,6 +117,7 @@ export default async function LocationsPage() {
           locations={(locRows ?? []).map((r) => ({
             id: r.id,
             name: r.name,
+            chain_id: (r as { chain_id?: string | null }).chain_id ?? null,
             manager_employee_id:
               (r as { manager_employee_id?: string | null }).manager_employee_id ?? null,
             status: ((r as { status?: string | null }).status ?? "running") as LocationStatus,

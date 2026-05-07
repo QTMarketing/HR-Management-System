@@ -112,7 +112,9 @@ export function AddUnavailabilityModal({
               <h2 id={`${baseId}-title`} className="mt-1 truncate text-base font-semibold text-slate-900">
                 {employeeName}
               </h2>
-              <p className="mt-1 text-xs text-slate-500">Store: {locationName}</p>
+              <p className="mt-1 truncate text-xs text-slate-500" title={locationName}>
+                {locationName}
+              </p>
             </div>
             <button
               type="button"

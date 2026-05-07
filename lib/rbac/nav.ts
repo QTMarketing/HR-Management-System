@@ -25,6 +25,12 @@ export const DASHBOARD_NAV: NavItemWithGroup[] = [
     group: "main",
   },
   {
+    href: "/pto-admin",
+    label: "PTO admin",
+    permission: PERMISSIONS.ORG_OWNER,
+    group: "main",
+  },
+  {
     href: "/users/groups",
     label: "Smart groups",
     permission: PERMISSIONS.USERS_GROUPS_VIEW,
@@ -37,6 +43,7 @@ export const DASHBOARD_NAV: NavItemWithGroup[] = [
     group: "operations",
   },
   { href: "/time-clock", label: "Time Clock", permission: PERMISSIONS.TIME_CLOCK_VIEW, group: "operations" },
+  { href: "/time-off", label: "Time Off", permission: PERMISSIONS.TIME_CLOCK_MANAGE, group: "operations" },
   { href: "/schedule", label: "Schedule", permission: PERMISSIONS.SCHEDULE_VIEW, group: "operations" },
   {
     href: "/reports/labor",

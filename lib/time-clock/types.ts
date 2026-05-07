@@ -18,6 +18,8 @@ export type EnrichedPunchRow = {
   clockOutDisplay: string;
   lateInBadge: string | null;
   lateOutBadge: string | null;
+  /** Worked minutes for this entry (net of unpaid breaks when available). */
+  workedMinutes: number | null;
   dailyTotalLabel: string;
   /** Planned shift length (HH:MM) when linked to a schedule row. */
   scheduledDurationLabel: string | null;
@@ -47,6 +49,15 @@ export type EnrichedPunchRow = {
   breaksSummaryLabel?: string | null;
   /** Total unpaid break minutes (completed + in-progress unpaid portion). */
   unpaidBreakMinutes?: number | null;
+  /** Optional break line items (for Connecteam-style “Break” rows). */
+  breakLines?: {
+    id: string;
+    startedAt: string;
+    endedAt: string | null;
+    isPaid: boolean;
+    minutes: number | null;
+    label: string;
+  }[];
   /**
    * `false` when this row is roster-only (no backing `time_entries` row), e.g. “no punch yet”
    * on Today’s latest-punch table. Omit or `true` for real punches.

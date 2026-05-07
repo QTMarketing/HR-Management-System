@@ -57,19 +57,18 @@ export function LoginForm({ initialError, nextPath }: Props) {
       <div>
         <h1 className="text-xl font-semibold text-slate-900">Sign in</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Retail HR — use your Supabase Auth user.
+          Retail HR — sign in with your work account.
         </p>
       </div>
 
       {isDev ? (
         <div className="rounded-xl border border-orange-200 bg-orange-50/90 px-3 py-3 text-xs text-orange-950">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-orange-800">
-            Development — demo sign-in
+            Preview sign-in
           </p>
           <p className="mt-1 text-[13px] font-semibold text-orange-950">Use these credentials</p>
           <p className="mt-1 text-[11px] text-orange-900/90">
-            Supabase → <strong>Authentication</strong> → <strong>Users</strong>: add user with this email
-            &amp; password if missing.
+            Add this example account in your sign-in users list if it doesn’t exist yet.
           </p>
           <div className="mt-2 space-y-2">
             <div className="rounded-lg border border-orange-200/80 bg-white px-2.5 py-2">
@@ -86,12 +85,11 @@ export function LoginForm({ initialError, nextPath }: Props) {
             </div>
           </div>
           <p className="mt-2 text-[11px] text-orange-900/90">
-            With <span className="font-mono">RBAC_ENABLED=true</span>, run{" "}
-            <span className="font-mono">scripts/bootstrap-dev-org-owner.sql</span> in the Supabase SQL
-            editor so this email is an <strong>Org Owner</strong> in <span className="font-mono">employees</span>.
+            If access controls are enabled, make sure this email is set up as a{" "}
+            <strong>Company owner</strong> in the employee directory so you can access all admin features.
           </p>
           <p className="mt-1 text-[11px] text-orange-800/90">
-            Remove this panel before production builds.
+            Hide this panel in production.
           </p>
         </div>
       ) : null}

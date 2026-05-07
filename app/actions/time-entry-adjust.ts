@@ -96,6 +96,23 @@ export async function adjustTimeEntry(params: {
     return { ok: false, error: "Archived entries cannot be edited." };
   }
 
+  // Per-clock policy: admins may lock manager edits for compliance.
+  const { data: clockRow, error: clockErr } = await supabase
+    .from("time_clocks")
+    .select("allow_manager_edits")
+    .eq("id", r.time_clock_id)
+    .maybeSingle();
+  if (clockErr) return { ok: false, error: clockErr.message };
+  const allowManagerEdits = Boolean(
+    (clockRow as { allow_manager_edits?: boolean | null } | null)?.allow_manager_edits ?? true,
+  );
+  if (!allowManagerEdits) {
+    return {
+      ok: false,
+      error: "Edits are disabled for this Time Clock. Ask an admin to enable manager edits in Settings.",
+    };
+  }
+
   let nextIn = r.clock_in_at;
   let nextOut = r.clock_out_at;
 

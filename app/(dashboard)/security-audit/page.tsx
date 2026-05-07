@@ -43,8 +43,7 @@ export default async function SecurityAuditPage() {
 
   const migrationHint = (
     <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-      Run migration{" "}
-      <code className="rounded bg-amber-100/80 px-1">018_security_audit_log.sql</code> in Supabase.
+      This page isn’t set up yet. Ask an admin to complete the database setup for the Security Audit log.
     </p>
   );
 
@@ -99,7 +98,7 @@ export default async function SecurityAuditPage() {
       <div>
         <h1 className="text-xl font-semibold text-slate-900">Security audit</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Record of org-owner actions: permission presets, promotions, and store lead assignments.
+          History of company-owner actions: access changes, promotions, and store lead assignments.
         </p>
       </div>
 

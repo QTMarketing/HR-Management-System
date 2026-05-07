@@ -38,6 +38,8 @@ export type HubClock = {
   status: "active" | "archived";
   /** When the header is "All locations", which store this clock belongs to. */
   storeName?: string | null;
+  /** East/West grouping for All-locations hub. */
+  storeSide?: "east" | "west" | null;
   /** Active employees at that store (for the Assigned line when `storeName` is set). */
   employeesAtStore?: number;
   hint?: string;
@@ -123,9 +125,7 @@ export function TimeClockHub({
   }, [list, query, employeeCount, locationName, scopeAll]);
 
   const [showAdd, setShowAdd] = useState(false);
-  const [addLocationId, setAddLocationId] = useState(
-    () => locationsForAdd[0]?.id ?? "",
-  );
+  const [addLocationId, setAddLocationId] = useState(() => locationsForAdd[0]?.id ?? "");
   const [addName, setAddName] = useState("Main clock");
   const [addError, setAddError] = useState<string | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -134,6 +134,21 @@ export function TimeClockHub({
   const [editNameDraft, setEditNameDraft] = useState("");
   const [editNameError, setEditNameError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  const grouped = useMemo(() => {
+    if (!scopeAll) return null;
+    const east: HubClock[] = [];
+    const west: HubClock[] = [];
+    const other: HubClock[] = [];
+    for (const c of filtered) {
+      if (c.storeSide === "east") east.push(c);
+      else if (c.storeSide === "west") west.push(c);
+      else other.push(c);
+    }
+    return { east, west, other };
+  }, [filtered, scopeAll]);
+
+  // `renderClockCard` is defined later (after action handlers) so it can safely reference them.
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -216,6 +231,157 @@ export function TimeClockHub({
   };
 
   const singleStoreAdd = locationsForAdd.length === 1;
+
+  const renderClockCard = (c: HubClock) => {
+    return (
+      <li key={c.id}>
+        <div className="flex h-full flex-col rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+          {(() => {
+            const store = storeLabelForCard(c, locationName, scopeAll);
+            const title = store ?? c.name;
+            const clockShort =
+              store && c.name.startsWith(`${store} — `)
+                ? c.name.slice(`${store} — `.length).trim()
+                : store && c.name.startsWith(`${store} - `)
+                  ? c.name.slice(`${store} - `.length).trim()
+                  : store
+                    ? c.name.trim()
+                    : null;
+            const showClockLine =
+              store &&
+              clockShort != null &&
+              clockShort.length > 0 &&
+              clockShort.toLowerCase() !== "main clock";
+
+            return (
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+                {showClockLine ? (
+                  <p className="mt-1 text-xs text-slate-500">
+                    <span className="text-slate-400">Clock:</span> {clockShort}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })()}
+          <p className="mt-3 text-xs text-slate-500">
+            <span className="font-medium text-slate-600">Assigned:</span>{" "}
+            <span className="rounded-md bg-orange-50 px-2 py-0.5 text-orange-950 ring-1 ring-orange-200/60">
+              {assignedLabel(c, employeeCount)}
+            </span>
+          </p>
+          {c.hint ? <p className="mt-2 text-xs text-slate-400">{c.hint}</p> : null}
+          <div className="mt-5 flex flex-1 items-end justify-between gap-2 border-t border-slate-100 pt-4">
+            {c.status === "active" ? (
+              <Link
+                href={`/time-clock/${c.id}`}
+                className={`${PRIMARY_ORANGE_CTA} inline-flex flex-1 items-center justify-center px-4 py-2.5 text-sm`}
+              >
+                Access
+              </Link>
+            ) : (
+              <Link
+                href={`/time-clock/${c.id}?view=timesheets`}
+                className="inline-flex flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+              >
+                View history
+              </Link>
+            )}
+            <div className="relative shrink-0" ref={menuOpenId === c.id ? menuRef : null}>
+              <button
+                type="button"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded border border-slate-200 text-sm font-semibold text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={!canManageClocks}
+                title={
+                  canManageClocks
+                    ? "More actions"
+                    : "You need time clock management permission for more actions."
+                }
+                aria-label="More actions"
+                aria-haspopup="true"
+                aria-expanded={menuOpenId === c.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!canManageClocks) return;
+                  setMenuOpenId((o) => (o === c.id ? null : c.id));
+                }}
+              >
+                ···
+              </button>
+              {menuOpenId === c.id && canManageClocks ? (
+                <div
+                  className="absolute top-full right-0 z-20 mt-1 min-w-[13.5rem] rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+                  role="menu"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
+                    onClick={() => openEditName(c)}
+                  >
+                    <Pencil className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+                    Edit name
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
+                    onClick={() => {
+                      setMenuOpenId(null);
+                      router.push(`/users/groups?timeClock=${encodeURIComponent(c.id)}`);
+                    }}
+                  >
+                    <Users className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+                    Edit assignments
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
+                    onClick={() => runAction(() => duplicateTimeClock(c.id))}
+                  >
+                    <Copy className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+                    Duplicate
+                  </button>
+                  {c.status === "active" ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
+                      onClick={() => runAction(() => archiveTimeClock(c.id))}
+                    >
+                      <Archive className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+                      Archive
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
+                      onClick={() => runAction(() => unarchiveTimeClock(c.id))}
+                    >
+                      <ArchiveRestore className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+                      Restore
+                    </button>
+                  )}
+                  <div className="my-1 border-t border-slate-100" role="separator" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-red-700 hover:bg-red-50"
+                    onClick={() => confirmDelete(c)}
+                  >
+                    <Trash2 className="h-4 w-4 shrink-0 text-red-500" aria-hidden />
+                    Delete
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </li>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -326,144 +492,51 @@ export function TimeClockHub({
                 : "No active time clocks yet. Ask your admin to add a clock for this store, or use + Add if you have access."}
         </div>
       ) : (
-        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((c) => (
-            <li key={c.id}>
-              <div className="flex h-full flex-col rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
-                <h2 className="text-base font-semibold text-slate-900">
-                  {(() => {
-                    const store = storeLabelForCard(c, locationName, scopeAll);
-                    return store ? (
-                      <>
-                        <span className="text-slate-800">{store}</span>
-                        <span className="font-normal text-slate-400"> — </span>
-                        <span>{c.name}</span>
-                      </>
-                    ) : (
-                      c.name
-                    );
-                  })()}
-                </h2>
-                <p className="mt-3 text-xs text-slate-500">
-                  <span className="font-medium text-slate-600">Assigned:</span>{" "}
-                  <span className="rounded-md bg-orange-50 px-2 py-0.5 text-orange-950 ring-1 ring-orange-200/60">
-                    {assignedLabel(c, employeeCount)}
-                  </span>
-                </p>
-                {c.hint ? (
-                  <p className="mt-2 text-xs text-slate-400">{c.hint}</p>
-                ) : null}
-                <div className="mt-5 flex flex-1 items-end justify-between gap-2 border-t border-slate-100 pt-4">
-                  {c.status === "active" ? (
-                    <Link
-                      href={`/time-clock/${c.id}`}
-                      className={`${PRIMARY_ORANGE_CTA} inline-flex flex-1 items-center justify-center px-4 py-2.5 text-sm`}
-                    >
-                      Access
-                    </Link>
-                  ) : (
-                    <Link
-                      href={`/time-clock/${c.id}?view=timesheets`}
-                      className="inline-flex flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-                    >
-                      View history
-                    </Link>
-                  )}
-                  <div className="relative shrink-0" ref={menuOpenId === c.id ? menuRef : null}>
-                    <button
-                      type="button"
-                      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded border border-slate-200 text-sm font-semibold text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                      disabled={!canManageClocks}
-                      title={
-                        canManageClocks
-                          ? "More actions"
-                          : "You need time clock management permission for more actions."
-                      }
-                      aria-label="More actions"
-                      aria-haspopup="true"
-                      aria-expanded={menuOpenId === c.id}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (!canManageClocks) return;
-                        setMenuOpenId((o) => (o === c.id ? null : c.id));
-                      }}
-                    >
-                      ···
-                    </button>
-                    {menuOpenId === c.id && canManageClocks ? (
-                      <div
-                        className="absolute top-full right-0 z-20 mt-1 min-w-[13.5rem] rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
-                        role="menu"
-                      >
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
-                          onClick={() => openEditName(c)}
-                        >
-                          <Pencil className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
-                          Edit name
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
-                          onClick={() => {
-                            setMenuOpenId(null);
-                            router.push(`/users/groups?timeClock=${encodeURIComponent(c.id)}`);
-                          }}
-                        >
-                          <Users className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
-                          Edit assignments
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
-                          onClick={() => runAction(() => duplicateTimeClock(c.id))}
-                        >
-                          <Copy className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
-                          Duplicate
-                        </button>
-                        {c.status === "active" ? (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
-                            onClick={() => runAction(() => archiveTimeClock(c.id))}
-                          >
-                            <Archive className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
-                            Archive
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
-                            onClick={() => runAction(() => unarchiveTimeClock(c.id))}
-                          >
-                            <ArchiveRestore className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
-                            Restore
-                          </button>
-                        )}
-                        <div className="my-1 border-t border-slate-100" role="separator" />
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-red-700 hover:bg-red-50"
-                          onClick={() => confirmDelete(c)}
-                        >
-                          <Trash2 className="h-4 w-4 shrink-0 text-red-500" aria-hidden />
-                          Delete
-                        </button>
-                      </div>
-                    ) : null}
+        <div className="space-y-8">
+          {scopeAll && grouped ? (
+            <>
+              {grouped.east.length > 0 ? (
+                <section>
+                  <div className="mb-3 flex items-end justify-between gap-3">
+                    <h2 className="text-sm font-semibold tracking-wide text-slate-900">East Stores</h2>
+                    <span className="text-xs text-slate-500">{grouped.east.length} clocks</span>
                   </div>
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
+                  <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {grouped.east.map(renderClockCard)}
+                  </ul>
+                </section>
+              ) : null}
+
+              {grouped.west.length > 0 ? (
+                <section>
+                  <div className="mb-3 flex items-end justify-between gap-3">
+                    <h2 className="text-sm font-semibold tracking-wide text-slate-900">West Stores</h2>
+                    <span className="text-xs text-slate-500">{grouped.west.length} clocks</span>
+                  </div>
+                  <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {grouped.west.map(renderClockCard)}
+                  </ul>
+                </section>
+              ) : null}
+
+              {grouped.other.length > 0 ? (
+                <section>
+                  <div className="mb-3 flex items-end justify-between gap-3">
+                    <h2 className="text-sm font-semibold tracking-wide text-slate-900">Other</h2>
+                    <span className="text-xs text-slate-500">{grouped.other.length} clocks</span>
+                  </div>
+                  <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {grouped.other.map(renderClockCard)}
+                  </ul>
+                </section>
+              ) : null}
+            </>
+          ) : (
+            <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {filtered.map(renderClockCard)}
+            </ul>
+          )}
+        </div>
       )}
 
       {showAdd ? (

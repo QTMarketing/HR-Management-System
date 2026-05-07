@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { getPtoBalancesForEmployee } from "@/app/actions/pto-balances";
 import { EmployeeTimecardModal } from "@/components/time-clock/employee-timecard-modal";
 import type { StoreEmployeeOption } from "@/components/time-clock/time-off-request-sidebar";
 import { TimePunchTableRow } from "@/components/time-clock/time-punch-table-row";
@@ -14,6 +15,7 @@ import {
   PUNCH_TABLE_MIN_WIDTH_PX,
 } from "@/lib/time-clock/punch-table-columns";
 import type { TimeOffRecordForUi } from "@/lib/time-clock/time-off-display";
+import type { PendingTimeOffRequestRow } from "@/lib/time-clock/pending-time-off";
 import type { EnrichedPunchRow } from "@/lib/time-clock/types";
 
 type Props = {
@@ -21,6 +23,8 @@ type Props = {
   title: string;
   subtitle?: string;
   emptyMessage: string;
+  /** Context clock id for "Add shift" in the timecard modal (optional). */
+  timeClockId?: string;
   /** Viewer can manage / adjust punches (enables editing fields in timecard). */
   canManage?: boolean;
   /** Today tab: show clock-out actions for open punches. */
@@ -42,6 +46,10 @@ type Props = {
   employeeTimecardPool?: EnrichedPunchRow[];
   /** Time off rows for PTO column + timecard summary (optional). */
   timeOffRecords?: TimeOffRecordForUi[];
+  /** Pending employee-submitted time off requests (manager scope; for inline approvals). */
+  pendingTimeOffRequests?: PendingTimeOffRequestRow[];
+  /** Viewer’s employee id (used to allow self-service leave requests in timecard). */
+  viewerEmployeeId?: string | null;
   /** Manager approval (closed punches). */
   showReviewActions?: boolean;
   onApprove?: (entryId: string) => void;
@@ -57,6 +65,7 @@ export function TimePunchTable({
   title,
   subtitle,
   emptyMessage,
+  timeClockId,
   canManage = false,
   showClockOutActions = false,
   onClockOut,
@@ -68,6 +77,8 @@ export function TimePunchTable({
   toolbarHint = "Today",
   employeeTimecardPool,
   timeOffRecords = [],
+  pendingTimeOffRequests = [],
+  viewerEmployeeId = null,
   showReviewActions = false,
   onApprove,
   onUnapprove,
@@ -77,6 +88,18 @@ export function TimePunchTable({
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [timecardAnchorRow, setTimecardAnchorRow] = useState<EnrichedPunchRow | null>(null);
+  const [ptoBalances, setPtoBalances] = useState<{
+    vacationHours: number;
+    sickHours: number;
+    standardDayHours: number;
+    vacationCashoutEnabled?: boolean;
+    nextVacationCashoutAt?: string | null;
+    nextVacationCashoutHours?: number;
+    lastVacationCashoutAt?: string | null;
+    lastVacationCashoutHours?: number;
+    ytdVacationUsedHours?: number;
+  } | null>(null);
+  const [ptoBalancesLoading, setPtoBalancesLoading] = useState(false);
 
   const filtered = useMemo(() => {
     const q = query.trim();
@@ -90,6 +113,43 @@ export function TimePunchTable({
     const fromPool = pool.filter((r) => r.employeeId === timecardAnchorRow.employeeId);
     return fromPool.length > 0 ? fromPool : [timecardAnchorRow];
   }, [timecardAnchorRow, employeeTimecardPool, rows]);
+
+  useEffect(() => {
+    const empId = timecardAnchorRow?.employeeId ?? null;
+    if (!empId) {
+      setPtoBalances(null);
+      setPtoBalancesLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setPtoBalancesLoading(true);
+    void (async () => {
+      const r = await getPtoBalancesForEmployee(empId);
+      if (cancelled) return;
+      if (!r.ok) {
+        setPtoBalances(null);
+        setPtoBalancesLoading(false);
+        return;
+      }
+      setPtoBalances({
+        vacationHours: r.vacationHours,
+        sickHours: r.sickHours,
+        standardDayHours: r.standardDayHours,
+        vacationCashoutEnabled: r.vacationCashoutEnabled,
+        nextVacationCashoutAt: r.nextVacationCashoutAt,
+        nextVacationCashoutHours: r.nextVacationCashoutHours,
+        lastVacationCashoutAt: r.lastVacationCashoutAt,
+        lastVacationCashoutHours: r.lastVacationCashoutHours,
+        ytdVacationUsedHours: r.ytdVacationUsedHours,
+      });
+      setPtoBalancesLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [timecardAnchorRow?.employeeId]);
 
   const dateLabel =
     toolbarDateLabel ??
@@ -112,11 +172,11 @@ export function TimePunchTable({
 
       {showToolbar ? (
         <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <label className="sr-only" htmlFor="punch-search">
+          <label className="sr-only" htmlFor="time-entry-search">
             Search employees
           </label>
           <input
-            id="punch-search"
+            id="time-entry-search"
             type="search"
             placeholder="Search by name or role…"
             value={query}
@@ -192,6 +252,9 @@ export function TimePunchTable({
         open={timecardAnchorRow != null}
         onClose={() => setTimecardAnchorRow(null)}
         rows={timecardRows}
+        timeClockId={timeClockId ?? null}
+        ptoBalances={ptoBalances}
+        ptoBalancesLoading={ptoBalancesLoading}
         canEditJob={canManage}
         canApprovePunches={Boolean(showReviewActions && canManage)}
         onApproveEntry={onApprove}
@@ -201,6 +264,8 @@ export function TimePunchTable({
         storeEmployees={storeEmployees}
         locationId={locationIdProp}
         timeOffRecords={timeOffRecords}
+        pendingTimeOffRequests={pendingTimeOffRequests}
+        viewerEmployeeId={viewerEmployeeId}
         onPunchAdjusted={() => router.refresh()}
       />
     </div>

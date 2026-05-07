@@ -57,9 +57,9 @@ export function AccountMenu({
       return (
         <span
           className="max-w-[11rem] shrink-0 truncate rounded-lg border border-dashed border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-600"
-          title="Add NEXT_PUBLIC_AUTH_ENABLED=true to .env.local and restart the dev server to use the /login page."
+          title="Sign-in is turned off in this environment. Turn it on in .env.local and restart the app to use the sign-in page."
         >
-          Not signed in — enable auth in .env
+          Not signed in — sign-in is turned off
         </span>
       );
     }
@@ -112,7 +112,7 @@ export function AccountMenu({
                 {userEmail}
               </p>
             ) : (
-              <p className="mt-0.5 text-xs text-amber-700">No email on session</p>
+              <p className="mt-0.5 text-xs text-amber-700">No email found for this session</p>
             )}
           </div>
           {myProfileHref ? (

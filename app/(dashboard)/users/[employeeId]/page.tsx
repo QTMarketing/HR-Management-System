@@ -12,6 +12,7 @@ import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { normalizeRoleLabel } from "@/lib/rbac/matrix";
 import { requirePermission } from "@/lib/rbac/guard";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
+import { getPtoBalancesForEmployee } from "@/app/actions/pto-balances";
 
 const PROFILE_SELECT = [
   "id",
@@ -27,6 +28,8 @@ const PROFILE_SELECT = [
   "mobile_phone",
   "birth_date",
   "employment_start_date",
+  "fte",
+  "standard_hours_per_week",
   "kiosk_code",
   "last_login",
   "added_by",
@@ -48,6 +51,8 @@ type ProfileRow = {
   birth_date: string | null;
   title: string | null;
   employment_start_date: string | null;
+  fte: number | null;
+  standard_hours_per_week: number | null;
   kiosk_code: string | null;
   last_login: string | null;
   added_by: string | null;
@@ -170,6 +175,11 @@ export default async function EmployeeProfilePage({
     employment_start_date: rec.employment_start_date
       ? String(rec.employment_start_date)
       : "",
+    fte: rec.fte !== null && rec.fte !== undefined ? String(rec.fte) : "1.0",
+    standard_hours_per_week:
+      rec.standard_hours_per_week !== null && rec.standard_hours_per_week !== undefined
+        ? String(rec.standard_hours_per_week)
+        : "",
     role: rec.role?.trim() || "Employee",
     location_id: locationId ?? "",
     direct_manager_id: rec.direct_manager_id ?? "",
@@ -177,6 +187,40 @@ export default async function EmployeeProfilePage({
     employee_code: rec.employee_code ?? "",
     kiosk_code: rec.kiosk_code ?? "",
   };
+
+  const [ptoBalances, ptoLedger] = await Promise.all([
+    getPtoBalancesForEmployee(rec.id),
+    supabase
+      .from("pto_ledger_entries")
+      .select("id, bucket, entry_type, amount_hours, effective_at, notes, metadata")
+      .eq("employee_id", rec.id)
+      .order("effective_at", { ascending: false })
+      .limit(5),
+  ]);
+
+  const ptoPanel =
+    ptoBalances.ok && !ptoLedger.error
+      ? {
+          vacationHours: ptoBalances.vacationHours,
+          sickHours: ptoBalances.sickHours,
+          standardDayHours: ptoBalances.standardDayHours,
+          vacationCashoutEnabled: ptoBalances.vacationCashoutEnabled,
+          nextVacationCashoutAt: ptoBalances.nextVacationCashoutAt,
+          nextVacationCashoutHours: ptoBalances.nextVacationCashoutHours,
+          lastVacationCashoutAt: ptoBalances.lastVacationCashoutAt,
+          lastVacationCashoutHours: ptoBalances.lastVacationCashoutHours,
+          ytdVacationUsedHours: ptoBalances.ytdVacationUsedHours,
+          ledger: (ptoLedger.data ?? []).map((r) => ({
+            id: String((r as { id: string }).id),
+            bucket: String((r as { bucket: string }).bucket),
+            entry_type: String((r as { entry_type: string }).entry_type),
+            amount_hours: Number((r as { amount_hours: unknown }).amount_hours),
+            effective_at: String((r as { effective_at: string }).effective_at),
+            notes: (r as { notes: string | null }).notes ?? null,
+            metadata: (r as { metadata: unknown }).metadata ?? null,
+          })),
+        }
+      : null;
 
   return (
     <EmployeeProfileClient
@@ -193,6 +237,7 @@ export default async function EmployeeProfilePage({
       daysInSystem={daysInSystem}
       addedViaLabel={addedViaLabel}
       lastLogin={rec.last_login ?? null}
+      ptoPanel={ptoPanel}
     />
   );
 }

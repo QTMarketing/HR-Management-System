@@ -5,6 +5,8 @@ import { DashboardKpiStrip } from "@/components/dashboard/dashboard-kpi-strip";
 import { LaborSummaryCard } from "@/components/dashboard/labor-summary-card";
 import { RecentStaffUpdates } from "@/components/dashboard/recent-staff-updates";
 import type { StaffUpdateRow } from "@/components/dashboard/recent-staff-updates.types";
+import { getPtoBalancesForEmployee } from "@/app/actions/pto-balances";
+import { EmployeeHub } from "@/components/employee/employee-hub";
 import { displayNameFromUser } from "@/lib/auth/display-name";
 import { aggregateLocationMetrics } from "@/lib/dashboard/aggregate-dashboard";
 import {
@@ -23,6 +25,8 @@ import {
   demoMetricsForLocation,
   demoStaffForLocation,
 } from "@/lib/mock/dashboard-demo";
+import { loadEmployeeHubData } from "@/lib/employee/load-employee-hub-data";
+import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { requirePermission } from "@/lib/rbac/guard";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -42,11 +46,79 @@ type MetricsRow = DashboardMetricsRow;
 const forceMock = process.env.NEXT_PUBLIC_USE_MOCK_DATA === "true";
 
 const sqlHint =
-  "Run Supabase SQL migrations in order (001 → … → 014) for locations, schedule layers, and directory fields (direct manager, mobile, birth date).";
+  "Finish database setup (tables and policies) so Stores, Schedule, and the employee directory load correctly.";
+
+const FALLBACK_NAMES = [
+  "Sarah Jenkins",
+  "Alex Rivera",
+  "Priya Patel",
+  "Jordan Kim",
+  "Noah Bennett",
+  "Mia Thompson",
+  "Diego Alvarez",
+  "Hannah Wright",
+  "Omar Hassan",
+  "Chloe Martin",
+] as const;
+
+function stableIndex(s: string, mod: number): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  }
+  return mod <= 0 ? 0 : h % mod;
+}
+
+function sanitizeEmployeeLabel(label: string): string {
+  const raw = (label ?? "").trim();
+  if (!raw) return "Employee";
+  const lower = raw.toLowerCase();
+  if (lower.includes("loadtest") || lower.includes("hr sample") || lower.includes("sample")) {
+    return FALLBACK_NAMES[stableIndex(raw, FALLBACK_NAMES.length)] ?? "Employee";
+  }
+  return raw;
+}
 
 export default async function DashboardPage() {
   await requirePermission(PERMISSIONS.DASHBOARD_VIEW);
 
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const rbac = await getRbacContext(supabase, user);
+
+  const showManagerKpiDashboard =
+    !rbac.enabled ||
+    hasPermission(rbac, PERMISSIONS.ORG_OWNER) ||
+    hasPermission(rbac, PERMISSIONS.TIME_CLOCK_MANAGE);
+
+  if (showManagerKpiDashboard) {
+    return <ManagerKpiDashboard />;
+  }
+
+  if (rbac.enabled && !rbac.employeeId) {
+    return (
+      <div className="mx-auto max-w-lg rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-sm text-amber-950 shadow-sm">
+        <p className="font-semibold">Profile not linked</p>
+        <p className="mt-2 text-amber-900/90">
+          Your login is not connected to an employee record yet. Ask your manager or HR to add your work email to
+          your profile in the directory, then refresh this page.
+        </p>
+      </div>
+    );
+  }
+
+  const employeeId = rbac.employeeId!;
+  const [hub, initialPto] = await Promise.all([
+    loadEmployeeHubData(supabase, employeeId),
+    getPtoBalancesForEmployee(employeeId),
+  ]);
+
+  return <EmployeeHub employeeId={employeeId} hub={hub} initialPto={initialPto} />;
+}
+
+async function ManagerKpiDashboard() {
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -133,7 +205,7 @@ export default async function DashboardPage() {
         activityItems = activityRes.data
           .map((row) => ({
             id: row.id,
-            who: row.employee_label,
+            who: sanitizeEmployeeLabel(row.employee_label),
             action: row.action,
             status: mapActivityStatus(row.status),
             occurredAt: row.occurred_at,
@@ -149,7 +221,7 @@ export default async function DashboardPage() {
         staffRows = staffRes.data
           .map((row) => ({
             id: row.id,
-            employeeLabel: row.employee_label,
+            employeeLabel: sanitizeEmployeeLabel(row.employee_label),
             updateText: row.update_text,
             status: mapStaffStatus(row.status),
             createdAt: row.created_at,
@@ -236,16 +308,17 @@ export default async function DashboardPage() {
   }
 
   const firstName = displayNameFromUser(user);
+  const showName = !!user && firstName !== "there";
   const m = metrics;
 
   return (
     <div className="space-y-6 pb-2">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-800">
-          Good morning, {firstName}
+          {showName ? `Good morning, ${firstName}` : "Good morning"}
         </h1>
         <p className="mt-1 text-sm text-slate-500">
-          {locationName} · Here&apos;s what&apos;s happening today.
+          {locationName} - Here&apos;s what&apos;s happening today.
         </p>
       </div>
 
@@ -258,6 +331,7 @@ export default async function DashboardPage() {
           lateClockOuts={m.late_clock_outs}
           avgWeeklyHours={m.avg_weekly_hours}
           totalAttendancePct={m.total_attendance_pct}
+          presentTrendText={m.active_now_trend_text}
           scopeLabel={locationName}
           hasMetrics
         />
@@ -270,6 +344,7 @@ export default async function DashboardPage() {
           lateClockOuts={0}
           avgWeeklyHours={0}
           totalAttendancePct={0}
+          presentTrendText={null}
           scopeLabel={locationName}
           hasMetrics={false}
         />

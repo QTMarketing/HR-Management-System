@@ -94,6 +94,10 @@ export async function startBreak(input: StartBreakInput): Promise<ActionResult> 
   });
 
   if (insErr) {
+    // Idempotency / double-click: unique index prevents >1 open break per entry.
+    if (insErr.code === "23505") {
+      return { ok: false, error: "End your current break before starting another." };
+    }
     return { ok: false, error: insErr.message };
   }
 
@@ -147,7 +151,8 @@ export async function endBreak(input: EndBreakInput): Promise<ActionResult> {
   }
   const b = br as { id: string; time_entry_id: string; ended_at: string | null };
   if (b.ended_at) {
-    return { ok: false, error: "This break already ended." };
+    // Idempotency / double-click: treat as success.
+    return { ok: true };
   }
 
   const { data: entry, error: enErr } = await supabase

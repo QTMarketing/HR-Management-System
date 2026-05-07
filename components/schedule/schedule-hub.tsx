@@ -17,7 +17,6 @@ export type ScheduleCard = {
 };
 
 type Props = {
-  locationLabel: string;
   activeCards: ScheduleCard[];
   /** Archived modules — placeholder until you persist schedules in DB. */
   archivedCards: ScheduleCard[];
@@ -26,7 +25,6 @@ type Props = {
 };
 
 export function ScheduleHub({
-  locationLabel,
   activeCards,
   archivedCards,
   addShiftHref,
@@ -72,9 +70,7 @@ export function ScheduleHub({
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-800">Schedule</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">
-              Hub for schedule modules (Connecteam-style). Scope:{" "}
-              <span className="font-medium text-slate-700">{locationLabel}</span> — open a
-              schedule to see the week board, layers of controls, and shift grid.
+              Open a module to work with the week board, layers, and shift grid.
             </p>
           </div>
         </div>

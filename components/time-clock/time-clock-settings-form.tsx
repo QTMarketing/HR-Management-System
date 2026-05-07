@@ -1,20 +1,34 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
-import { ChevronDown, Search } from "lucide-react";
+import {
+  Bell,
+  ChevronDown,
+  Compass,
+  Lock,
+  MapPin,
+  Search,
+  Settings2,
+  Timer,
+  Wallet,
+} from "lucide-react";
 import { bulkApplyTimeClockTimesheetPeriod, saveTimeClockTimesheetPeriod } from "@/app/actions/time-clock-period";
-import { setTimeClockAssignment } from "@/app/actions/smart-groups";
 import { saveTimeClockTrackingAndCategorization } from "@/app/actions/time-clock-setup";
+import { saveTimeClockBreakSettings } from "@/app/actions/time-clock-break-settings";
+import { saveTimeClockGeneralSettings } from "@/app/actions/time-clock-general-settings";
 import type { TimesheetPeriodConfig, TimesheetPeriodKind } from "@/lib/time-clock/timesheet-period";
 import { PRIMARY_ORANGE_CTA } from "@/lib/ui/primary-orange-cta";
 
-const SETUP_STEPS = [
-  { id: 1, label: "Payroll" },
-  { id: 2, label: "Location" },
-  { id: 3, label: "Access" },
-] as const;
+type SettingsTab =
+  | "general"
+  | "time_tracking"
+  | "payroll"
+  | "breaks"
+  | "geolocation"
+  | "reminders"
+  | "notifications";
 
 type Props = {
   timeClockId: string;
@@ -23,8 +37,6 @@ type Props = {
   canEdit: boolean;
   /** Store this clock belongs to (for links to geofence / store settings). */
   storeLocationId?: string | null;
-  smartGroupsForClock?: { id: string; label: string; assigned: boolean }[];
-  canManageSmartGroups?: boolean;
   clocksForBulkApply?: { id: string; label: string }[];
   initialLocationTrackingMode: "off" | "clock_in_out" | "breadcrumbs";
   initialRequireLocationForPunch: boolean;
@@ -32,6 +44,19 @@ type Props = {
   initialRequireCategorization: boolean;
   jobCodes: { id: string; label: string; colorToken?: string }[];
   locationCodes: { id: string; label: string; colorToken?: string }[];
+  initialBreaksEnabled: boolean;
+  initialAllowPaidBreaks: boolean;
+  initialBreaksMode: "disabled" | "manual" | "automatic";
+  initialBreaksManualRules: unknown;
+  initialBreaksAutoRules: unknown;
+  initialWorkDays: number[];
+  initialWorkHoursStart: string;
+  initialWorkHoursEnd: string;
+  initialDailyLimitEnabled: boolean;
+  initialDailyLimitHours: number;
+  initialAutoClockOutEnabled: boolean;
+  initialAutoClockOutAfterHours: number;
+  initialAllowManagerEdits: boolean;
 };
 
 export function TimeClockSettingsForm({
@@ -40,8 +65,6 @@ export function TimeClockSettingsForm({
   initialConfig,
   canEdit,
   storeLocationId = null,
-  smartGroupsForClock = [],
-  canManageSmartGroups = false,
   clocksForBulkApply = [],
   initialLocationTrackingMode,
   initialRequireLocationForPunch,
@@ -49,10 +72,23 @@ export function TimeClockSettingsForm({
   initialRequireCategorization,
   jobCodes,
   locationCodes,
+  initialBreaksEnabled,
+  initialAllowPaidBreaks,
+  initialBreaksMode,
+  initialBreaksManualRules,
+  initialBreaksAutoRules,
+  initialWorkDays,
+  initialWorkHoursStart,
+  initialWorkHoursEnd,
+  initialDailyLimitEnabled,
+  initialDailyLimitHours,
+  initialAutoClockOutEnabled,
+  initialAutoClockOutAfterHours,
+  initialAllowManagerEdits,
 }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
-  const [step, setStep] = useState(1);
   const [kind, setKind] = useState<TimesheetPeriodKind>(initialKind);
   const [weekStartsOn, setWeekStartsOn] = useState<number>(() => {
     const v = initialConfig.week_starts_on;
@@ -73,7 +109,33 @@ export function TimeClockSettingsForm({
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // Step 2 — Location tracking
+  const tabFromUrl = ((): SettingsTab => {
+    const raw = searchParams.get("tab")?.trim();
+    if (
+      raw === "general" ||
+      raw === "time_tracking" ||
+      raw === "payroll" ||
+      raw === "breaks" ||
+      raw === "geolocation" ||
+      raw === "reminders" ||
+      raw === "notifications"
+    ) {
+      return raw;
+    }
+    return "general";
+  })();
+
+  const setTab = (next: SettingsTab) => {
+    startTransition(() => {
+      const q = new URLSearchParams(searchParams.toString());
+      q.set("view", "settings");
+      q.set("tab", next);
+      const suffix = q.toString();
+      router.push(suffix ? `/time-clock/${timeClockId}?${suffix}` : `/time-clock/${timeClockId}`);
+    });
+  };
+
+  // Geolocation settings
   const [trackingMode, setTrackingMode] = useState<
     "off" | "clock_in_out" | "breadcrumbs"
   >(initialLocationTrackingMode);
@@ -81,32 +143,138 @@ export function TimeClockSettingsForm({
     initialRequireLocationForPunch,
   );
 
-  // Step 3 — Categorization
+  // Categorization (saved alongside geolocation settings)
   const [catMode, setCatMode] = useState<"none" | "job" | "location">(
     initialCategorizationMode,
   );
   const [requireCat, setRequireCat] = useState<boolean>(initialRequireCategorization);
 
-  const [setupBusy, setSetupBusy] = useState(false);
-  const [setupError, setSetupError] = useState<string | null>(null);
-  const [asgBusy, setAsgBusy] = useState(false);
-  const [asgError, setAsgError] = useState<string | null>(null);
-  const [asgQuery, setAsgQuery] = useState("");
-  const [asgOn, setAsgOn] = useState<Set<string>>(
-    () => new Set(smartGroupsForClock.filter((g) => g.assigned).map((g) => g.id)),
+  // General policies (Connecteam-like)
+  const [workDays, setWorkDays] = useState<Set<number>>(
+    () =>
+      new Set(
+        (initialWorkDays ?? []).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6),
+      ),
   );
+  const [workHoursStart, setWorkHoursStart] = useState(initialWorkHoursStart ?? "09:00");
+  const [workHoursEnd, setWorkHoursEnd] = useState(initialWorkHoursEnd ?? "17:00");
+  const [dailyLimitEnabled, setDailyLimitEnabled] = useState(Boolean(initialDailyLimitEnabled));
+  const [dailyLimitHours, setDailyLimitHours] = useState(String(initialDailyLimitHours ?? 12));
+  const [autoClockOutEnabled, setAutoClockOutEnabled] = useState(Boolean(initialAutoClockOutEnabled));
+  const [autoClockOutAfterHours, setAutoClockOutAfterHours] = useState(
+    String(initialAutoClockOutAfterHours ?? 16),
+  );
+  const [allowManagerEdits, setAllowManagerEdits] = useState(Boolean(initialAllowManagerEdits));
+  const [generalErr, setGeneralErr] = useState<string | null>(null);
 
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkErr, setBulkErr] = useState<string | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Break settings
+  const [breaksEnabled, setBreaksEnabled] = useState<boolean>(initialBreaksEnabled);
+  const [allowPaidBreaks, setAllowPaidBreaks] = useState<boolean>(initialAllowPaidBreaks);
+  const [breaksMode, setBreaksMode] = useState<"disabled" | "manual" | "automatic">(
+    initialBreaksMode ?? "manual",
+  );
+
+  type ManualBreakRule = {
+    id: string;
+    label: string;
+    paid: boolean;
+    durationMinutes: number;
+    everyHours: number;
+    restrictEarlyReturn: boolean;
+  };
+  type AutoBreakRule = {
+    id: string;
+    deductMinutes: number;
+    afterDailyHours: number;
+  };
+
+  const [manualRules, setManualRules] = useState<ManualBreakRule[]>(() => {
+    const raw = initialBreaksManualRules;
+    if (!Array.isArray(raw)) {
+      return [
+        {
+          id: "lunch",
+          label: "Lunch break",
+          paid: false,
+          durationMinutes: 30,
+          everyHours: 5,
+          restrictEarlyReturn: false,
+        },
+      ];
+    }
+    const next: ManualBreakRule[] = [];
+    for (const r of raw as unknown[]) {
+      const x = (typeof r === "object" && r != null ? (r as Record<string, unknown>) : null) as
+        | Record<string, unknown>
+        | null;
+      const label = typeof x?.label === "string" ? (x.label as string) : "Break";
+      next.push({
+        id: typeof x?.id === "string" ? (x.id as string) : `${Date.now()}-${Math.random()}`,
+        label,
+        paid: Boolean(x?.paid),
+        durationMinutes: Number.isFinite(Number(x?.durationMinutes))
+          ? Number(x?.durationMinutes)
+          : Number.isFinite(Number(x?.duration_minutes))
+            ? Number(x?.duration_minutes)
+            : 30,
+        everyHours: Number.isFinite(Number(x?.everyHours))
+          ? Number(x?.everyHours)
+          : Number.isFinite(Number(x?.every_hours))
+            ? Number(x?.every_hours)
+            : 5,
+        restrictEarlyReturn: Boolean(
+          (x?.restrictEarlyReturn ?? x?.restrict_early_return ?? false) as unknown,
+        ),
+      });
+    }
+    return next.length > 0
+      ? next
+      : [
+          {
+            id: "lunch",
+            label: "Lunch break",
+            paid: false,
+            durationMinutes: 30,
+            everyHours: 5,
+            restrictEarlyReturn: false,
+          },
+        ];
+  });
+
+  const [autoRules, setAutoRules] = useState<AutoBreakRule[]>(() => {
+    const raw = initialBreaksAutoRules;
+    if (!Array.isArray(raw)) {
+      return [{ id: "auto-1", deductMinutes: 30, afterDailyHours: 7 }];
+    }
+    const next: AutoBreakRule[] = [];
+    for (const r of raw as unknown[]) {
+      const x = (typeof r === "object" && r != null ? (r as Record<string, unknown>) : null) as
+        | Record<string, unknown>
+        | null;
+      next.push({
+        id: typeof x?.id === "string" ? (x.id as string) : `${Date.now()}-${Math.random()}`,
+        deductMinutes: Number.isFinite(Number(x?.deductMinutes))
+          ? Number(x?.deductMinutes)
+          : Number.isFinite(Number(x?.deduct_minutes))
+            ? Number(x?.deduct_minutes)
+            : 30,
+        afterDailyHours: Number.isFinite(Number(x?.afterDailyHours))
+          ? Number(x?.afterDailyHours)
+          : Number.isFinite(Number(x?.after_daily_hours))
+            ? Number(x?.after_daily_hours)
+            : 7,
+      });
+    }
+    return next.length > 0 ? next : [{ id: "auto-1", deductMinutes: 30, afterDailyHours: 7 }];
+  });
+
+  const [breakErr, setBreakErr] = useState<string | null>(null);
+
   const [bulkQuery, setBulkQuery] = useState("");
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(() => new Set());
-
-  const filteredSmartGroups = useMemo(() => {
-    const q = asgQuery.trim().toLowerCase();
-    if (!q) return smartGroupsForClock;
-    return smartGroupsForClock.filter((g) => g.label.toLowerCase().includes(q));
-  }, [asgQuery, smartGroupsForClock]);
 
   const filteredBulkTargets = useMemo(() => {
     const q = bulkQuery.trim().toLowerCase();
@@ -132,30 +300,9 @@ export function TimeClockSettingsForm({
     };
   }
 
-  function save() {
+  function savePayroll() {
     setErr(null);
     setMsg(null);
-    startTransition(async () => {
-      const r = await saveTimeClockTimesheetPeriod({
-        timeClockId,
-        timesheet_period_kind: kind,
-        timesheet_period_config: buildConfig(),
-      });
-      if (!r.ok) {
-        setErr(r.error);
-        return;
-      }
-      setMsg("Setup saved.");
-      setStep(1);
-      router.refresh();
-    });
-  }
-
-  function saveAllSetup() {
-    // Save payroll + tracking/categorization together at the end.
-    setErr(null);
-    setMsg(null);
-    setSetupError(null);
     startTransition(async () => {
       const r1 = await saveTimeClockTimesheetPeriod({
         timeClockId,
@@ -166,6 +313,15 @@ export function TimeClockSettingsForm({
         setErr(r1.error);
         return;
       }
+      setMsg("Payroll settings saved.");
+      router.refresh();
+    });
+  }
+
+  function saveGeolocation() {
+    setErr(null);
+    setMsg(null);
+    startTransition(async () => {
       const r2 = await saveTimeClockTrackingAndCategorization({
         timeClockId,
         location_tracking_mode: trackingMode,
@@ -174,35 +330,61 @@ export function TimeClockSettingsForm({
         require_categorization: requireCat,
       });
       if (!r2.ok) {
-        setSetupError(r2.error);
+        setErr(r2.error);
         return;
       }
-      setMsg("Setup saved.");
-      setStep(1);
+      setMsg("Geolocation settings saved.");
       router.refresh();
     });
   }
 
-  function toggleSmartGroup(groupId: string, on: boolean) {
-    if (!canManageSmartGroups) return;
-    setAsgError(null);
-    setAsgBusy(true);
-    void (async () => {
-      const r = await setTimeClockAssignment(groupId, timeClockId, on);
-      setAsgBusy(false);
+  function saveBreaks() {
+    setBreakErr(null);
+    setMsg(null);
+    startTransition(async () => {
+      const r = await saveTimeClockBreakSettings({
+        timeClockId,
+        breaks_enabled: breaksEnabled,
+        allow_paid_breaks: allowPaidBreaks,
+        breaks_mode: breaksMode,
+        breaks_manual_rules: manualRules,
+        breaks_auto_rules: autoRules,
+      });
       if (!r.ok) {
-        setAsgError(r.error);
+        setBreakErr(r.error);
         return;
       }
-      setAsgOn((prev) => {
-        const next = new Set(prev);
-        if (on) next.add(groupId);
-        else next.delete(groupId);
-        return next;
-      });
+      setMsg("Break settings saved.");
       router.refresh();
-    })();
+    });
   }
+
+  function saveGeneral() {
+    setGeneralErr(null);
+    setMsg(null);
+    startTransition(async () => {
+      const days = [...workDays].sort((a, b) => a - b);
+      const r = await saveTimeClockGeneralSettings({
+        timeClockId,
+        work_days: days,
+        work_hours_start: workHoursStart,
+        work_hours_end: workHoursEnd,
+        daily_limit_enabled: dailyLimitEnabled,
+        daily_limit_hours: Number(dailyLimitHours),
+        auto_clock_out_enabled: autoClockOutEnabled,
+        auto_clock_out_after_hours: Number(autoClockOutAfterHours),
+        allow_manager_edits: allowManagerEdits,
+      });
+      if (!r.ok) {
+        setGeneralErr(r.error);
+        return;
+      }
+      setMsg("General settings saved.");
+      router.refresh();
+    });
+  }
+
+  // Smart group assignments intentionally removed from Settings.
 
   function runBulkApply() {
     setBulkErr(null);
@@ -230,39 +412,18 @@ export function TimeClockSettingsForm({
     })();
   }
 
-  function saveTrackingAndCategorization() {
-    setSetupError(null);
-    setSetupBusy(true);
-    void (async () => {
-      const r = await saveTimeClockTrackingAndCategorization({
-        timeClockId,
-        location_tracking_mode: trackingMode,
-        require_location_for_punch: requireLocation,
-        categorization_mode: catMode,
-        require_categorization: requireCat,
-      });
-      setSetupBusy(false);
-      if (!r.ok) {
-        setSetupError(r.error);
-        return;
-      }
-      setMsg("Setup saved.");
-      router.refresh();
-    })();
-  }
-
   return (
     <section className="relative -mx-4 bg-slate-50 px-4 py-8 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
       <div className="mx-auto w-full max-w-6xl">
         <header className="flex flex-col gap-2">
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-            Setup
+            Time Clock settings
           </p>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
-            Configure Payroll &amp; Time Tracking
+            Policies &amp; controls
           </h2>
           <p className="max-w-2xl text-sm leading-relaxed text-slate-600">
-            Set your operational rules for pay periods, workweeks, and integrations.
+            Configure pay periods, breaks, geolocation, reminders, and notifications—per store.
           </p>
         </header>
 
@@ -274,38 +435,308 @@ export function TimeClockSettingsForm({
           </div>
         ) : (
           <div className="mt-8">
-            <div aria-label="Setup progress" className="border-t border-gray-100 pt-6">
-              <div className="grid grid-cols-3 gap-4">
-                {SETUP_STEPS.map((s) => {
-                  const active = step === s.id;
-                  const done = step > s.id;
-                  return (
-                    <div key={s.id} className="min-w-0">
-                      <div
-                        className={`h-0.5 w-full rounded-full ${
-                          active ? "bg-orange-600" : done ? "bg-slate-700" : "bg-gray-200"
-                        }`}
-                        aria-hidden
-                      />
-                      <div className="mt-3 flex items-center justify-between gap-2">
-                        <p
-                          className={`truncate text-sm font-medium ${
-                            active || done ? "text-slate-900" : "text-slate-500"
-                          }`}
-                        >
-                          {s.label}
+            <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-[18rem,minmax(0,1fr)]">
+              <aside className="min-w-0">
+                <div className="sticky top-6 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+                  <nav className="space-y-1" aria-label="Settings sections">
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => setTab("general")}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
+                        tabFromUrl === "general"
+                          ? "bg-slate-100 text-slate-900"
+                          : "text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Settings2 className="h-4 w-4 text-slate-500" aria-hidden />
+                      General
+                    </button>
+                    <button
+                      type="button"
+                      disabled
+                      onClick={() => {}}
+                      className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-400"
+                      title="Mobile app required (coming later)"
+                    >
+                      <Timer className="h-4 w-4 text-slate-300" aria-hidden />
+                      Time tracking
+                      <span className="ml-auto rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                        later
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => setTab("payroll")}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
+                        tabFromUrl === "payroll"
+                          ? "bg-slate-100 text-slate-900"
+                          : "text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Wallet className="h-4 w-4 text-slate-500" aria-hidden />
+                      Payroll
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => setTab("breaks")}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
+                        tabFromUrl === "breaks"
+                          ? "bg-slate-100 text-slate-900"
+                          : "text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Compass className="h-4 w-4 text-slate-500" aria-hidden />
+                      Breaks
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => setTab("geolocation")}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
+                        tabFromUrl === "geolocation"
+                          ? "bg-slate-100 text-slate-900"
+                          : "text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      <MapPin className="h-4 w-4 text-slate-500" aria-hidden />
+                      Geolocation
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => setTab("reminders")}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
+                        tabFromUrl === "reminders"
+                          ? "bg-slate-100 text-slate-900"
+                          : "text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Bell className="h-4 w-4 text-slate-500" aria-hidden />
+                      Reminders
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => setTab("notifications")}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
+                        tabFromUrl === "notifications"
+                          ? "bg-slate-100 text-slate-900"
+                          : "text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Lock className="h-4 w-4 text-slate-500" aria-hidden />
+                      Notifications
+                    </button>
+                  </nav>
+                </div>
+              </aside>
+
+              <div className="min-w-0">
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+                {tabFromUrl === "general" ? (
+                  <div>
+                    <h3 className="text-lg font-semibold tracking-tight text-slate-900">General</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                      Define default workdays, work hours, and safety limits for long shifts.
+                    </p>
+
+                    <div className="mt-8 grid grid-cols-1 gap-6 border-t border-gray-100 pt-6">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">Work days</p>
+                        <p className="mt-1 text-sm text-slate-600">
+                          Used as a default reference for managers and reporting.
                         </p>
-                        <p className="shrink-0 text-xs tabular-nums text-slate-400">{s.id}/3</p>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {[
+                            { d: 0, l: "S" },
+                            { d: 1, l: "M" },
+                            { d: 2, l: "T" },
+                            { d: 3, l: "W" },
+                            { d: 4, l: "T" },
+                            { d: 5, l: "F" },
+                            { d: 6, l: "S" },
+                          ].map((x, idx) => {
+                            const on = workDays.has(x.d);
+                            return (
+                              <button
+                                key={`${x.d}-${idx}`}
+                                type="button"
+                                onClick={() =>
+                                  setWorkDays((prev) => {
+                                    const next = new Set(prev);
+                                    if (on && next.size > 1) next.delete(x.d);
+                                    else next.add(x.d);
+                                    return next;
+                                  })
+                                }
+                                className={`inline-flex h-9 w-9 items-center justify-center rounded-full border text-sm font-semibold transition ${
+                                  on
+                                    ? "border-orange-300 bg-orange-50 text-orange-900"
+                                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                }`}
+                                title="Toggle day"
+                              >
+                                {x.l}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">Work hours</p>
+                        <p className="mt-1 text-sm text-slate-600">
+                          Defines a standard day for quick review (not a schedule).
+                        </p>
+                        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          <label className="block">
+                            <span className="text-sm font-medium text-slate-800">From</span>
+                            <input
+                              type="time"
+                              value={workHoursStart}
+                              onChange={(e) => setWorkHoursStart(e.target.value)}
+                              className="mt-2 h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-orange-300 focus:ring-2 focus:ring-orange-500/15"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="text-sm font-medium text-slate-800">To</span>
+                            <input
+                              type="time"
+                              value={workHoursEnd}
+                              onChange={(e) => setWorkHoursEnd(e.target.value)}
+                              className="mt-2 h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-orange-300 focus:ring-2 focus:ring-orange-500/15"
+                            />
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-900">Daily limit</p>
+                            <p className="mt-0.5 text-xs text-slate-600">
+                              Warn when a single shift exceeds the limit.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setDailyLimitEnabled((o) => !o)}
+                            className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${
+                              dailyLimitEnabled ? "bg-orange-600" : "bg-slate-200"
+                            }`}
+                            aria-pressed={dailyLimitEnabled}
+                          >
+                            <span
+                              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                                dailyLimitEnabled ? "translate-x-6" : "translate-x-1"
+                              }`}
+                            />
+                          </button>
+                        </div>
+                        <div className="mt-4 flex items-center gap-3">
+                          <input
+                            type="number"
+                            min={1}
+                            step={0.5}
+                            value={dailyLimitHours}
+                            onChange={(e) => setDailyLimitHours(e.target.value)}
+                            disabled={!dailyLimitEnabled}
+                            className={`h-11 w-[10rem] rounded-md border bg-white px-3 text-sm tabular-nums shadow-sm outline-none transition focus:ring-2 ${
+                              !dailyLimitEnabled
+                                ? "cursor-not-allowed border-slate-200 text-slate-400 opacity-70"
+                                : "border-slate-200 text-slate-900 focus:border-orange-300 focus:ring-orange-500/15"
+                            }`}
+                          />
+                          <span className="text-sm text-slate-600">hours</span>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-900">Auto clock-out</p>
+                            <p className="mt-0.5 text-xs text-slate-600">
+                              Close long open shifts automatically.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setAutoClockOutEnabled((o) => !o)}
+                            className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${
+                              autoClockOutEnabled ? "bg-orange-600" : "bg-slate-200"
+                            }`}
+                            aria-pressed={autoClockOutEnabled}
+                          >
+                            <span
+                              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                                autoClockOutEnabled ? "translate-x-6" : "translate-x-1"
+                              }`}
+                            />
+                          </button>
+                        </div>
+                        <div className="mt-4 flex items-center gap-3">
+                          <span className="text-sm text-slate-600">After</span>
+                          <input
+                            type="number"
+                            min={1}
+                            step={0.5}
+                            value={autoClockOutAfterHours}
+                            onChange={(e) => setAutoClockOutAfterHours(e.target.value)}
+                            disabled={!autoClockOutEnabled}
+                            className={`h-11 w-[10rem] rounded-md border bg-white px-3 text-sm tabular-nums shadow-sm outline-none transition focus:ring-2 ${
+                              !autoClockOutEnabled
+                                ? "cursor-not-allowed border-slate-200 text-slate-400 opacity-70"
+                                : "border-slate-200 text-slate-900 focus:border-orange-300 focus:ring-orange-500/15"
+                            }`}
+                          />
+                          <span className="text-sm text-slate-600">hours</span>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-900">
+                              Allow managers to edit times
+                            </p>
+                            <p className="mt-0.5 text-xs text-slate-600">
+                              When off, managers cannot adjust clock-in/clock-out times for this clock.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setAllowManagerEdits((o) => !o)}
+                            className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${
+                              allowManagerEdits ? "bg-orange-600" : "bg-slate-200"
+                            }`}
+                            aria-pressed={allowManagerEdits}
+                          >
+                            <span
+                              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                                allowManagerEdits ? "translate-x-6" : "translate-x-1"
+                              }`}
+                            />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
 
-            <div className="mt-8 grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,44rem),1fr]">
-              <div className="min-w-0">
-                {step === 1 ? (
+                    {generalErr ? (
+                      <p className="mt-4 text-sm text-red-700" role="alert">
+                        {generalErr}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {tabFromUrl === "payroll" ? (
                   <div>
                     <h3 className="text-lg font-semibold tracking-tight text-slate-900">
                       Pay period fundamentals
@@ -576,7 +1007,7 @@ export function TimeClockSettingsForm({
                   </div>
                 ) : null}
 
-                {step === 2 ? (
+                {tabFromUrl === "geolocation" ? (
                   <div>
                     <h3 className="text-lg font-semibold tracking-tight text-slate-900">
                       Location tracking
@@ -642,7 +1073,7 @@ export function TimeClockSettingsForm({
 
                     <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
                       <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-900">Require location to punch</p>
+                        <p className="text-sm font-medium text-slate-900">Require location to clock in/out</p>
                         <p className="mt-0.5 text-xs text-slate-600">
                           When enabled, employees must share location to clock in/out (even without a geofence).
                         </p>
@@ -671,7 +1102,7 @@ export function TimeClockSettingsForm({
 
                     <div className="mt-6 flex flex-wrap items-center gap-2">
                       <Link
-                        href="/locations"
+                        href={storeLocationId ? `/locations?location=${encodeURIComponent(storeLocationId)}` : "/locations"}
                         className="inline-flex h-10 items-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50"
                       >
                         Store geofence (optional)
@@ -680,22 +1111,11 @@ export function TimeClockSettingsForm({
                         Geofence enforcement is configured per store.
                       </p>
                     </div>
-                  </div>
-                ) : null}
 
-                {step === 3 ? (
-                  <div>
-                    <h3 className="text-lg font-semibold tracking-tight text-slate-900">
-                      Categorization &amp; access
-                    </h3>
-                    <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                      Choose what the team tracks time for, and who can use this clock.
-                    </p>
-
-                    <div className="mt-8 border-t border-gray-100 pt-6">
-                      <p className="text-sm font-medium text-slate-800">Categorization</p>
-                      <p className="mt-2 text-sm text-slate-600">
-                        Categorize punches by job or location for reporting and exports.
+                    <div className="mt-10 border-t border-gray-100 pt-6">
+                      <p className="text-sm font-semibold text-slate-900">Categorization</p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Require a Job code or Location code at clock-in for cleaner reporting and exports.
                       </p>
 
                       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -709,9 +1129,7 @@ export function TimeClockSettingsForm({
                           }`}
                         >
                           <p className="text-sm font-semibold text-slate-900">None</p>
-                          <p className="mt-1 text-xs text-slate-600">
-                            Simple clock in &amp; out.
-                          </p>
+                          <p className="mt-1 text-xs text-slate-600">Simple clock in &amp; out.</p>
                         </button>
                         <button
                           type="button"
@@ -723,12 +1141,8 @@ export function TimeClockSettingsForm({
                           }`}
                         >
                           <p className="text-sm font-semibold text-slate-900">Job</p>
-                          <p className="mt-1 text-xs text-slate-600">
-                            Tag shifts by job code.
-                          </p>
-                          <p className="mt-2 text-xs text-slate-500">
-                            {jobCodes.length} available
-                          </p>
+                          <p className="mt-1 text-xs text-slate-600">Tag shifts by job code.</p>
+                          <p className="mt-2 text-xs text-slate-500">{jobCodes.length} available</p>
                         </button>
                         <button
                           type="button"
@@ -740,9 +1154,7 @@ export function TimeClockSettingsForm({
                           }`}
                         >
                           <p className="text-sm font-semibold text-slate-900">Location</p>
-                          <p className="mt-1 text-xs text-slate-600">
-                            Tag shifts by location code.
-                          </p>
+                          <p className="mt-1 text-xs text-slate-600">Tag shifts by location code.</p>
                           <p className="mt-2 text-xs text-slate-500">
                             {locationCodes.length} available
                           </p>
@@ -753,7 +1165,7 @@ export function TimeClockSettingsForm({
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-slate-900">Require selection</p>
                           <p className="mt-0.5 text-xs text-slate-600">
-                            When enabled, employees must pick a value before clock-in succeeds.
+                            When enabled, employees must choose a value before clock-in succeeds.
                           </p>
                         </div>
                         <button
@@ -777,100 +1189,369 @@ export function TimeClockSettingsForm({
                           />
                         </button>
                       </div>
-                      <p className="mt-3 text-xs text-slate-500">
-                        These codes are company-wide (shared across stores). Add values in Supabase for now; UI management can be added next.
+                    </div>
+                  </div>
+                ) : null}
+
+                {tabFromUrl === "breaks" ? (
+                  <div>
+                    <h3 className="text-lg font-semibold tracking-tight text-slate-900">Breaks</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                      Configure manual breaks and automatic deductions.
+                    </p>
+
+                    <div className="mt-8 border-t border-gray-100 pt-6">
+                      <div className="space-y-3">
+                        {[
+                          {
+                            id: "disabled" as const,
+                            title: "Disabled",
+                            body: "Hide breaks in the time clock.",
+                          },
+                          {
+                            id: "manual" as const,
+                            title: "Manual breaks",
+                            body: "Employees can take breaks during their work day.",
+                          },
+                          {
+                            id: "automatic" as const,
+                            title: "Automatic breaks",
+                            body: "Deduct unpaid breaks automatically based on worked hours.",
+                          },
+                        ].map((opt) => {
+                          const on = breaksMode === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              disabled={pending}
+                              onClick={() => {
+                                setBreaksMode(opt.id);
+                                setBreaksEnabled(opt.id !== "disabled");
+                              }}
+                              className={`w-full rounded-xl border bg-white px-4 py-3 text-left shadow-sm transition ${
+                                on
+                                  ? "border-orange-300 ring-2 ring-orange-500/10"
+                                  : "border-slate-200 hover:border-slate-300"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-semibold text-slate-900">{opt.title}</p>
+                                  <p className="mt-0.5 text-xs text-slate-600">{opt.body}</p>
+                                  {opt.id === "manual" ? (
+                                    <p className="mt-2 text-xs text-slate-500">
+                                      Set a reminder (coming soon)
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <div
+                                  className={`mt-0.5 h-4 w-4 rounded-full border ${
+                                    on ? "border-orange-500 bg-orange-500" : "border-slate-300 bg-white"
+                                  }`}
+                                  aria-hidden
+                                />
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-900">Allow paid breaks</p>
+                          <p className="mt-0.5 text-xs text-slate-600">
+                            When off, only unpaid breaks can be selected.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAllowPaidBreaks((o) => !o)}
+                          disabled={pending || breaksMode === "disabled"}
+                          className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${
+                            breaksMode === "disabled"
+                              ? "cursor-not-allowed bg-slate-200 opacity-60"
+                              : allowPaidBreaks
+                                ? "bg-orange-600"
+                                : "bg-slate-200"
+                          }`}
+                          aria-pressed={allowPaidBreaks}
+                          title={breaksMode === "disabled" ? "Enable breaks first" : "Toggle paid breaks"}
+                        >
+                          <span
+                            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                              allowPaidBreaks ? "translate-x-6" : "translate-x-1"
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      {breaksMode === "manual" ? (
+                        <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-slate-900">Manual breaks</p>
+                              <p className="mt-1 text-sm text-slate-600">
+                                Configure the break types employees can log.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={pending}
+                              onClick={() =>
+                                setManualRules((prev) => [
+                                  ...prev,
+                                  {
+                                    id: `${Date.now()}-${Math.random()}`,
+                                    label: "Break",
+                                    paid: false,
+                                    durationMinutes: 10,
+                                    everyHours: 5,
+                                    restrictEarlyReturn: false,
+                                  },
+                                ])
+                              }
+                              className="inline-flex h-10 items-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+                            >
+                              + Add
+                            </button>
+                          </div>
+
+                          <div className="mt-4 space-y-3">
+                            {manualRules.map((r) => (
+                              <div key={r.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1.2fr,0.7fr,0.8fr,1fr,auto] sm:items-center">
+                                  <div className="min-w-0">
+                                    <label className="text-xs font-medium text-slate-600">Name</label>
+                                    <input
+                                      value={r.label}
+                                      onChange={(e) =>
+                                        setManualRules((prev) =>
+                                          prev.map((x) => (x.id === r.id ? { ...x, label: e.target.value } : x)),
+                                        )
+                                      }
+                                      className="mt-1 h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none focus:border-orange-300 focus:ring-2 focus:ring-orange-500/15"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-xs font-medium text-slate-600">Type</label>
+                                    <select
+                                      value={r.paid ? "paid" : "unpaid"}
+                                      disabled={!allowPaidBreaks}
+                                      onChange={(e) =>
+                                        setManualRules((prev) =>
+                                          prev.map((x) =>
+                                            x.id === r.id ? { ...x, paid: e.target.value === "paid" } : x,
+                                          ),
+                                        )
+                                      }
+                                      className={`mt-1 h-10 w-full cursor-pointer appearance-none rounded-md border bg-white px-3 pr-10 text-sm shadow-sm outline-none transition ${
+                                        allowPaidBreaks
+                                          ? "border-slate-200 text-slate-800 focus:border-orange-300 focus:ring-2 focus:ring-orange-500/15"
+                                          : "cursor-not-allowed border-slate-200 text-slate-400 opacity-70"
+                                      }`}
+                                    >
+                                      <option value="unpaid">Unpaid</option>
+                                      <option value="paid">Paid</option>
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="text-xs font-medium text-slate-600">Duration</label>
+                                    <div className="mt-1 flex items-center gap-2">
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        step={1}
+                                        value={r.durationMinutes}
+                                        onChange={(e) =>
+                                          setManualRules((prev) =>
+                                            prev.map((x) =>
+                                              x.id === r.id
+                                                ? { ...x, durationMinutes: Number(e.target.value) || 0 }
+                                                : x,
+                                            ),
+                                          )
+                                        }
+                                        className="h-10 w-[6.5rem] rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none focus:border-orange-300 focus:ring-2 focus:ring-orange-500/15"
+                                      />
+                                      <span className="text-sm text-slate-600">min</span>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <label className="text-xs font-medium text-slate-600">Every</label>
+                                    <div className="mt-1 flex items-center gap-2">
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        step={1}
+                                        value={r.everyHours}
+                                        onChange={(e) =>
+                                          setManualRules((prev) =>
+                                            prev.map((x) =>
+                                              x.id === r.id
+                                                ? { ...x, everyHours: Number(e.target.value) || 0 }
+                                                : x,
+                                            ),
+                                          )
+                                        }
+                                        className="h-10 w-[6.5rem] rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none focus:border-orange-300 focus:ring-2 focus:ring-orange-500/15"
+                                      />
+                                      <span className="text-sm text-slate-600">hours</span>
+                                    </div>
+                                  </div>
+                                  <div className="flex justify-end">
+                                    <button
+                                      type="button"
+                                      disabled={pending || manualRules.length <= 1}
+                                      onClick={() => setManualRules((prev) => prev.filter((x) => x.id !== r.id))}
+                                      className="inline-flex h-10 items-center rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-40"
+                                      title={manualRules.length <= 1 ? "Keep at least one rule" : "Remove"}
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <label className="mt-3 flex items-center gap-2 text-sm text-slate-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={r.restrictEarlyReturn}
+                                    onChange={(e) =>
+                                      setManualRules((prev) =>
+                                        prev.map((x) =>
+                                          x.id === r.id ? { ...x, restrictEarlyReturn: e.target.checked } : x,
+                                        ),
+                                      )
+                                    }
+                                  />
+                                  Restrict early returns from this break
+                                </label>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {breaksMode === "automatic" ? (
+                        <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-slate-900">Automatic breaks</p>
+                              <p className="mt-1 text-sm text-slate-600">
+                                Deduct unpaid break time automatically.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={pending}
+                              onClick={() =>
+                                setAutoRules((prev) => [
+                                  ...prev,
+                                  {
+                                    id: `${Date.now()}-${Math.random()}`,
+                                    deductMinutes: 30,
+                                    afterDailyHours: 7,
+                                  },
+                                ])
+                              }
+                              className="inline-flex h-10 items-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+                            >
+                              + Add
+                            </button>
+                          </div>
+
+                          <div className="mt-4 space-y-3">
+                            {autoRules.map((r) => (
+                              <div key={r.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                <span className="text-sm text-slate-700">Deduct</span>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  step={1}
+                                  value={r.deductMinutes}
+                                  onChange={(e) =>
+                                    setAutoRules((prev) =>
+                                      prev.map((x) =>
+                                        x.id === r.id
+                                          ? { ...x, deductMinutes: Number(e.target.value) || 0 }
+                                          : x,
+                                      ),
+                                    )
+                                  }
+                                  className="h-10 w-[6.5rem] rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none focus:border-orange-300 focus:ring-2 focus:ring-orange-500/15"
+                                />
+                                <span className="text-sm text-slate-700">min after a daily total of</span>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  step={0.5}
+                                  value={r.afterDailyHours}
+                                  onChange={(e) =>
+                                    setAutoRules((prev) =>
+                                      prev.map((x) =>
+                                        x.id === r.id
+                                          ? { ...x, afterDailyHours: Number(e.target.value) || 0 }
+                                          : x,
+                                      ),
+                                    )
+                                  }
+                                  className="h-10 w-[6.5rem] rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none focus:border-orange-300 focus:ring-2 focus:ring-orange-500/15"
+                                />
+                                <span className="text-sm text-slate-700">hours</span>
+                                <button
+                                  type="button"
+                                  disabled={pending || autoRules.length <= 1}
+                                  onClick={() => setAutoRules((prev) => prev.filter((x) => x.id !== r.id))}
+                                  className="ml-auto inline-flex h-10 items-center rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-40"
+                                  title={autoRules.length <= 1 ? "Keep at least one rule" : "Remove"}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+
+                          <p className="mt-3 text-xs text-slate-500">
+                            Note: deduction rules are stored now; applying them to worked-time totals is the next step.
+                          </p>
+                        </div>
+                      ) : null}
+
+                      <p className="mt-6 text-xs text-slate-500">
+                        Breaks are shown in Timesheets and exports when recorded.
                       </p>
                     </div>
 
-                    <div className="mt-8 border-t border-gray-100 pt-6">
-                      <p className="text-sm font-medium text-slate-800">Assignments</p>
-                      <p className="mt-2 text-sm text-slate-600">
-                        Use Smart groups to assign employees to this clock.
+                    {breakErr ? (
+                      <p className="mt-4 text-sm text-red-700" role="alert">
+                        {breakErr}
                       </p>
-                      <div className="mt-4 flex flex-wrap items-center gap-2">
-                        <Link
-                          href={`/users/groups?timeClock=${encodeURIComponent(timeClockId)}`}
-                          className="inline-flex h-10 items-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50"
-                        >
-                          Manage in Smart groups
-                        </Link>
-                        <span className="text-xs text-slate-500">
-                          {smartGroupsForClock.length} group{smartGroupsForClock.length === 1 ? "" : "s"} available
-                        </span>
-                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
 
-                      {smartGroupsForClock.length > 0 ? (
-                        <div className="mt-6">
-                          <label className="sr-only" htmlFor="asg-search">
-                            Search groups
-                          </label>
-                          <div className="relative">
-                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                            <input
-                              id="asg-search"
-                              value={asgQuery}
-                              onChange={(e) => setAsgQuery(e.target.value)}
-                              placeholder="Search smart groups"
-                              className="h-10 w-full rounded-md border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-800 shadow-sm outline-none focus:border-orange-300 focus:ring-2 focus:ring-orange-500/15"
-                            />
-                          </div>
-                          <div className="mt-3 max-h-64 overflow-auto rounded-md border border-gray-100 bg-white">
-                            <ul className="divide-y divide-gray-100">
-                              {filteredSmartGroups.map((g) => {
-                                const on = asgOn.has(g.id);
-                                return (
-                                  <li key={g.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                                    <div className="min-w-0">
-                                      <p className="truncate text-sm font-medium text-slate-900">{g.label}</p>
-                                      <p className="text-xs text-slate-500">
-                                        {on ? "Assigned to this clock" : "Not assigned"}
-                                      </p>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      disabled={asgBusy || !canManageSmartGroups}
-                                      onClick={() => toggleSmartGroup(g.id, !on)}
-                                      className={`inline-flex h-9 items-center rounded-md px-3 text-sm font-semibold transition disabled:opacity-50 ${
-                                        on
-                                          ? "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
-                                          : "bg-orange-600 text-white hover:bg-orange-600"
-                                      }`}
-                                      title={
-                                        canManageSmartGroups
-                                          ? on
-                                            ? "Remove assignment"
-                                            : "Assign to this clock"
-                                          : "You need users.manage permission to change assignments."
-                                      }
-                                    >
-                                      {on ? "Remove" : "Assign"}
-                                    </button>
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-                          {asgError ? (
-                            <p className="mt-3 text-sm text-red-700" role="alert">
-                              {asgError}
-                            </p>
-                          ) : null}
-                          {!canManageSmartGroups ? (
-                            <p className="mt-3 text-xs text-slate-500">
-                              You can view assignments here, but only users with <span className="font-mono">users.manage</span>{" "}
-                              can change them.
-                            </p>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <p className="mt-4 text-sm text-slate-600">
-                          No smart groups found for this store yet. Create one in Smart groups, then assign it here.
-                        </p>
-                      )}
+                {tabFromUrl === "reminders" ? (
+                  <div>
+                    <h3 className="text-lg font-semibold tracking-tight text-slate-900">Reminders</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                      Scheduled reminders (clock in/out, breaks) will be added after mobile is in place.
+                    </p>
+                    <div className="mt-8 rounded-xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600 shadow-sm">
+                      Coming soon.
+                    </div>
+                  </div>
+                ) : null}
 
-                      <p className="mt-4 text-xs text-slate-500">
-                        Tip: If no group is assigned to this clock, it remains open to all employees at the store.
-                      </p>
+                {tabFromUrl === "notifications" ? (
+                  <div>
+                    <h3 className="text-lg font-semibold tracking-tight text-slate-900">
+                      Notifications
+                    </h3>
+                    <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                      Exceptions (missed clock-in/out, approvals needed, break violations) will surface here.
+                    </p>
+                    <div className="mt-8 rounded-xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600 shadow-sm">
+                      Coming soon.
                     </div>
                   </div>
                 ) : null}
@@ -887,60 +1568,50 @@ export function TimeClockSettingsForm({
                     </p>
                   ) : null}
                 </div>
-              </div>
-
-              <aside className="hidden lg:block">
-                <div className="sticky top-6 border-l border-gray-100 pl-8">
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                    Guidance
-                  </p>
-                  <p className="mt-2 text-sm font-medium text-slate-900">Minimum text. Maximum clarity.</p>
-                  <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                    Configure this per store so East and West can follow different payroll timelines. Timesheets
-                    uses these rules as the default period window; managers can still pick custom ranges.
-                  </p>
-                  <div className="mt-6 border-t border-gray-100 pt-6">
-                    <p className="text-sm font-medium text-slate-900">Save behavior</p>
-                    <p className="mt-2 text-sm text-slate-600">
-                      Changes are applied immediately for this Time Clock.
-                    </p>
-                  </div>
                 </div>
-              </aside>
+              </div>
             </div>
 
             <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 bg-white/70 backdrop-blur supports-[backdrop-filter]:bg-white/55">
               <div className="mx-auto w-full max-w-6xl border-t border-gray-100 px-4 py-4 sm:px-6 lg:px-8">
-                <div className="pointer-events-auto flex items-center justify-between gap-3">
-                  <button
-                    type="button"
-                    disabled={pending || step <= 1}
-                    onClick={() => setStep((s) => Math.max(1, s - 1))}
-                    className="inline-flex h-10 items-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Back
-                  </button>
-                  <div className="flex items-center gap-2">
-                    {step < 3 ? (
-                      <button
-                        type="button"
-                        disabled={pending}
-                        onClick={() => setStep((s) => Math.min(3, s + 1))}
-                        className={`${PRIMARY_ORANGE_CTA} h-10 px-5 text-sm font-semibold disabled:opacity-50`}
-                      >
-                        Next
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={pending}
-                        onClick={() => saveAllSetup()}
-                        className={`${PRIMARY_ORANGE_CTA} h-10 px-5 text-sm font-semibold disabled:opacity-50`}
-                      >
-                        {pending ? "Saving…" : "Save"}
-                      </button>
-                    )}
-                  </div>
+                <div className="pointer-events-auto flex items-center justify-end gap-2">
+                  {tabFromUrl === "general" ? (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => saveGeneral()}
+                      className={`${PRIMARY_ORANGE_CTA} h-10 px-5 text-sm font-semibold disabled:opacity-50`}
+                    >
+                      {pending ? "Saving…" : "Save changes"}
+                    </button>
+                  ) : tabFromUrl === "payroll" ? (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => savePayroll()}
+                      className={`${PRIMARY_ORANGE_CTA} h-10 px-5 text-sm font-semibold disabled:opacity-50`}
+                    >
+                      {pending ? "Saving…" : "Save changes"}
+                    </button>
+                  ) : tabFromUrl === "geolocation" ? (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => saveGeolocation()}
+                      className={`${PRIMARY_ORANGE_CTA} h-10 px-5 text-sm font-semibold disabled:opacity-50`}
+                    >
+                      {pending ? "Saving…" : "Save changes"}
+                    </button>
+                  ) : tabFromUrl === "breaks" ? (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => saveBreaks()}
+                      className={`${PRIMARY_ORANGE_CTA} h-10 px-5 text-sm font-semibold disabled:opacity-50`}
+                    >
+                      {pending ? "Saving…" : "Save changes"}
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </div>

@@ -61,6 +61,9 @@ function clampMonthToBounds(date: Date, start: Date, end: Date): Date {
   return t;
 }
 
+const FALLBACK_START_MONTH = new Date(1900, 0, 1);
+const FALLBACK_END_MONTH = new Date(2100, 11, 31);
+
 /**
  * Single-line "April 2026" with scrollable month/year menus; prev/next month on the sides.
  * Replaces default caption (and we use `hideNavigation` so the duplicate top Nav is gone).
@@ -69,15 +72,21 @@ function TimesheetMonthCaption(props: MonthCaptionProps) {
   /** Strip DayPicker-only props so they are not forwarded to the DOM `<div>`. */
   const {
     calendarMonth,
-    displayIndex: _displayIndex,
+    displayIndex,
     className,
     style,
-    children: _children,
+    children,
     ...divProps
   } = props;
+  void displayIndex;
+  void children;
   const { goToMonth, previousMonth, nextMonth, classNames: cn, dayPickerProps } = useDayPicker();
-  const startMonth = dayPickerProps.startMonth ?? new Date(1900, 0, 1);
-  const endMonth = dayPickerProps.endMonth ?? new Date(2100, 11, 31);
+  const { startMonth, endMonth } = useMemo(() => {
+    return {
+      startMonth: dayPickerProps.startMonth ?? FALLBACK_START_MONTH,
+      endMonth: dayPickerProps.endMonth ?? FALLBACK_END_MONTH,
+    };
+  }, [dayPickerProps.startMonth, dayPickerProps.endMonth]);
 
   const d = calendarMonth.date;
   const year = d.getFullYear();
@@ -298,11 +307,6 @@ export function TimesheetRangePicker({
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    setCalendarMonth(new Date(periodStart.getFullYear(), periodStart.getMonth(), 1));
-  }, [open, periodStart]);
 
   function apply() {
     if (!draft?.from || !draft.to) return;

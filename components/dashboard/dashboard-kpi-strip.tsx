@@ -21,6 +21,8 @@ export type DashboardKpiStripProps = {
   lateClockOuts: number;
   avgWeeklyHours: number;
   totalAttendancePct: number;
+  /** Trend hint for "Present" (e.g. "+2.4% vs yesterday"). */
+  presentTrendText?: string | null;
   /** Shown under Total employees (e.g. location or "All locations") */
   scopeLabel: string;
   hasMetrics: boolean;
@@ -41,34 +43,24 @@ function KpiTile({
 }) {
   const pal = dashboardKpiVariants[variant];
   return (
-    <div className="rounded-lg border border-slate-200 bg-white pl-4 pr-5 pb-2.5 pt-3 shadow-sm sm:pl-5 sm:pr-7 sm:pb-2.5 sm:pt-3.5">
-      <div className="flex items-start gap-3 sm:gap-3.5">
-        <div
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${pal.iconCircle} shadow-sm sm:h-9 sm:w-9`}
-          aria-hidden
-        >
-          <Icon className="h-3.5 w-3.5 text-white sm:h-4 sm:w-4" strokeWidth={2.25} />
-        </div>
-        <div className="min-w-0 flex-1 pt-1 text-right sm:pt-1.5">
-          <p
-            className="text-pretty text-[10px] font-medium leading-snug text-slate-600 sm:text-[11px]"
-            title={label}
-          >
-            {label}
-          </p>
-          <p className="mt-1 text-2xl font-bold tabular-nums leading-none tracking-tight text-slate-900 sm:mt-1.5 sm:text-[1.75rem] md:text-3xl">
-            {value}
-          </p>
-          {sub ? (
-            <p
-              className="mt-1 text-pretty text-[10px] leading-snug text-slate-500 sm:mt-1.5"
-              title={sub}
-            >
-              {sub}
-            </p>
-          ) : null}
-        </div>
+    <div className="group cursor-pointer rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md active:translate-y-0 sm:p-5">
+      <div
+        className={`flex h-9 w-9 items-center justify-center rounded-full ${pal.iconCircle} shadow-sm`}
+        aria-hidden
+      >
+        <Icon className="h-4 w-4 text-white" strokeWidth={2.25} />
       </div>
+      <p className="mt-3 text-[11px] font-semibold leading-snug text-slate-600" title={label}>
+        {label}
+      </p>
+      <p className="mt-1 text-3xl font-bold tabular-nums leading-none tracking-tight text-slate-900">
+        {value}
+      </p>
+      {sub ? (
+        <p className="mt-2 text-[11px] leading-snug text-slate-500" title={sub}>
+          {sub}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -81,9 +73,13 @@ export function DashboardKpiStrip({
   lateClockOuts,
   avgWeeklyHours,
   totalAttendancePct,
+  presentTrendText,
   scopeLabel,
   hasMetrics,
 }: DashboardKpiStripProps) {
+  const scheduled = Math.max(0, Math.floor(scheduledToday));
+  const present = Math.max(0, Math.floor(clockedInNow));
+  const onLeave = Math.max(0, scheduled - present);
   return (
     <section aria-label="Dashboard metrics">
       <div className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-3">
@@ -136,6 +132,10 @@ export function DashboardKpiStrip({
             percent={totalAttendancePct}
             scopeLabel={scopeLabel}
             hasMetrics={hasMetrics}
+            scheduled={scheduled}
+            present={present}
+            onLeave={onLeave}
+            presentTrendText={presentTrendText ?? null}
           />
         </div>
       </div>

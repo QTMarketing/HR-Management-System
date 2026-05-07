@@ -14,6 +14,9 @@ export const SECURITY_AUDIT_ACTIONS = {
   TIME_OFF_REQUEST_SUBMITTED: "time_off_request_submitted",
   TIME_OFF_REQUEST_APPROVED: "time_off_request_approved",
   TIME_OFF_REQUEST_DENIED: "time_off_request_denied",
+  PAY_PERIOD_LOCKED: "pay_period_locked",
+  PAY_PERIOD_UNLOCKED: "pay_period_unlocked",
+  PAYROLL_POLICY_UPDATED: "payroll_policy_updated",
 } as const;
 
 export type SecurityAuditAction =

@@ -13,6 +13,10 @@ import {
 import type { SmartGroupsPayload } from "@/lib/smart-groups/load-data";
 import { PRIMARY_ORANGE_CTA, SECONDARY_ORANGE_PILL } from "@/lib/ui/primary-orange-cta";
 import { EllipsisTd } from "@/components/ui/ellipsis-td";
+import {
+  AssignmentMatrix,
+  type AssignmentMatrixItem,
+} from "@/components/users/assignment-matrix";
 import { ChevronDown, ChevronRight, Search, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -192,11 +196,8 @@ export function SmartGroupsClient({
         </p>
         {suggest010 ? (
           <p className="text-sm text-slate-600">
-            If tables are missing, run{" "}
-            <code className="rounded bg-slate-100 px-1">
-              supabase/migrations/010_smart_groups.sql
-            </code>{" "}
-            in the Supabase SQL editor (after 009).
+            This feature isn’t set up yet. Ask an admin to finish database setup for Smart groups, then
+            refresh this page.
           </p>
         ) : (
           <p className="text-xs text-slate-500">
@@ -212,7 +213,7 @@ export function SmartGroupsClient({
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Smart groups</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Segments and groups backed by Supabase. Assign groups to{" "}
+          Organize employees into groups for scheduling and time tracking. Assign groups to{" "}
           <Link href="/time-clock" className="font-medium text-orange-700 hover:text-orange-900">
             Time Clock
           </Link>{" "}
@@ -537,8 +538,7 @@ export function SmartGroupsClient({
 
       {!canManage ? (
         <p className="text-xs text-slate-500">
-          Editing requires <code className="rounded bg-slate-100 px-1">users.manage</code> when{" "}
-          <code className="rounded bg-slate-100 px-1">RBAC_ENABLED=true</code>.
+          You don’t have permission to edit groups.
         </p>
       ) : null}
     </div>
@@ -730,6 +730,87 @@ function AddGroupModal({
   );
 }
 
+/**
+ * Reusable wrapper around AssignmentMatrix for the two employee-picker modals
+ * (Members & Admins). They share modal chrome + max-height scrolling and
+ * differ only in title, the selected-set, and the server action.
+ */
+function EmployeePickerModal({
+  title,
+  subtitle,
+  employees,
+  selectedIds,
+  emptyMessage,
+  canManage,
+  onToggle,
+  onClose,
+}: {
+  title: string;
+  subtitle?: string;
+  employees: SmartGroupsPayload["employeesForPickers"];
+  selectedIds: Set<string>;
+  emptyMessage: string;
+  canManage: boolean;
+  onToggle: (employeeId: string, next: boolean) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const items = useMemo<AssignmentMatrixItem[]>(
+    () => employees.map((e) => ({ id: e.id, label: e.displayName })),
+    [employees],
+  );
+
+  const handleToggle = async (employeeId: string, next: boolean) => {
+    if (!canManage) return;
+    setBusy(true);
+    try {
+      await onToggle(employeeId, next);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-[1px]"
+      role="presentation"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        className="max-h-[85vh] w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <div>
+            <h2 className="font-semibold text-slate-900">{title}</h2>
+            {subtitle ? <p className="text-xs text-slate-500">{subtitle}</p> : null}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="max-h-[55vh] overflow-y-auto">
+          <AssignmentMatrix
+            items={items}
+            selectedIds={selectedIds}
+            onToggle={handleToggle}
+            canEdit={canManage}
+            busy={busy}
+            emptyMessage={emptyMessage}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MembersModal({
   group,
   employees,
@@ -743,14 +824,10 @@ function MembersModal({
   onClose: () => void;
   onChange: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
-  const memberSet = new Set(group.memberIds);
+  const memberSet = useMemo(() => new Set(group.memberIds), [group.memberIds]);
 
-  const toggle = async (employeeId: string, next: boolean) => {
-    if (!canManage) return;
-    setBusy(true);
+  const handleToggle = async (employeeId: string, next: boolean) => {
     const r = await setSmartGroupMember(group.id, employeeId, next);
-    setBusy(false);
     if (!r.ok) {
       alert(r.error);
       return;
@@ -759,38 +836,16 @@ function MembersModal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-[1px]"
-      role="presentation"
-      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div className="max-h-[85vh] w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl" role="dialog" aria-modal="true">
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-          <div>
-            <h2 className="font-semibold text-slate-900">Members — {group.name}</h2>
-            <p className="text-xs text-slate-500">
-              {group.memberCount} in group · {group.eligibleCount} eligible in scope
-            </p>
-          </div>
-          <button type="button" onClick={onClose} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <ul className="max-h-[55vh] overflow-y-auto divide-y divide-slate-100 px-2 py-2 text-sm">
-          {employees.map((e) => (
-            <li key={e.id} className="flex items-center gap-3 px-2 py-2">
-              <input
-                type="checkbox"
-                checked={memberSet.has(e.id)}
-                disabled={!canManage || busy}
-                onChange={(ev) => toggle(e.id, ev.target.checked)}
-              />
-              <span className="flex-1">{e.displayName}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
+    <EmployeePickerModal
+      title={`Members — ${group.name}`}
+      subtitle={`${group.memberCount} in group · ${group.eligibleCount} eligible in scope`}
+      employees={employees}
+      selectedIds={memberSet}
+      emptyMessage="No employees in scope."
+      canManage={canManage}
+      onToggle={handleToggle}
+      onClose={onClose}
+    />
   );
 }
 
@@ -807,14 +862,10 @@ function AdminsModal({
   onClose: () => void;
   onChange: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
-  const adminSet = new Set(group.adminIds);
+  const adminSet = useMemo(() => new Set(group.adminIds), [group.adminIds]);
 
-  const toggle = async (employeeId: string, next: boolean) => {
-    if (!canManage) return;
-    setBusy(true);
+  const handleToggle = async (employeeId: string, next: boolean) => {
     const r = await setSmartGroupAdmin(group.id, employeeId, next);
-    setBusy(false);
     if (!r.ok) {
       alert(r.error);
       return;
@@ -823,33 +874,15 @@ function AdminsModal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-[1px]"
-      role="presentation"
-      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div className="max-h-[85vh] w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl" role="dialog" aria-modal="true">
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-          <h2 className="font-semibold text-slate-900">Administrators — {group.name}</h2>
-          <button type="button" onClick={onClose} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <ul className="max-h-[55vh] overflow-y-auto divide-y divide-slate-100 px-2 py-2 text-sm">
-          {employees.map((e) => (
-            <li key={e.id} className="flex items-center gap-3 px-2 py-2">
-              <input
-                type="checkbox"
-                checked={adminSet.has(e.id)}
-                disabled={!canManage || busy}
-                onChange={(ev) => toggle(e.id, ev.target.checked)}
-              />
-              <span className="flex-1">{e.displayName}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
+    <EmployeePickerModal
+      title={`Administrators — ${group.name}`}
+      employees={employees}
+      selectedIds={adminSet}
+      emptyMessage="No employees in scope."
+      canManage={canManage}
+      onToggle={handleToggle}
+      onClose={onClose}
+    />
   );
 }
 
@@ -878,18 +911,28 @@ function AssignmentsDropdown({
   onChange: () => void;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const clockParentRef = useRef<HTMLInputElement>(null);
-  const schedParentRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
   const [expandClocks, setExpandClocks] = useState(true);
   const [expandSched, setExpandSched] = useState(true);
 
-  const clockSet = new Set(
-    group.assignments.filter((a) => a.type === "time_clock" && a.timeClockId).map((a) => a.timeClockId!),
+  const clockSet = useMemo(
+    () =>
+      new Set(
+        group.assignments
+          .filter((a) => a.type === "time_clock" && a.timeClockId)
+          .map((a) => a.timeClockId!),
+      ),
+    [group.assignments],
   );
-  const schedSet = new Set(
-    group.assignments.filter((a) => a.type === "schedule" && a.locationId).map((a) => a.locationId!),
+  const schedSet = useMemo(
+    () =>
+      new Set(
+        group.assignments
+          .filter((a) => a.type === "schedule" && a.locationId)
+          .map((a) => a.locationId!),
+      ),
+    [group.assignments],
   );
 
   const q = search.trim().toLowerCase();
@@ -908,22 +951,24 @@ function AssignmentsDropdown({
     [locations, q],
   );
 
+  const clockItems = useMemo<AssignmentMatrixItem[]>(
+    () =>
+      clocksFiltered.map((c) => ({
+        id: c.id,
+        label: `${c.locationName} — ${c.name}`,
+        secondaryLabel: `(${c.locationName})`,
+      })),
+    [clocksFiltered],
+  );
+  const schedItems = useMemo<AssignmentMatrixItem[]>(
+    () => locsFiltered.map((l) => ({ id: l.id, label: l.name })),
+    [locsFiltered],
+  );
+
   const clockSel = clocksFiltered.filter((c) => clockSet.has(c.id)).length;
   const clockTot = clocksFiltered.length;
   const schedSel = locsFiltered.filter((l) => schedSet.has(l.id)).length;
   const schedTot = locsFiltered.length;
-
-  useEffect(() => {
-    const el = clockParentRef.current;
-    if (!el) return;
-    el.indeterminate = clockSel > 0 && clockSel < clockTot;
-  }, [clockSel, clockTot]);
-
-  useEffect(() => {
-    const el = schedParentRef.current;
-    if (!el) return;
-    el.indeterminate = schedSel > 0 && schedSel < schedTot;
-  }, [schedSel, schedTot]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1125,108 +1170,61 @@ function AssignmentsDropdown({
         </div>
 
         <div className="min-h-0 overflow-y-auto overscroll-contain px-2 pb-3 text-sm [scrollbar-gutter:stable]">
-          <div className="mt-1 rounded-md border border-slate-100 bg-slate-50/50">
-            <div className="flex items-center gap-2 px-2 py-2">
-              <input
-                ref={clockParentRef}
-                type="checkbox"
-                disabled={!canManage || busy || clockTot === 0}
-                checked={clockTot > 0 && clockSel === clockTot}
-                onChange={() => toggleAllClocksVisible()}
-                className="rounded-sm border-slate-300 text-orange-600"
-                aria-label="Toggle all visible time clocks"
-              />
-              <span className="min-w-0 flex-1 font-medium text-slate-800">Time Clock</span>
-              <span className="shrink-0 tabular-nums text-xs text-slate-500">
-                {clockTot === 0 ? "0/0" : `${clockSel}/${clockTot}`}
-              </span>
-              <button
-                type="button"
-                className="rounded-md p-1 text-slate-500 hover:bg-white"
-                aria-expanded={expandClocks}
-                onClick={() => setExpandClocks((v) => !v)}
-                aria-label={expandClocks ? "Collapse time clocks" : "Expand time clocks"}
-              >
-                <ChevronRight
-                  className={`h-4 w-4 transition-transform ${expandClocks ? "rotate-90" : ""}`}
-                />
-              </button>
-            </div>
-            {expandClocks ? (
-              <ul className="space-y-0.5 border-t border-slate-100 bg-white px-2 py-2">
-                {clocksFiltered.length === 0 ? (
-                  <li className="px-2 py-1 text-xs text-slate-500">No clocks match search.</li>
-                ) : (
-                  clocksFiltered.map((c) => (
-                    <li key={c.id} className="flex items-start gap-2 py-1">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 rounded-sm border-slate-300 text-orange-600"
-                        checked={clockSet.has(c.id)}
-                        disabled={!canManage || busy}
-                        onChange={(e) => toggleClock(c.id, e.target.checked)}
-                      />
-                      <span className="min-w-0 leading-snug text-slate-700">
-                        <span className="font-medium">
-                          {c.locationName} — {c.name}
-                        </span>{" "}
-                        <span className="text-slate-400">({c.locationName})</span>
-                      </span>
-                    </li>
-                  ))
-                )}
-              </ul>
-            ) : null}
-          </div>
+          <AssignmentMatrix
+            className="mt-1"
+            density="compact"
+            items={clockItems}
+            selectedIds={clockSet}
+            onToggle={(id, next) => toggleClock(id, next)}
+            canEdit={canManage}
+            busy={busy}
+            emptyMessage="No clocks match search."
+            header={{
+              title: "Time Clock",
+              countLabel: clockTot === 0 ? "0/0" : `${clockSel}/${clockTot}`,
+              parentToggle: {
+                checked: clockTot > 0 && clockSel === clockTot,
+                indeterminate: clockSel > 0 && clockSel < clockTot,
+                disabled: !canManage || busy || clockTot === 0,
+                onToggle: () => toggleAllClocksVisible(),
+                ariaLabel: "Toggle all visible time clocks",
+              },
+              collapsible: {
+                expanded: expandClocks,
+                onToggle: () => setExpandClocks((v) => !v),
+                expandedLabel: "Collapse time clocks",
+                collapsedLabel: "Expand time clocks",
+              },
+            }}
+          />
 
-          <div className="mt-2 rounded-md border border-slate-100 bg-slate-50/50">
-            <div className="flex items-center gap-2 px-2 py-2">
-              <input
-                ref={schedParentRef}
-                type="checkbox"
-                disabled={!canManage || busy || schedTot === 0}
-                checked={schedTot > 0 && schedSel === schedTot}
-                onChange={() => toggleAllSchedVisible()}
-                className="rounded-sm border-slate-300 text-orange-600"
-                aria-label="Toggle all visible schedules"
-              />
-              <span className="min-w-0 flex-1 font-medium text-slate-800">Schedule</span>
-              <span className="shrink-0 tabular-nums text-xs text-slate-500">
-                {schedTot === 0 ? "0/0" : `${schedSel}/${schedTot}`}
-              </span>
-              <button
-                type="button"
-                className="rounded-md p-1 text-slate-500 hover:bg-white"
-                aria-expanded={expandSched}
-                onClick={() => setExpandSched((v) => !v)}
-                aria-label={expandSched ? "Collapse schedules" : "Expand schedules"}
-              >
-                <ChevronRight
-                  className={`h-4 w-4 transition-transform ${expandSched ? "rotate-90" : ""}`}
-                />
-              </button>
-            </div>
-            {expandSched ? (
-              <ul className="space-y-0.5 border-t border-slate-100 bg-white px-2 py-2">
-                {locsFiltered.length === 0 ? (
-                  <li className="px-2 py-1 text-xs text-slate-500">No stores match search.</li>
-                ) : (
-                  locsFiltered.map((l) => (
-                    <li key={l.id} className="flex items-center gap-2 py-1">
-                      <input
-                        type="checkbox"
-                        className="rounded-sm border-slate-300 text-orange-600"
-                        checked={schedSet.has(l.id)}
-                        disabled={!canManage || busy}
-                        onChange={(e) => toggleSched(l.id, e.target.checked)}
-                      />
-                      <span className="text-slate-700">{l.name}</span>
-                    </li>
-                  ))
-                )}
-              </ul>
-            ) : null}
-          </div>
+          <AssignmentMatrix
+            className="mt-2"
+            density="compact"
+            items={schedItems}
+            selectedIds={schedSet}
+            onToggle={(id, next) => toggleSched(id, next)}
+            canEdit={canManage}
+            busy={busy}
+            emptyMessage="No stores match search."
+            header={{
+              title: "Schedule",
+              countLabel: schedTot === 0 ? "0/0" : `${schedSel}/${schedTot}`,
+              parentToggle: {
+                checked: schedTot > 0 && schedSel === schedTot,
+                indeterminate: schedSel > 0 && schedSel < schedTot,
+                disabled: !canManage || busy || schedTot === 0,
+                onToggle: () => toggleAllSchedVisible(),
+                ariaLabel: "Toggle all visible schedules",
+              },
+              collapsible: {
+                expanded: expandSched,
+                onToggle: () => setExpandSched((v) => !v),
+                expandedLabel: "Collapse schedules",
+                collapsedLabel: "Expand schedules",
+              },
+            }}
+          />
         </div>
       </div>
     </>

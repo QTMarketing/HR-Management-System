@@ -45,6 +45,8 @@ type Props = {
   requireCategorization?: boolean;
   jobCodes?: { id: string; label: string; colorToken?: string }[];
   locationCodes?: { id: string; label: string; colorToken?: string }[];
+  breaksEnabled?: boolean;
+  allowPaidBreaks?: boolean;
   clockSelfServeDisabled?: boolean;
 };
 
@@ -73,6 +75,8 @@ export function TimeClockPanel({
   requireCategorization = false,
   jobCodes = [],
   locationCodes = [],
+  breaksEnabled = true,
+  allowPaidBreaks = true,
   clockSelfServeDisabled = false,
 }: Props) {
   const router = useRouter();
@@ -125,6 +129,8 @@ export function TimeClockPanel({
         requireCategorization={requireCategorization}
         jobCodes={jobCodes}
         locationCodes={locationCodes}
+        breaksEnabled={breaksEnabled}
+        allowPaidBreaks={allowPaidBreaks}
         disabled={clockSelfServeDisabled}
       />
 
@@ -145,6 +151,9 @@ export function TimeClockPanel({
         title="Latest entry per team member"
         subtitle={`One row per person at this store—their most recent clock-in on this clock, or not clocked in yet · ${clockName}`}
         emptyMessage="No one has clocked in on this clock yet."
+        timeClockId={timeClockId}
+        pendingTimeOffRequests={pendingTimeOffRequests}
+        viewerEmployeeId={viewerEmployeeId}
         canManage={canManage}
         pending={pending}
         showToolbar

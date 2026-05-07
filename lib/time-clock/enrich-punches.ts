@@ -55,6 +55,7 @@ function noPunchPlaceholderRow(e: StoreRosterLike, asOf: Date): EnrichedPunchRow
     clockOutDisplay: "—",
     lateInBadge: null,
     lateOutBadge: null,
+    workedMinutes: null,
     dailyTotalLabel: "—",
     scheduledDurationLabel: null,
     scheduleVarianceMinutes: null,
@@ -156,10 +157,46 @@ export function attachBreakRollups(
   return rows.map((row) => {
     const breaks = breaksByEntryId.get(row.id) ?? [];
     const rollup = rollupBreakMinutes(breaks, asOf, row.clockOutAt);
+    // Rule A: worked time excludes unpaid breaks.
+    const netMinutes =
+      row.workedMinutes != null
+        ? Math.max(0, row.workedMinutes - rollup.unpaidMinutes)
+        : null;
+    const netLabel =
+      netMinutes == null ? row.dailyTotalLabel : formatHoursMinutes(netMinutes);
     return {
       ...row,
       breaksSummaryLabel: formatBreaksSummaryLabel(rollup),
       unpaidBreakMinutes: rollup.unpaidMinutes > 0 ? rollup.unpaidMinutes : null,
+      workedMinutes: netMinutes,
+      dailyTotalLabel: netLabel,
+      scheduleVarianceMinutes:
+        row.scheduleVarianceMinutes != null && row.workedMinutes != null
+          ? row.scheduleVarianceMinutes - rollup.unpaidMinutes
+          : row.scheduleVarianceMinutes,
+      breakLines: breaks.map((b) => {
+        const a = Date.parse(b.started_at);
+        const endIso = b.ended_at ?? null;
+        const capIso = row.clockOutAt ?? null;
+        const end =
+          endIso != null
+            ? endIso
+            : capIso != null
+              ? capIso
+              : asOf.toISOString();
+        const bm =
+          Number.isNaN(a) || !end
+            ? null
+            : Math.max(0, Math.round((Date.parse(end) - a) / 60000));
+        return {
+          id: b.id,
+          startedAt: b.started_at,
+          endedAt: b.ended_at,
+          isPaid: b.is_paid,
+          minutes: bm,
+          label: b.is_paid ? "Paid break" : "Unpaid break",
+        };
+      }),
     };
   });
 }
@@ -227,6 +264,7 @@ export function enrichPunchRows(
       isArchived,
       lateInBadge: lateIn,
       lateOutBadge: lateOut,
+      workedMinutes,
       dailyTotalLabel,
       scheduledDurationLabel,
       scheduleVarianceMinutes,

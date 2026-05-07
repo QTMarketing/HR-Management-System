@@ -21,7 +21,7 @@ export default async function SchedulePage() {
 
   const { data: locRows } = await supabase
     .from("locations")
-    .select("id, name, manager_employee_id")
+    .select("id, name, manager_employee_id, chain_id")
     .neq("status", "archived")
     .order("sort_order", { ascending: true });
 
@@ -37,8 +37,6 @@ export default async function SchedulePage() {
     cookieStore.get("hr_location_id")?.value,
   );
   const scopeAll = isAllLocations(locationId);
-  const locationName =
-    locations.find((l) => l.id === locationId)?.name ?? "Location";
 
   const {
     data: { user },
@@ -50,6 +48,9 @@ export default async function SchedulePage() {
   const canEditByPermission =
     !ctx.enabled || hasPermission(ctx, PERMISSIONS.SCHEDULE_EDIT);
   const ownerCanEditAll = !ctx.enabled || ctx.roleKey === "owner";
+  const chainIdByLocation = new Map(
+    (locRows ?? []).map((r) => [r.id as string, (r as { chain_id?: string | null }).chain_id ?? null] as const),
+  );
   const managerIdByLocation = new Map(
     (locRows ?? []).map((r) => [r.id as string, (r as { manager_employee_id?: string | null }).manager_employee_id ?? null] as const),
   );
@@ -77,12 +78,20 @@ export default async function SchedulePage() {
   }
 
   const stores: ScheduleStoreCardModel[] = visibleLocations.map((l) => {
+    const chainId = chainIdByLocation.get(l.id) ?? null;
+    const storeSide =
+      chainId === "c0000000-0000-4000-8000-000000000001"
+        ? ("east" as const)
+        : chainId === "c0000000-0000-4000-8000-000000000002"
+          ? ("west" as const)
+          : null;
     const managerEmployeeId = managerIdByLocation.get(l.id) ?? null;
     const isStoreManager = ctx.employeeId != null && managerEmployeeId === ctx.employeeId;
     const canEdit = canEditByPermission && (ownerCanEditAll || isStoreManager);
     return {
       locationId: l.id,
       locationName: l.name,
+      storeSide,
       employees: byLoc.get(l.id) ?? [],
       canEdit,
     };
@@ -96,11 +105,7 @@ export default async function SchedulePage() {
         </div>
       }
     >
-      <ScheduleStoresList
-        scopeLabel={scopeAll ? "All locations" : locationName}
-        weekParam={weekParam}
-        stores={stores}
-      />
+      <ScheduleStoresList weekParam={weekParam} stores={stores} />
     </Suspense>
   );
 }

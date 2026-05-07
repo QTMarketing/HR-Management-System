@@ -11,11 +11,15 @@ import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Download } from "
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { adjustTimeEntry } from "@/app/actions/time-entry-adjust";
+import { createManagerShiftEntry } from "@/app/actions/time-entry-manual";
+import { approveTimeOffRequest, denyTimeOffRequest, requestEmployeeTimeOff } from "@/app/actions/time-off-record";
 import { TimeOffRequestSidebar, type StoreEmployeeOption } from "@/components/time-clock/time-off-request-sidebar";
 import { POSITION_ROLE_OPTIONS, type PositionRoleValue } from "@/lib/users/position-options";
+import type { PendingTimeOffRequestRow } from "@/lib/time-clock/pending-time-off";
 import type { EnrichedPunchRow } from "@/lib/time-clock/types";
 import {
   datetimeLocalValueToIso,
+  dateYmdToLocalDayStartIso,
   isoToDatetimeLocalValue,
 } from "@/lib/time-clock/datetime-local";
 import {
@@ -83,10 +87,40 @@ function formatDayHeader(iso: string): string {
   }
 }
 
+function fmtShortDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return "—";
+  }
+}
+
 type Props = {
   open: boolean;
   onClose: () => void;
   rows: EnrichedPunchRow[];
+  /** Context clock id (required for "Add shift"). */
+  timeClockId?: string | null;
+  /** Viewer’s employee id (used for self-service leave requests). */
+  viewerEmployeeId?: string | null;
+  /** PTO balances computed from the ledger (optional). */
+  ptoBalances?: {
+    vacationHours: number;
+    sickHours: number;
+    standardDayHours: number;
+    vacationCashoutEnabled?: boolean;
+    nextVacationCashoutAt?: string | null;
+    nextVacationCashoutHours?: number;
+    lastVacationCashoutAt?: string | null;
+    lastVacationCashoutHours?: number;
+    ytdVacationUsedHours?: number;
+  } | null;
+  ptoBalancesLoading?: boolean;
   /** Enable editing job/position on rows (admins only). */
   canEditJob?: boolean;
   /** Show per-row approve / unapprove for closed punches (managers). */
@@ -103,6 +137,8 @@ type Props = {
   onPunchAdjusted?: () => void;
   /** Approved time off overlapping this timecard’s punch window. */
   timeOffRecords?: TimeOffRecordForUi[];
+  /** Pending employee-submitted time off requests (manager scope; used for inline approvals). */
+  pendingTimeOffRequests?: PendingTimeOffRequestRow[];
 };
 
 type WeekBlock = {
@@ -114,6 +150,10 @@ export function EmployeeTimecardModal({
   open,
   onClose,
   rows,
+  timeClockId = null,
+  viewerEmployeeId = null,
+  ptoBalances = null,
+  ptoBalancesLoading = false,
   canEditJob = false,
   canApprovePunches = false,
   onApproveEntry,
@@ -124,10 +164,50 @@ export function EmployeeTimecardModal({
   locationId,
   onPunchAdjusted,
   timeOffRecords = [],
+  pendingTimeOffRequests = [],
 }: Props) {
   const [stableNowMs] = useState(() => Date.now());
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [timeOffOpen, setTimeOffOpen] = useState(false);
+  const [timeOffDefaultDayYmd, setTimeOffDefaultDayYmd] = useState<string | null>(null);
+  const [timeOffDefaultType, setTimeOffDefaultType] = useState<string | null>(null);
+  const [addShiftOpen, setAddShiftOpen] = useState(false);
+  const [addShiftDayYmd, setAddShiftDayYmd] = useState("");
+  const [addShiftStartHm, setAddShiftStartHm] = useState("09:00");
+  const [addShiftEndHm, setAddShiftEndHm] = useState("17:00");
+  const [addShiftErr, setAddShiftErr] = useState<string | null>(null);
+  const [addShiftPending, setAddShiftPending] = useState(false);
+  const [leaveActionPending, setLeaveActionPending] = useState(false);
+  const [leaveActionErr, setLeaveActionErr] = useState<string | null>(null);
+  const [employeeNotesByEntryId, setEmployeeNotesByEntryId] = useState<Record<string, string>>(
+    {},
+  );
+  const [managerNotesByEntryId, setManagerNotesByEntryId] = useState<Record<string, string>>({});
+  const [leaveHoursByEntryId, setLeaveHoursByEntryId] = useState<Record<string, string>>({});
+  const [leaveTypeByEntryId, setLeaveTypeByEntryId] = useState<
+    Record<string, "Vacation" | "Sick" | "">
+  >({});
+
+  function localDayBoundsMs(ymd: string): { startMs: number; endMs: number } | null {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
+    if (!m) return null;
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    const start = new Date(y, mo - 1, d, 0, 0, 0, 0).getTime();
+    const end = new Date(y, mo - 1, d, 23, 59, 59, 999).getTime();
+    if (Number.isNaN(start) || Number.isNaN(end)) return null;
+    return { startMs: start, endMs: end };
+  }
+
+  function overlapsLocalDay(startIso: string, endIso: string, ymd: string): boolean {
+    const b = localDayBoundsMs(ymd);
+    if (!b) return false;
+    const s = Date.parse(startIso);
+    const e = Date.parse(endIso);
+    if (Number.isNaN(s) || Number.isNaN(e)) return false;
+    return e > b.startMs && s < b.endMs;
+  }
   const addMenuRef = useRef<HTMLDivElement>(null);
   const [adjustTarget, setAdjustTarget] = useState<EnrichedPunchRow | null>(null);
   const [adjustIn, setAdjustIn] = useState("");
@@ -276,6 +356,50 @@ export function EmployeeTimecardModal({
   const totalWorkedM = totalPaid;
   const totalPaidM = totalWorkedM + timeOffPaidM;
 
+  const ptoStrip = (() => {
+    const day = ptoBalances?.standardDayHours ?? 8;
+    const safeDay = Number.isFinite(day) && day > 0 ? day : 8;
+    const vacH = ptoBalances?.vacationHours ?? 0;
+    const sickH = ptoBalances?.sickHours ?? 0;
+    const fmtH = (h: number) => (Number.isFinite(h) ? h : 0);
+    const fmtD = (h: number) => (Number.isFinite(h) ? h / safeDay : 0);
+    return {
+      vacH: fmtH(vacH),
+      vacD: fmtD(vacH),
+      sickH: fmtH(sickH),
+      sickD: fmtD(sickH),
+      dayHours: safeDay,
+    };
+  })();
+
+  const nextCashout =
+    ptoBalances?.vacationCashoutEnabled && !ptoBalancesLoading
+      ? {
+          at: ptoBalances?.nextVacationCashoutAt ?? null,
+          hours:
+            typeof ptoBalances?.nextVacationCashoutHours === "number" &&
+            Number.isFinite(ptoBalances.nextVacationCashoutHours)
+              ? ptoBalances.nextVacationCashoutHours
+              : ptoStrip.vacH,
+        }
+      : null;
+
+  const ptoPayouts = (() => {
+    if (ptoBalancesLoading) return null;
+    const ytdUsed =
+      typeof ptoBalances?.ytdVacationUsedHours === "number" &&
+      Number.isFinite(ptoBalances.ytdVacationUsedHours)
+        ? Math.max(0, ptoBalances.ytdVacationUsedHours)
+        : null;
+    const lastAt = ptoBalances?.lastVacationCashoutAt ?? null;
+    const lastHours =
+      typeof ptoBalances?.lastVacationCashoutHours === "number" &&
+      Number.isFinite(ptoBalances.lastVacationCashoutHours)
+        ? Math.max(0, ptoBalances.lastVacationCashoutHours)
+        : null;
+    return { ytdUsed, lastAt, lastHours };
+  })();
+
   return (
     <div
       className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-900/50"
@@ -340,6 +464,87 @@ export function EmployeeTimecardModal({
                   <ChevronRight className="h-4 w-4" />
                 </button>
               </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <div
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-800"
+                  aria-label="Vacation balance"
+                  title={`Vacation balance · ${ptoStrip.vacH.toFixed(1)}h (${ptoStrip.vacD.toFixed(1)}d @ ${ptoStrip.dayHours}h/day)`}
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" aria-hidden />
+                  Vacation
+                  <span className="tabular-nums text-slate-700">
+                    {ptoBalancesLoading ? "—" : `${ptoStrip.vacH.toFixed(1)}h`}
+                  </span>
+                  <span className="tabular-nums text-slate-500">
+                    {ptoBalancesLoading ? "" : `(${ptoStrip.vacD.toFixed(1)}d)`}
+                  </span>
+                </div>
+                <div
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-800"
+                  aria-label="Sick balance"
+                  title={`Sick balance · ${ptoStrip.sickH.toFixed(1)}h (${ptoStrip.sickD.toFixed(1)}d @ ${ptoStrip.dayHours}h/day)`}
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
+                  Sick
+                  <span className="tabular-nums text-slate-700">
+                    {ptoBalancesLoading ? "—" : `${ptoStrip.sickH.toFixed(1)}h`}
+                  </span>
+                  <span className="tabular-nums text-slate-500">
+                    {ptoBalancesLoading ? "" : `(${ptoStrip.sickD.toFixed(1)}d)`}
+                  </span>
+                </div>
+                {nextCashout ? (
+                  <div
+                    className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-[11px] font-semibold text-orange-900"
+                    aria-label="Next vacation cash-out"
+                    title={`Next vacation cash-out (estimate) · ${nextCashout.hours.toFixed(1)}h on ${fmtShortDate(nextCashout.at)}`}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-orange-600" aria-hidden />
+                    Next cash-out
+                    <span className="tabular-nums text-orange-900">
+                      {`${nextCashout.hours.toFixed(1)}h`}
+                    </span>
+                    <span className="tabular-nums text-orange-800/80">
+                      {`(${fmtShortDate(nextCashout.at)})`}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    PTO & payouts
+                  </p>
+                  <p className="mt-1 text-xs font-medium text-slate-700">
+                    Vacation cash-out runs monthly when enabled.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    YTD vacation used
+                  </p>
+                  <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
+                    {ptoBalancesLoading || !ptoPayouts || ptoPayouts.ytdUsed === null
+                      ? "—"
+                      : `${ptoPayouts.ytdUsed.toFixed(1)}h`}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Last cash-out
+                  </p>
+                  <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
+                    {ptoBalancesLoading
+                      ? "—"
+                      : ptoPayouts?.lastAt
+                        ? `${(ptoPayouts.lastHours ?? 0).toFixed(1)}h`
+                        : "—"}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {ptoBalancesLoading ? "" : fmtShortDate(ptoPayouts?.lastAt ?? null)}
+                  </p>
+                </div>
+              </div>
               <Link
                 href={`/users/${first.employeeId}`}
                 className="mt-1 inline-block text-xs font-medium text-slate-600 underline decoration-slate-300 underline-offset-2 hover:text-slate-900"
@@ -372,13 +577,17 @@ export function EmployeeTimecardModal({
                       className="block w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50"
                       onClick={() => {
                         setAddMenuOpen(false);
+                        const today = new Date();
+                        const y = today.getFullYear();
+                        const m = String(today.getMonth() + 1).padStart(2, "0");
+                        const d = String(today.getDate()).padStart(2, "0");
+                        setAddShiftDayYmd(`${y}-${m}-${d}`);
+                        setAddShiftErr(null);
+                        setAddShiftOpen(true);
                       }}
-                      title="Create shifts from the Schedule module (coming soon)"
+                      title="Add a shift entry to the timesheet"
                     >
                       Add shift
-                      <span className="mt-0.5 block text-[10px] font-normal text-slate-400">
-                        Opens schedule builder when available
-                      </span>
                     </button>
                     <button
                       type="button"
@@ -386,6 +595,12 @@ export function EmployeeTimecardModal({
                       className="block w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50"
                       onClick={() => {
                         setAddMenuOpen(false);
+                        const today = new Date();
+                        const y = today.getFullYear();
+                        const m = String(today.getMonth() + 1).padStart(2, "0");
+                        const d = String(today.getDate()).padStart(2, "0");
+                        setTimeOffDefaultDayYmd(`${y}-${m}-${d}`);
+                        setTimeOffDefaultType("PTO");
                         setTimeOffOpen(true);
                       }}
                     >
@@ -420,7 +635,7 @@ export function EmployeeTimecardModal({
             {canApprovePunches && pendingApprovalCount > 0 ? (
               <span
                 className="max-w-[14rem] text-right text-xs leading-snug text-slate-600"
-                title="Managers mark completed clock-outs as reviewed before payroll when your org uses that workflow"
+                    title="Managers can mark completed shifts as reviewed before payroll when your company uses that workflow"
               >
                 <span className="font-semibold text-sky-800">{pendingApprovalCount}</span>{" "}
                 {pendingApprovalCount === 1 ? "entry needs" : "entries need"} review — use the Approval
@@ -430,73 +645,78 @@ export function EmployeeTimecardModal({
           </div>
         </div>
 
-        {/* Summary metrics row (MVP: keep only essential totals) */}
+        {/* Exact Top Header Layout (Connecteam-style math) */}
         <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-4 text-sm leading-relaxed">
-          <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-4">
-            <span>
-              <span className="font-bold tabular-nums text-slate-900">{formatHoursMinutes(totalWorkedM)}</span>{" "}
-              <span className="text-slate-500">Worked</span>
-            </span>
-            <span>
-              <span className="font-semibold tabular-nums text-slate-800">
+          <div className="flex flex-col gap-2">
+            <div className="text-sm">
+              <span className="font-bold tabular-nums text-slate-900">
+                {formatHoursMinutes(totalWorkedM)}
+              </span>{" "}
+              <span className="text-slate-500">Regular</span>
+              <span className="mx-2 text-slate-300">+</span>
+              <span className="font-semibold tabular-nums text-slate-900">
                 {formatHoursMinutes(timeOffPaidM)}
               </span>{" "}
               <span className="text-slate-500">Paid time off</span>
-            </span>
-            <span>
-              <span className="font-bold tabular-nums text-slate-900">{formatHoursMinutes(totalPaidM)}</span>{" "}
-              <span className="text-slate-500">Total paid hours</span>
-            </span>
-            <span>
-              <span className="font-bold tabular-nums text-slate-900">{workedDays}</span>{" "}
-              <span className="text-slate-500">Worked days</span>
-            </span>
+              <span className="mx-2 text-slate-300">=</span>
+              <span className="font-extrabold tabular-nums text-slate-900">
+                {formatHoursMinutes(totalPaidM)}
+              </span>{" "}
+              <span className="text-slate-500">Total Paid Hours</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+              <span>
+                <span className="font-semibold tabular-nums text-slate-900">{workedDays}</span>{" "}
+                <span className="text-slate-500">Worked Days</span>
+              </span>
+              <span className="text-slate-300">|</span>
+              <span>
+                <span className="font-semibold tabular-nums text-slate-900">
+                  {formatHoursMinutes(meta.timeOffUnpaidM ?? 0)}
+                </span>{" "}
+                <span className="text-slate-500">Unpaid time off</span>
+              </span>
+            </div>
           </div>
         </div>
 
+        {/* CRITICAL: Horizontal scrolling container for 13-column layout */}
         <div className="min-h-0 flex-1 overflow-auto">
-          <table className="w-full min-w-[82rem] table-fixed border-collapse text-left text-sm text-slate-800">
-            <colgroup>
-              <col className="w-[3rem]" />
-              <col className="w-[7.5rem]" />
-              <col className="w-[7rem]" />
-              <col className="w-[14rem] min-w-[14rem]" />
-              <col className="w-[5.5rem]" />
-              <col className="w-[5.5rem]" />
-              <col className="w-[6.5rem]" />
-              <col className="w-[6.5rem]" />
-              <col className="w-[6rem]" />
-              <col className="w-[7rem]" />
-              <col className="w-[6.5rem]" />
-              <col className="w-[8rem]" />
-              <col className="w-[2.75rem]" />
-              <col className="w-[14rem]" />
-              <col className="w-[14rem]" />
-            </colgroup>
-            <thead>
+          <div className="w-full overflow-x-auto">
+            <table className="w-full min-w-[92rem] table-fixed border-collapse text-left text-sm text-slate-800">
+              <colgroup>
+                <col className="w-[8.5rem]" />
+                <col className="w-[7.5rem]" />
+                <col className="w-[14rem]" />
+                <col className="w-[6rem]" />
+                <col className="w-[6rem]" />
+                <col className="w-[7.5rem]" />
+                <col className="w-[7.5rem]" />
+                <col className="w-[7.5rem]" />
+                <col className="w-[7.5rem]" />
+                <col className="w-[9.5rem]" />
+                <col className="w-[10.5rem]" />
+                <col className="w-[16rem]" />
+                <col className="w-[16rem]" />
+              </colgroup>
+              <thead>
               <tr className={theadCls}>
-                <th className={`${thPad} text-center ${cellBorder}`} aria-hidden />
                 <th className={`${thPad} ${cellBorder}`}>Date</th>
                 <th className={`${thPad} ${cellBorder}`}>Type</th>
-                <th className={`${thPad} ${cellBorder}`}>Job</th>
+                <th className={`${thPad} ${cellBorder}`}>Job role</th>
                 <th className={`${thPad} ${cellBorder}`}>Start</th>
                 <th className={`${thPad} ${cellBorder}`}>End</th>
                 <th className={`${thPad} ${cellBorder}`}>Total hours</th>
                 <th className={`${thPad} ${cellBorder}`}>Daily total</th>
-                <th className={`${thPad} ${cellBorder}`}>Scheduled</th>
-                <th className={`${thPad} ${cellBorder}`}>Difference</th>
                 <th className={`${thPad} ${cellBorder}`}>Weekly total</th>
-                <th className={`${thPad} ${cellBorder}`}>Approval</th>
-                <th
-                  className={`${thPad} px-1 text-center [text-orientation:mixed] [writing-mode:vertical-rl] text-[11px] font-bold leading-snug text-slate-500 ${cellBorder}`}
-                >
-                  Shift attachments
-                </th>
-                <th className={`${thPad} ${cellBorder}`}>Employee notes</th>
-                <th className={`${thPad} ${cellBorder}`}>Manager notes</th>
+                <th className={`${thPad} ${cellBorder}`}>Leave Hours</th>
+                <th className={`${thPad} ${cellBorder}`}>Leave Type</th>
+                <th className={`${thPad} ${cellBorder}`}>Manager Approval</th>
+                <th className={`${thPad} ${cellBorder}`}>Employee Notes</th>
+                <th className={`${thPad} ${cellBorder}`}>Manager Notes</th>
               </tr>
-            </thead>
-            <tbody>
+              </thead>
+              <tbody>
               {weekBlocks.map((block) => {
                 const sunday = new Date(block.monday);
                 sunday.setDate(sunday.getDate() + 6);
@@ -505,7 +725,7 @@ export function EmployeeTimecardModal({
                 return (
                   <Fragment key={block.monday.getTime()}>
                     <tr className="bg-slate-200/90">
-                      <td colSpan={15} className="px-5 py-2.5 text-center text-sm font-bold text-slate-800">
+                      <td colSpan={13} className="px-5 py-2.5 text-center text-sm font-bold text-slate-800">
                         {weekLabel}
                       </td>
                     </tr>
@@ -513,31 +733,38 @@ export function EmployeeTimecardModal({
                       const dk = localDayKey(r.clockInAt);
                       const daySum = dk ? (byDay.get(dk) ?? 0) : 0;
                       const isLast = idx === block.rows.length - 1;
-                      const v = r.scheduleVarianceMinutes;
-                      const diffNeg = v != null && v < 0;
-                      const diffZero = v === 0;
+                      const isSelf = Boolean(viewerEmployeeId && viewerEmployeeId === first.employeeId);
+                      const approvedLeave =
+                        dk && timeOffRecords.length > 0
+                          ? timeOffRecords.find(
+                              (rec) =>
+                                rec.employee_id === first.employeeId &&
+                                overlapsLocalDay(rec.start_at, rec.end_at, dk),
+                            ) ?? null
+                          : null;
+                      const pendingLeave =
+                        dk && pendingTimeOffRequests.length > 0
+                          ? pendingTimeOffRequests.find(
+                              (pr) =>
+                                pr.employeeId === first.employeeId &&
+                                overlapsLocalDay(pr.startAt, pr.endAt, dk),
+                            ) ?? null
+                          : null;
+                      const typeLabel =
+                        r.hasRealTimeEntry === false && r.ptoLabel !== "—"
+                          ? "Time off"
+                          : r.shiftTypeLabel === "—"
+                            ? "—"
+                            : "Shift";
                       return (
                         <tr key={r.id} className="bg-white hover:bg-slate-50/90">
-                          <td className={`${cellBorder} ${tdPad} text-center`}>
-                            <input
-                              type="checkbox"
-                              disabled
-                              className="h-4 w-4 rounded border-slate-300 text-slate-500"
-                              aria-label={`Select row ${r.id}`}
-                            />
-                          </td>
                           <td className={`${cellBorder} ${tdPad} whitespace-nowrap font-semibold text-slate-900`}>
                             {formatDayHeader(r.clockInAt)}
                           </td>
                           <td className={`${cellBorder} ${tdPad}`}>
-                            {r.shiftTypeLabel === "—" ? (
-                              <span className="text-slate-400">—</span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-sm font-medium text-slate-800">
-                                <CalendarDays className="h-4 w-4 shrink-0 opacity-75" aria-hidden />
-                                {r.shiftTypeLabel}
-                              </span>
-                            )}
+                            <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-sm font-medium text-slate-800">
+                              {typeLabel}
+                            </span>
                           </td>
                           <td className={`${cellBorder} ${tdPad}`}>
                             <div className="relative w-full min-w-0">
@@ -561,7 +788,7 @@ export function EmployeeTimecardModal({
                                 />
                               </div>
                               <select
-                                aria-label="Job / position"
+                                aria-label="Job role"
                                 disabled={!canEditJob}
                                 value={jobOverrides[r.id] ?? (r.employeeRole as PositionRoleValue)}
                                 onChange={(e) =>
@@ -583,108 +810,191 @@ export function EmployeeTimecardModal({
                           <td className={`${cellBorder} ${tdPad} whitespace-nowrap tabular-nums text-slate-800`}>
                             {formatTimeOnly(r.clockInAt)}
                           </td>
-                          <td
-                            className={`${cellBorder} ${tdPad} whitespace-nowrap tabular-nums text-slate-600`}
-                          >
+                          <td className={`${cellBorder} ${tdPad} whitespace-nowrap tabular-nums text-slate-600`}>
                             {r.clockOutAt ? formatTimeOnly(r.clockOutAt) : "—"}
                           </td>
                           <td className={`${cellBorder} ${tdPad} font-mono text-sm tabular-nums text-slate-800`}>
                             {r.dailyTotalLabel}
                           </td>
-                          <td
-                            className={`${cellBorder} ${tdPad} font-mono text-sm font-bold tabular-nums text-slate-900`}
-                          >
+                          <td className={`${cellBorder} ${tdPad} font-mono text-sm font-bold tabular-nums text-slate-900`}>
                             {formatHoursMinutes(daySum)}
                           </td>
-                          <td
-                            className={`${cellBorder} ${tdPad} font-mono text-sm tabular-nums text-slate-700`}
-                          >
-                            {r.scheduledDurationLabel ?? "—"}
-                          </td>
-                          <td className={`${cellBorder} ${tdPad}`}>
-                            {v == null ? (
-                              <span className="text-slate-400">—</span>
-                            ) : (
-                              <span
-                                className={`inline-flex items-center justify-center rounded px-3 py-1.5 text-sm font-semibold tabular-nums leading-snug ring-1 ${
-                                  diffNeg
-                                    ? "bg-rose-100 text-red-800 ring-rose-200/90"
-                                    : diffZero
-                                      ? "bg-slate-100 text-slate-800 ring-slate-200/80"
-                                      : "bg-rose-50 text-rose-900 ring-rose-200/70"
-                                }`}
-                              >
-                                {formatSignedVarianceMinutes(v)}
-                              </span>
-                            )}
-                          </td>
-                          <td
-                            className={`${cellBorder} ${tdPad} text-right font-mono text-sm font-bold tabular-nums text-slate-900`}
-                          >
+                          <td className={`${cellBorder} ${tdPad} text-right font-mono text-sm font-bold tabular-nums text-slate-900`}>
                             {isLast ? formatHoursMinutes(weekMinutes) : ""}
                           </td>
-                          <td className={`${cellBorder} ${tdPad} align-top`}>
-                            <div className="flex min-w-0 flex-col gap-1.5">
-                              <span
-                                className={`inline-flex w-fit max-w-full items-center justify-center rounded px-2 py-0.5 text-xs font-medium leading-snug ring-1 ${reviewBadgeClass(r.reviewStatus)}`}
-                              >
-                                {r.reviewLabel}
-                              </span>
-                              {canApprovePunches && r.reviewStatus === "pending" && onApproveEntry ? (
-                                <button
-                                  type="button"
-                                  disabled={approvalPending}
-                                  onClick={() => onApproveEntry(r.id)}
-                                  className="w-fit text-left text-xs font-semibold text-emerald-700 hover:text-emerald-800 disabled:opacity-50"
-                                >
-                                  Mark reviewed
-                                </button>
-                              ) : null}
-                              {canApprovePunches && r.reviewStatus === "approved" && onUnapproveEntry ? (
-                                <button
-                                  type="button"
-                                  disabled={approvalPending}
-                                  onClick={() => onUnapproveEntry(r.id)}
-                                  className="w-fit text-left text-xs font-medium text-slate-600 underline decoration-slate-300 underline-offset-2 hover:text-slate-900 disabled:opacity-50"
-                                >
-                                  Needs review
-                                </button>
-                              ) : null}
-                              {canManageTimeEntries &&
-                              locationId &&
-                              !r.isArchived &&
-                              r.hasRealTimeEntry !== false ? (
-                                <button
-                                  type="button"
-                                  disabled={approvalPending}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setAdjustTarget(r);
-                                    setAdjustIn(isoToDatetimeLocalValue(r.clockInAt));
-                                    setAdjustOut(
-                                      r.clockOutAt ? isoToDatetimeLocalValue(r.clockOutAt) : "",
-                                    );
-                                    setAdjustReason("");
-                                    setAdjustErr(null);
-                                  }}
-                                  className="w-fit text-left text-xs font-medium text-sky-700 hover:text-sky-900"
-                                >
-                                  Fix clock-in/out
-                                </button>
-                              ) : null}
-                            </div>
+                          <td className={`${cellBorder} ${tdPad}`}>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder=""
+                              value={leaveHoursByEntryId[r.id] ?? ""}
+                              onChange={(e) =>
+                                setLeaveHoursByEntryId((prev) => ({ ...prev, [r.id]: e.target.value }))
+                              }
+                              className="h-10 w-full rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold tabular-nums text-slate-900"
+                            />
                           </td>
-                          <td className={`${cellBorder} ${tdPad} bg-slate-50/70`} />
-                          <td className={`${cellBorder} ${tdPad} text-sm text-slate-400`}>—</td>
-                          <td className={`${cellBorder} ${tdPad} text-sm text-slate-400`}>—</td>
+                          <td className={`${cellBorder} ${tdPad}`}>
+                            <select
+                              value={leaveTypeByEntryId[r.id] ?? ""}
+                              onChange={(e) =>
+                                setLeaveTypeByEntryId((prev) => ({
+                                  ...prev,
+                                  [r.id]: (e.target.value as "Vacation" | "Sick" | ""),
+                                }))
+                              }
+                              className="h-10 w-full rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-900"
+                            >
+                              <option value="">—</option>
+                              <option value="Vacation">Vacation</option>
+                              <option value="Sick">Sick</option>
+                            </select>
+                          </td>
+                          <td className={`${cellBorder} ${tdPad}`}>
+                            <div className="flex min-w-0 flex-col gap-1.5">
+                              {approvedLeave ? (
+                                <span className="inline-flex w-fit items-center justify-center rounded-md bg-emerald-600 px-2 py-1 text-xs font-semibold text-white">
+                                  Approved
+                                </span>
+                              ) : pendingLeave ? (
+                                <>
+                                  <span className="inline-flex w-fit items-center justify-center rounded-md bg-orange-100 px-2 py-1 text-xs font-semibold text-orange-900 ring-1 ring-orange-200">
+                                    Pending
+                                  </span>
+                                  {canManageTimeEntries && locationId ? (
+                                    <div className="flex flex-wrap gap-2">
+                                      <button
+                                        type="button"
+                                        disabled={leaveActionPending}
+                                        className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                        onClick={async () => {
+                                          setLeaveActionErr(null);
+                                          setLeaveActionPending(true);
+                                          const res = await approveTimeOffRequest(pendingLeave.id, locationId);
+                                          setLeaveActionPending(false);
+                                          if (!res.ok) {
+                                            setLeaveActionErr(res.error);
+                                            return;
+                                          }
+                                          onPunchAdjusted?.();
+                                        }}
+                                      >
+                                        Approve
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={leaveActionPending}
+                                        className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                                        onClick={async () => {
+                                          setLeaveActionErr(null);
+                                          setLeaveActionPending(true);
+                                          const res = await denyTimeOffRequest(pendingLeave.id, locationId);
+                                          setLeaveActionPending(false);
+                                          if (!res.ok) {
+                                            setLeaveActionErr(res.error);
+                                            return;
+                                          }
+                                          onPunchAdjusted?.();
+                                        }}
+                                      >
+                                        Deny
+                                      </button>
+                                    </div>
+                                  ) : null}
+                                </>
+                              ) : isSelf && dk ? (
+                                <button
+                                  type="button"
+                                  disabled={leaveActionPending}
+                                  className="w-fit rounded-md bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white hover:bg-slate-950 disabled:opacity-50"
+                                  onClick={async () => {
+                                    setLeaveActionErr(null);
+                                    const rawH = (leaveHoursByEntryId[r.id] ?? "").trim();
+                                    const hours = rawH ? Number(rawH) : NaN;
+                                    const lt = leaveTypeByEntryId[r.id] ?? "";
+                                    if (!Number.isFinite(hours) || hours <= 0) {
+                                      setLeaveActionErr("Enter leave hours.");
+                                      return;
+                                    }
+                                    if (!lt) {
+                                      setLeaveActionErr("Select leave type.");
+                                      return;
+                                    }
+                                    if (!locationId?.trim()) {
+                                      setLeaveActionErr("Missing store context.");
+                                      return;
+                                    }
+                                    const startIso = dateYmdToLocalDayStartIso(dk);
+                                    if (!startIso) {
+                                      setLeaveActionErr("Invalid date.");
+                                      return;
+                                    }
+                                    const endIso = new Date(Date.parse(startIso) + hours * 3600000).toISOString();
+                                    const type = lt === "Vacation" ? "PTO" : "Sick leave";
+                                    setLeaveActionPending(true);
+                                    const res = await requestEmployeeTimeOff({
+                                      locationId: locationId.trim(),
+                                      employeeId: first.employeeId,
+                                      timeOffType: type,
+                                      allDay: false,
+                                      startAtIso: startIso,
+                                      endAtIso: endIso,
+                                      totalHours: String(hours),
+                                      daysOfLeave: "",
+                                      employeeNotes: (employeeNotesByEntryId[r.id] ?? "").trim() || null,
+                                    });
+                                    setLeaveActionPending(false);
+                                    if (!res.ok) {
+                                      setLeaveActionErr(res.error);
+                                      return;
+                                    }
+                                    onPunchAdjusted?.();
+                                  }}
+                                >
+                                  Request
+                                </button>
+                              ) : (
+                                <span className="text-xs text-slate-400">—</span>
+                              )}
+                            </div>
+                            {leaveActionErr ? (
+                              <p className="mt-1 text-xs text-red-700">{leaveActionErr}</p>
+                            ) : null}
+                          </td>
+                          <td
+                            className={`${cellBorder} ${tdPad} border-l-4 border-slate-300`}
+                          >
+                            <textarea
+                              value={employeeNotesByEntryId[r.id] ?? ""}
+                              onChange={(e) =>
+                                setEmployeeNotesByEntryId((prev) => ({ ...prev, [r.id]: e.target.value }))
+                              }
+                              rows={2}
+                              placeholder="—"
+                              className="w-full resize-none rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800 placeholder:text-slate-400"
+                            />
+                          </td>
+                          <td className={`${cellBorder} ${tdPad}`}>
+                            <textarea
+                              value={managerNotesByEntryId[r.id] ?? ""}
+                              onChange={(e) =>
+                                setManagerNotesByEntryId((prev) => ({ ...prev, [r.id]: e.target.value }))
+                              }
+                              rows={2}
+                              placeholder={canManageTimeEntries ? "Add manager note…" : "—"}
+                              disabled={!canManageTimeEntries}
+                              className="w-full resize-none rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500"
+                            />
+                          </td>
                         </tr>
                       );
                     })}
                   </Fragment>
                 );
               })}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {adjustTarget && locationId ? (
@@ -692,7 +1002,7 @@ export function EmployeeTimecardModal({
             className="fixed inset-0 z-[130] flex items-center justify-center bg-slate-900/50 p-4"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="adjust-punch-title"
+            aria-labelledby="adjust-time-entry-title"
             onClick={() => {
               if (!adjustPending) setAdjustTarget(null);
             }}
@@ -701,7 +1011,7 @@ export function EmployeeTimecardModal({
               className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 id="adjust-punch-title" className="text-lg font-semibold text-slate-900">
+              <h3 id="adjust-time-entry-title" className="text-lg font-semibold text-slate-900">
                 Fix clock-in/out time
               </h3>
               <p className="mt-1 text-xs text-slate-500">
@@ -813,7 +1123,146 @@ export function EmployeeTimecardModal({
           storeEmployees={roster}
           locationId={locationId}
           onSaved={onPunchAdjusted}
+          defaultDayYmd={timeOffDefaultDayYmd}
+          defaultTimeOffType={timeOffDefaultType}
         />
+
+        {addShiftOpen ? (
+          <div
+            className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/50 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-shift-title"
+            onClick={() => {
+              if (!addShiftPending) setAddShiftOpen(false);
+            }}
+          >
+            <div
+              className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 id="add-shift-title" className="text-sm font-semibold text-slate-900">
+                    Add shift
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Adds a closed timesheet entry (manager edit).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  onClick={() => setAddShiftOpen(false)}
+                  disabled={addShiftPending}
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <label className="sm:col-span-1">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Date
+                  </span>
+                  <input
+                    type="date"
+                    value={addShiftDayYmd}
+                    onChange={(e) => setAddShiftDayYmd(e.target.value)}
+                    className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900"
+                    disabled={addShiftPending}
+                  />
+                </label>
+                <label className="sm:col-span-1">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Start
+                  </span>
+                  <input
+                    type="time"
+                    value={addShiftStartHm}
+                    onChange={(e) => setAddShiftStartHm(e.target.value)}
+                    className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900"
+                    disabled={addShiftPending}
+                  />
+                </label>
+                <label className="sm:col-span-1">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    End
+                  </span>
+                  <input
+                    type="time"
+                    value={addShiftEndHm}
+                    onChange={(e) => setAddShiftEndHm(e.target.value)}
+                    className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900"
+                    disabled={addShiftPending}
+                  />
+                </label>
+              </div>
+
+              {addShiftErr ? (
+                <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                  {addShiftErr}
+                </p>
+              ) : null}
+
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-60"
+                  disabled={addShiftPending}
+                  onClick={() => setAddShiftOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-950 disabled:opacity-60"
+                  disabled={addShiftPending}
+                  onClick={async () => {
+                    setAddShiftErr(null);
+                    if (!locationId?.trim()) {
+                      setAddShiftErr("Missing store context.");
+                      return;
+                    }
+                    if (!timeClockId?.trim()) {
+                      setAddShiftErr("Missing time clock context.");
+                      return;
+                    }
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(addShiftDayYmd)) {
+                      setAddShiftErr("Pick a date.");
+                      return;
+                    }
+                    if (!/^\d{2}:\d{2}$/.test(addShiftStartHm) || !/^\d{2}:\d{2}$/.test(addShiftEndHm)) {
+                      setAddShiftErr("Enter start and end times.");
+                      return;
+                    }
+
+                    const startIso = new Date(`${addShiftDayYmd}T${addShiftStartHm}:00`).toISOString();
+                    const endIso = new Date(`${addShiftDayYmd}T${addShiftEndHm}:00`).toISOString();
+
+                    setAddShiftPending(true);
+                    const res = await createManagerShiftEntry({
+                      employeeId: first.employeeId,
+                      locationId,
+                      timeClockId,
+                      startAtIso: startIso,
+                      endAtIso: endIso,
+                    });
+                    setAddShiftPending(false);
+                    if (!res.ok) {
+                      setAddShiftErr(res.error);
+                      return;
+                    }
+                    setAddShiftOpen(false);
+                    onPunchAdjusted?.();
+                  }}
+                >
+                  {addShiftPending ? "Adding…" : "Add"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

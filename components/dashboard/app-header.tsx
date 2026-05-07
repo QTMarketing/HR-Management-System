@@ -1,9 +1,12 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { Menu, Search } from "lucide-react";
 import { AccountMenu } from "@/components/dashboard/account-menu";
 import { LocationSwitcher } from "@/components/dashboard/location-switcher";
-import { NotificationMenu } from "@/components/dashboard/notification-menu";
+import {
+  NotificationBell,
+  type NotificationBellItem,
+} from "@/components/layout/notification-bell";
 import type { LocationRow } from "@/lib/dashboard/resolve-location";
 
 type Props = {
@@ -19,8 +22,11 @@ type Props = {
   profileUnlinked?: boolean;
   /** RBAC: signed in but no employees row for this email */
   rbacProfileHint?: string | null;
-  pendingTimeOffCount?: number;
-  canManageTimeOff?: boolean;
+  /** Per-employee notifications (schedule publish, etc.) for the bell. */
+  notifications?: NotificationBellItem[];
+  unreadNotificationCount?: number;
+  /** Opens the mobile navigation drawer (small screens only). */
+  onMobileNavOpen?: () => void;
 };
 
 export function AppHeader({
@@ -32,8 +38,9 @@ export function AppHeader({
   myProfileHref = null,
   profileUnlinked = false,
   rbacProfileHint = null,
-  pendingTimeOffCount = 0,
-  canManageTimeOff = false,
+  notifications = [],
+  unreadNotificationCount = 0,
+  onMobileNavOpen,
 }: Props) {
   return (
     <header className="sticky top-0 z-20 shrink-0 border-b border-slate-200 bg-white">
@@ -42,7 +49,17 @@ export function AppHeader({
           {rbacProfileHint}
         </div>
       ) : null}
-      <div className="mx-auto flex h-16 w-full max-w-[1600px] items-center gap-3 px-4 sm:px-6 lg:px-8 sm:gap-4">
+      <div className="mx-auto flex h-16 w-full max-w-[1600px] items-center gap-2 px-4 sm:gap-4 sm:px-6 lg:px-8">
+        {onMobileNavOpen ? (
+          <button
+            type="button"
+            className="shrink-0 rounded-lg border border-slate-200 bg-white p-2 text-slate-800 shadow-sm hover:bg-slate-50 md:hidden"
+            aria-label="Open navigation menu"
+            onClick={onMobileNavOpen}
+          >
+            <Menu className="h-5 w-5" aria-hidden />
+          </button>
+        ) : null}
         <div className="relative min-w-0 flex-1">
           <Search
             className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
@@ -58,9 +75,9 @@ export function AppHeader({
 
         <LocationSwitcher locations={locations} selectedLocationId={selectedLocationId} />
 
-        <NotificationMenu
-          pendingTimeOffCount={pendingTimeOffCount}
-          canManageTimeOff={canManageTimeOff}
+        <NotificationBell
+          initialNotifications={notifications}
+          initialUnreadCount={unreadNotificationCount}
         />
 
         <AccountMenu

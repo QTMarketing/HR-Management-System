@@ -40,12 +40,11 @@ async function anyUnavailabilityOverlap(
   }
 }
 
-/** True if any of `employeeIds` already has a planned shift overlapping [startIso, endIso) at this store. */
+/** True if any of `employeeIds` already has a planned shift overlapping [startIso, endIso) across ANY store. */
 async function anyShiftTimeOverlap(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   input: {
     employeeIds: string[];
-    locationId: string;
     startIso: string;
     endIso: string;
     excludeShiftId?: string;
@@ -53,31 +52,54 @@ async function anyShiftTimeOverlap(
 ): Promise<boolean> {
   if (input.employeeIds.length === 0) return false;
   try {
-    const { data, error } = await supabase
+    // Two narrow existence checks, each capped at 1 row, run in parallel.
+    // (1) Employee is the shift's primary owner.
+    let primaryQ = supabase
       .from("shifts")
-      .select("id, employee_id, shift_assignments(employee_id)")
-      .eq("location_id", input.locationId)
+      .select("id")
+      .in("employee_id", input.employeeIds)
       .lt("shift_start", input.endIso)
-      .gt("shift_end", input.startIso);
-    if (error) return false;
-    const want = new Set(input.employeeIds);
-    for (const row of data ?? []) {
-      const r = row as {
-        id: string;
-        employee_id: string;
-        shift_assignments: { employee_id: string }[] | null;
-      };
-      if (input.excludeShiftId && r.id === input.excludeShiftId) continue;
-      const onShift = new Set<string>();
-      onShift.add(r.employee_id);
-      for (const sa of r.shift_assignments ?? []) {
-        if (sa?.employee_id) onShift.add(sa.employee_id);
-      }
-      for (const eid of want) {
-        if (onShift.has(eid)) return true;
-      }
-    }
+      .gt("shift_end", input.startIso)
+      .limit(1);
+    if (input.excludeShiftId) primaryQ = primaryQ.neq("id", input.excludeShiftId);
+
+    // (2) Employee is a multi-assignment row on a shift in the same window.
+    // `!inner` makes this a real join so we can filter on the parent shift's time window.
+    let assignQ = supabase
+      .from("shift_assignments")
+      .select("shift_id, shifts!inner(id)")
+      .in("employee_id", input.employeeIds)
+      .lt("shifts.shift_start", input.endIso)
+      .gt("shifts.shift_end", input.startIso)
+      .limit(1);
+    if (input.excludeShiftId) assignQ = assignQ.neq("shift_id", input.excludeShiftId);
+
+    const [primary, assign] = await Promise.all([primaryQ, assignQ]);
+    if (!primary.error && (primary.data ?? []).length > 0) return true;
+    if (!assign.error && (assign.data ?? []).length > 0) return true;
     return false;
+  } catch {
+    return false;
+  }
+}
+
+/** True if any of `employeeIds` has an approved time-off record overlapping [startIso, endIso). */
+async function anyApprovedTimeOffOverlap(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  input: { employeeIds: string[]; startIso: string; endIso: string },
+): Promise<boolean> {
+  if (input.employeeIds.length === 0) return false;
+  try {
+    const { data, error } = await supabase
+      .from("time_off_records")
+      .select("id, employee_id")
+      .eq("status", "approved")
+      .in("employee_id", input.employeeIds)
+      .lt("start_at", input.endIso)
+      .gt("end_at", input.startIso)
+      .limit(1);
+    if (error) return false;
+    return (data ?? []).length > 0;
   } catch {
     return false;
   }
@@ -104,33 +126,54 @@ async function anyUnavailabilityBlockOverlap(
   }
 }
 
-async function loadScheduleLocationScope(supabase: Awaited<
-  ReturnType<typeof createSupabaseServerClient>
->) {
+type ScheduleLocationScope = {
+  scopeAll: boolean;
+  resolvedLocationId: string;
+  allowedLocationIds: Set<string>;
+  locations: ReturnType<typeof locationsForSession>;
+  /** Avoid re-querying `locations` for manager checks during mutations. */
+  managerByLocation: Map<string, string | null>;
+};
+
+async function loadScheduleLocationScope(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  cookieStore?: Awaited<ReturnType<typeof cookies>>,
+): Promise<ScheduleLocationScope> {
   const { data: locRows } = await supabase
     .from("locations")
-    .select("id, name")
+    .select("id, name, manager_employee_id")
     .order("sort_order", { ascending: true });
+
+  const managerByLocation = new Map<string, string | null>();
+  for (const r of locRows ?? []) {
+    const id = r.id as string;
+    managerByLocation.set(
+      id,
+      ((r as { manager_employee_id?: string | null }).manager_employee_id ?? null) as string | null,
+    );
+  }
 
   let rawLocations: LocationRow[] = (locRows ?? []).map((r) => ({ id: r.id, name: r.name }));
   if (rawLocations.length === 0) {
     rawLocations = DEMO_LOCATIONS;
   }
   const locations = locationsForSession(rawLocations);
-  const cookieStore = await cookies();
+  const store = cookieStore ?? (await cookies());
   const resolvedId = resolveSelectedLocationId(
     locations,
-    cookieStore.get("hr_location_id")?.value,
+    store.get("hr_location_id")?.value,
   );
   const scopeAll = isAllLocations(resolvedId);
   const allowedLocationIds = new Set(locations.map((l) => l.id));
-  return { scopeAll, resolvedLocationId: resolvedId, allowedLocationIds, locations };
+  return { scopeAll, resolvedLocationId: resolvedId, allowedLocationIds, locations, managerByLocation };
 }
 
 async function assertCanEditScheduleForLocation(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   ctx: Awaited<ReturnType<typeof getRbacContext>>,
   locationId: string,
+  /** When set (including `null`), skip the locations round-trip and use this manager id. */
+  knownManagerEmployeeId?: string | null,
 ): Promise<ScheduleMutationResult | null> {
   if (!ctx.enabled) return null;
   if (!hasPermission(ctx, PERMISSIONS.SCHEDULE_EDIT)) {
@@ -140,16 +183,21 @@ async function assertCanEditScheduleForLocation(
   if (!ctx.employeeId) {
     return { ok: false, error: "Missing employee profile for permission checks." };
   }
-  const { data: loc, error } = await supabase
-    .from("locations")
-    .select("manager_employee_id")
-    .eq("id", locationId)
-    .maybeSingle();
-  if (error || !loc) {
-    return { ok: false, error: "Location not found." };
+  let managerId: string | null;
+  if (knownManagerEmployeeId !== undefined) {
+    managerId = knownManagerEmployeeId;
+  } else {
+    const { data: loc, error } = await supabase
+      .from("locations")
+      .select("manager_employee_id")
+      .eq("id", locationId)
+      .maybeSingle();
+    if (error || !loc) {
+      return { ok: false, error: "Location not found." };
+    }
+    managerId =
+      (loc as { manager_employee_id?: string | null }).manager_employee_id ?? null;
   }
-  const managerId =
-    (loc as { manager_employee_id?: string | null }).manager_employee_id ?? null;
   if (managerId !== ctx.employeeId) {
     return { ok: false, error: "You can only edit schedules for your store." };
   }
@@ -168,27 +216,40 @@ export async function createShift(input: {
   isPublished?: boolean;
 }): Promise<ScheduleMutationResult> {
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const [{ data: authData }, cookieStore] = await Promise.all([
+    supabase.auth.getUser(),
+    cookies(),
+  ]);
+  const user = authData.user;
   const ctx = await getRbacContext(supabase, user);
-  const denied = await assertCanEditScheduleForLocation(supabase, ctx, input.locationId);
+
+  if (!input.jobId?.trim()) {
+    return { ok: false, error: "Job is required." };
+  }
+
+  const [scope, jobRes] = await Promise.all([
+    loadScheduleLocationScope(supabase, cookieStore),
+    supabase
+      .from("schedule_jobs")
+      .select("id, location_id")
+      .eq("id", input.jobId.trim())
+      .maybeSingle(),
+  ]);
+
+  const denied = await assertCanEditScheduleForLocation(
+    supabase,
+    ctx,
+    input.locationId,
+    scope.managerByLocation.get(input.locationId),
+  );
   if (denied) return denied;
 
-  const { scopeAll, resolvedLocationId, allowedLocationIds } =
-    await loadScheduleLocationScope(supabase);
+  const { scopeAll, resolvedLocationId, allowedLocationIds } = scope;
 
   if (!allowedLocationIds.has(input.locationId)) {
     return { ok: false, error: "Invalid location." };
   }
-  if (!input.jobId?.trim()) {
-    return { ok: false, error: "Job is required." };
-  }
-  const { data: job, error: jobErr } = await supabase
-    .from("schedule_jobs")
-    .select("id, location_id")
-    .eq("id", input.jobId)
-    .maybeSingle();
+  const { data: job, error: jobErr } = jobRes;
   if (jobErr || !job) return { ok: false, error: "Job not found." };
   if ((job as { location_id: string }).location_id !== input.locationId) {
     return { ok: false, error: "Job does not belong to this store." };
@@ -211,34 +272,47 @@ export async function createShift(input: {
     return { ok: false, error: "Select at least one employee." };
   }
 
-  const overlapsUnavailability = await anyUnavailabilityOverlap(supabase, {
-    employeeIds: uniqEmployeeIds,
-    locationId: input.locationId,
-    startIso: start.toISOString(),
-    endIso: end.toISOString(),
-  });
+  const startIso = start.toISOString();
+  const endIso = end.toISOString();
+
+  const [overlapsUnavailability, overlapsApprovedTimeOff, overlapsShift, empRes] =
+    await Promise.all([
+      anyUnavailabilityOverlap(supabase, {
+        employeeIds: uniqEmployeeIds,
+        locationId: input.locationId,
+        startIso,
+        endIso,
+      }),
+      anyApprovedTimeOffOverlap(supabase, {
+        employeeIds: uniqEmployeeIds,
+        startIso,
+        endIso,
+      }),
+      anyShiftTimeOverlap(supabase, {
+        employeeIds: uniqEmployeeIds,
+        startIso,
+        endIso,
+      }),
+      supabase.from("employees").select("id, location_id, status").in("id", uniqEmployeeIds),
+    ]);
+
   if (overlapsUnavailability) {
     return { ok: false, error: "One or more selected employees are unavailable during this time." };
   }
-
-  const overlapsShift = await anyShiftTimeOverlap(supabase, {
-    employeeIds: uniqEmployeeIds,
-    locationId: input.locationId,
-    startIso: start.toISOString(),
-    endIso: end.toISOString(),
-  });
+  if (overlapsApprovedTimeOff) {
+    return {
+      ok: false,
+      error: "Cannot schedule: Employee has approved time off during this period.",
+    };
+  }
   if (overlapsShift) {
     return {
       ok: false,
-      error: "One or more selected employees already have another shift overlapping this time.",
+      error: "Cannot schedule: Employee is already scheduled for another shift during this period.",
     };
   }
 
-  const { data: emps, error: empErr } = await supabase
-    .from("employees")
-    .select("id, location_id, status")
-    .in("id", uniqEmployeeIds);
-
+  const { data: emps, error: empErr } = empRes;
   if (empErr) {
     return { ok: false, error: empErr.message };
   }
@@ -259,12 +333,12 @@ export async function createShift(input: {
     .from("shifts")
     .insert({
       employee_id: primaryEmployeeId,
-    location_id: input.locationId,
-    job_id: input.jobId,
-    shift_start: start.toISOString(),
-    shift_end: end.toISOString(),
-    notes: input.notes?.trim() ? input.notes.trim() : null,
-    is_published: input.isPublished !== false,
+      location_id: input.locationId,
+      job_id: input.jobId.trim(),
+      shift_start: startIso,
+      shift_end: endIso,
+      notes: input.notes?.trim() ? input.notes.trim() : null,
+      is_published: input.isPublished !== false,
     })
     .select("id")
     .maybeSingle();
@@ -290,25 +364,30 @@ export async function createShift(input: {
 /** Remove a shift if it is visible under the current location scope. */
 export async function deleteShift(input: { shiftId: string }): Promise<ScheduleMutationResult> {
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const ctx = await getRbacContext(supabase, user);
+  const [{ data: authData }, cookieStore] = await Promise.all([
+    supabase.auth.getUser(),
+    cookies(),
+  ]);
+  const ctx = await getRbacContext(supabase, authData.user);
 
-  const { scopeAll, resolvedLocationId, allowedLocationIds } =
-    await loadScheduleLocationScope(supabase);
+  const [scope, shiftRes] = await Promise.all([
+    loadScheduleLocationScope(supabase, cookieStore),
+    supabase.from("shifts").select("id, location_id").eq("id", input.shiftId).maybeSingle(),
+  ]);
 
-  const { data: shift, error: fetchErr } = await supabase
-    .from("shifts")
-    .select("id, location_id")
-    .eq("id", input.shiftId)
-    .maybeSingle();
+  const { scopeAll, resolvedLocationId, allowedLocationIds } = scope;
 
+  const { data: shift, error: fetchErr } = shiftRes;
   if (fetchErr || !shift) {
     return { ok: false, error: "Shift not found." };
   }
   const locId = (shift as { location_id: string }).location_id;
-  const denied = await assertCanEditScheduleForLocation(supabase, ctx, locId);
+  const denied = await assertCanEditScheduleForLocation(
+    supabase,
+    ctx,
+    locId,
+    scope.managerByLocation.get(locId),
+  );
   if (denied) return denied;
   if (!allowedLocationIds.has(locId)) {
     return { ok: false, error: "Invalid location." };
@@ -339,27 +418,40 @@ export async function updateShift(input: {
   isPublished?: boolean;
 }): Promise<ScheduleMutationResult> {
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const ctx = await getRbacContext(supabase, user);
-  const deniedForTarget = await assertCanEditScheduleForLocation(supabase, ctx, input.locationId);
+  const [{ data: authData }, cookieStore] = await Promise.all([
+    supabase.auth.getUser(),
+    cookies(),
+  ]);
+  const ctx = await getRbacContext(supabase, authData.user);
+
+  if (!input.jobId?.trim()) {
+    return { ok: false, error: "Job is required." };
+  }
+
+  const [scope, jobRes, existingRes] = await Promise.all([
+    loadScheduleLocationScope(supabase, cookieStore),
+    supabase
+      .from("schedule_jobs")
+      .select("id, location_id")
+      .eq("id", input.jobId.trim())
+      .maybeSingle(),
+    supabase.from("shifts").select("id, location_id").eq("id", input.shiftId).maybeSingle(),
+  ]);
+
+  const deniedForTarget = await assertCanEditScheduleForLocation(
+    supabase,
+    ctx,
+    input.locationId,
+    scope.managerByLocation.get(input.locationId),
+  );
   if (deniedForTarget) return deniedForTarget;
 
-  const { scopeAll, resolvedLocationId, allowedLocationIds } =
-    await loadScheduleLocationScope(supabase);
+  const { scopeAll, resolvedLocationId, allowedLocationIds } = scope;
 
   if (!allowedLocationIds.has(input.locationId)) {
     return { ok: false, error: "Invalid location." };
   }
-  if (!input.jobId?.trim()) {
-    return { ok: false, error: "Job is required." };
-  }
-  const { data: job, error: jobErr } = await supabase
-    .from("schedule_jobs")
-    .select("id, location_id")
-    .eq("id", input.jobId)
-    .maybeSingle();
+  const { data: job, error: jobErr } = jobRes;
   if (jobErr || !job) return { ok: false, error: "Job not found." };
   if ((job as { location_id: string }).location_id !== input.locationId) {
     return { ok: false, error: "Job does not belong to this store." };
@@ -368,16 +460,17 @@ export async function updateShift(input: {
     return { ok: false, error: "Location does not match your header scope." };
   }
 
-  const { data: existing, error: existingErr } = await supabase
-    .from("shifts")
-    .select("id, location_id")
-    .eq("id", input.shiftId)
-    .maybeSingle();
+  const { data: existing, error: existingErr } = existingRes;
   if (existingErr || !existing) {
     return { ok: false, error: "Shift not found." };
   }
   const existingLocId = (existing as { location_id: string }).location_id;
-  const deniedForExisting = await assertCanEditScheduleForLocation(supabase, ctx, existingLocId);
+  const deniedForExisting = await assertCanEditScheduleForLocation(
+    supabase,
+    ctx,
+    existingLocId,
+    scope.managerByLocation.get(existingLocId),
+  );
   if (deniedForExisting) return deniedForExisting;
   if (!allowedLocationIds.has(existingLocId)) {
     return { ok: false, error: "Invalid location." };
@@ -400,34 +493,48 @@ export async function updateShift(input: {
     return { ok: false, error: "Select at least one employee." };
   }
 
-  const overlapsUnavailability = await anyUnavailabilityOverlap(supabase, {
-    employeeIds: uniqEmployeeIds,
-    locationId: input.locationId,
-    startIso: start.toISOString(),
-    endIso: end.toISOString(),
-  });
+  const startIso = start.toISOString();
+  const endIso = end.toISOString();
+
+  const [overlapsUnavailability, overlapsApprovedTimeOff, overlapsShift, empRes] =
+    await Promise.all([
+      anyUnavailabilityOverlap(supabase, {
+        employeeIds: uniqEmployeeIds,
+        locationId: input.locationId,
+        startIso,
+        endIso,
+      }),
+      anyApprovedTimeOffOverlap(supabase, {
+        employeeIds: uniqEmployeeIds,
+        startIso,
+        endIso,
+      }),
+      anyShiftTimeOverlap(supabase, {
+        employeeIds: uniqEmployeeIds,
+        startIso,
+        endIso,
+        excludeShiftId: input.shiftId,
+      }),
+      supabase.from("employees").select("id, location_id, status").in("id", uniqEmployeeIds),
+    ]);
+
   if (overlapsUnavailability) {
     return { ok: false, error: "One or more selected employees are unavailable during this time." };
   }
-
-  const overlapsShift = await anyShiftTimeOverlap(supabase, {
-    employeeIds: uniqEmployeeIds,
-    locationId: input.locationId,
-    startIso: start.toISOString(),
-    endIso: end.toISOString(),
-    excludeShiftId: input.shiftId,
-  });
+  if (overlapsApprovedTimeOff) {
+    return {
+      ok: false,
+      error: "Cannot schedule: Employee has approved time off during this period.",
+    };
+  }
   if (overlapsShift) {
     return {
       ok: false,
-      error: "One or more selected employees already have another shift overlapping this time.",
+      error: "Cannot schedule: Employee is already scheduled for another shift during this period.",
     };
   }
 
-  const { data: emps, error: empErr } = await supabase
-    .from("employees")
-    .select("id, location_id, status")
-    .in("id", uniqEmployeeIds);
+  const { data: emps, error: empErr } = empRes;
   if (empErr) {
     return { ok: false, error: empErr.message };
   }
@@ -449,9 +556,9 @@ export async function updateShift(input: {
     .update({
       employee_id: primaryEmployeeId,
       location_id: input.locationId,
-      job_id: input.jobId,
-      shift_start: start.toISOString(),
-      shift_end: end.toISOString(),
+      job_id: input.jobId.trim(),
+      shift_start: startIso,
+      shift_end: endIso,
       notes: input.notes?.trim() ? input.notes.trim() : null,
       ...(typeof input.isPublished === "boolean" ? { is_published: input.isPublished } : {}),
     })
@@ -480,59 +587,270 @@ export async function updateShift(input: {
   return { ok: true };
 }
 
+/** Format the Monday of a week as e.g. "May 4th" — used in publish notifications. */
+function formatWeekOfLabel(monday: Date): string {
+  const day = monday.getDate();
+  const ordinal =
+    day % 100 >= 11 && day % 100 <= 13
+      ? "th"
+      : day % 10 === 1
+        ? "st"
+        : day % 10 === 2
+          ? "nd"
+          : day % 10 === 3
+            ? "rd"
+            : "th";
+  const month = monday.toLocaleString("en-US", { month: "long" });
+  return `${month} ${day}${ordinal}`;
+}
+
 /** Set `is_published = true` for draft shifts in the visible week and location scope. */
 export async function publishDraftShiftsForWeek(
   weekParam: string | undefined,
 ): Promise<PublishScheduleResult> {
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const ctx = await getRbacContext(supabase, user);
+  const [{ data: authData }, cookieStore] = await Promise.all([
+    supabase.auth.getUser(),
+    cookies(),
+  ]);
+  const ctx = await getRbacContext(supabase, authData.user);
   if (ctx.enabled && !hasPermission(ctx, PERMISSIONS.SCHEDULE_EDIT)) {
     return { ok: false, error: "You don’t have permission to publish the schedule." };
   }
 
-  const { data: locRows } = await supabase
-    .from("locations")
-    .select("id, name")
-    .order("sort_order", { ascending: true });
-
-  let rawLocations: LocationRow[] = (locRows ?? []).map((r) => ({ id: r.id, name: r.name }));
-  if (rawLocations.length === 0) {
-    rawLocations = DEMO_LOCATIONS;
-  }
-  const locations = locationsForSession(rawLocations);
-
-  const cookieStore = await cookies();
-  const locationId = resolveSelectedLocationId(
-    locations,
-    cookieStore.get("hr_location_id")?.value,
+  // Resolve scope from cookie (avoid the extra locations round-trip used previously
+  // — `loadScheduleLocationScope` already handles demo fallback + cookie parsing).
+  const { scopeAll, resolvedLocationId: locationId } = await loadScheduleLocationScope(
+    supabase,
+    cookieStore,
   );
-  const scopeAll = isAllLocations(locationId);
 
   const weekMonday = parseWeekMondayParam(weekParam);
   const weekEnd = addDays(weekMonday, 7);
 
+  // Push the update down to Postgres and ask for the affected rows back so we
+  // can fan-out notifications without a second SELECT round trip.
   let q = supabase
     .from("shifts")
     .update({ is_published: true })
     .eq("is_published", false)
     .gte("shift_start", weekMonday.toISOString())
     .lt("shift_start", weekEnd.toISOString());
+  if (!scopeAll) q = q.eq("location_id", locationId);
 
-  if (!scopeAll) {
-    q = q.eq("location_id", locationId);
-  }
-
-  const { error } = await q;
+  const { data: publishedRows, error } = await q.select("id, employee_id");
   if (error) {
     return { ok: false, error: error.message };
+  }
+
+  const published = (publishedRows ?? []) as { id: string; employee_id: string | null }[];
+
+  if (published.length > 0) {
+    // Pull multi-employee assignments + primary employee in parallel; both feed
+    // the same `Set<employeeId>` we hand to the notifications insert.
+    const shiftIds = published.map((s) => s.id);
+    const { data: assignmentRows } = await supabase
+      .from("shift_assignments")
+      .select("employee_id")
+      .in("shift_id", shiftIds);
+
+    const employeeIds = new Set<string>();
+    for (const s of published) {
+      if (s.employee_id) employeeIds.add(s.employee_id);
+    }
+    for (const a of (assignmentRows ?? []) as { employee_id: string }[]) {
+      if (a.employee_id) employeeIds.add(a.employee_id);
+    }
+
+    if (employeeIds.size > 0) {
+      const weekLabel = formatWeekOfLabel(weekMonday);
+      const link = weekParam ? `/schedule/board?week=${encodeURIComponent(weekParam)}` : "/schedule/board";
+      const rows = [...employeeIds].map((employee_id) => ({
+        employee_id,
+        title: "New Schedule Published",
+        message: `Your shifts for the week of ${weekLabel} are now available.`,
+        link,
+      }));
+      // Best-effort: a notifications failure must not roll back the publish.
+      // If the migration hasn't run yet we still want the schedule to ship.
+      const { error: notifyErr } = await supabase.from("notifications").insert(rows);
+      if (notifyErr) {
+        console.error("[schedule.publish] failed to insert notifications", notifyErr.message);
+      }
+    }
   }
 
   revalidatePath("/schedule/board");
   revalidatePath("/schedule");
   return { ok: true };
+}
+
+export type CopyPreviousWeekResult =
+  | { ok: true; copied: number }
+  | { ok: false; error: string };
+
+/** Shift start/end forward by 7 calendar days (same pattern as the board week step). */
+function shiftTimesOneWeekForward(isoStart: string, isoEnd: string): {
+  shift_start: string;
+  shift_end: string;
+} {
+  const a = new Date(isoStart);
+  const b = new Date(isoEnd);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) {
+    return { shift_start: isoStart, shift_end: isoEnd };
+  }
+  return {
+    shift_start: addDays(a, 7).toISOString(),
+    shift_end: addDays(b, 7).toISOString(),
+  };
+}
+
+/**
+ * Duplicate last week’s shifts into the current week as drafts (not published).
+ * Assignments are copied; times move forward exactly one week.
+ */
+export async function copyPreviousWeekShifts(
+  locationId: string,
+  currentWeekMondayIso: string,
+): Promise<CopyPreviousWeekResult> {
+  const supabase = await createSupabaseServerClient();
+  const [{ data: authData }, cookieStore] = await Promise.all([
+    supabase.auth.getUser(),
+    cookies(),
+  ]);
+  const ctx = await getRbacContext(supabase, authData.user);
+
+  const scope = await loadScheduleLocationScope(supabase, cookieStore);
+  const { scopeAll, resolvedLocationId, allowedLocationIds, managerByLocation } = scope;
+
+  if (!locationId?.trim()) {
+    return { ok: false, error: "Store is required." };
+  }
+  if (!allowedLocationIds.has(locationId)) {
+    return { ok: false, error: "Invalid store." };
+  }
+  if (!scopeAll && locationId !== resolvedLocationId) {
+    return { ok: false, error: "Store does not match your current scope." };
+  }
+
+  const denied = await assertCanEditScheduleForLocation(
+    supabase,
+    ctx,
+    locationId,
+    managerByLocation.get(locationId),
+  );
+  if (denied?.ok === false) return denied;
+
+  const currentMonday = parseWeekMondayParam(currentWeekMondayIso);
+  const prevMonday = addDays(currentMonday, -7);
+  const prevWeekEnd = addDays(prevMonday, 7);
+
+  const { data: sourceRows, error: fetchErr } = await supabase
+    .from("shifts")
+    .select(
+      "id, employee_id, location_id, job_id, shift_group_id, shift_start, shift_end, notes, slots_total, notify_badge_count",
+    )
+    .eq("location_id", locationId)
+    .gte("shift_start", prevMonday.toISOString())
+    .lt("shift_start", prevWeekEnd.toISOString())
+    .order("shift_start", { ascending: true });
+
+  if (fetchErr) {
+    return { ok: false, error: fetchErr.message };
+  }
+
+  const rows = (sourceRows ?? []) as {
+    id: string;
+    employee_id: string;
+    location_id: string;
+    job_id: string | null;
+    shift_group_id: string | null;
+    shift_start: string;
+    shift_end: string;
+    notes: string | null;
+    slots_total: number | null;
+    notify_badge_count: number | null;
+  }[];
+
+  if (rows.length === 0) {
+    return { ok: true, copied: 0 };
+  }
+
+  const shiftIds = rows.map((r) => r.id);
+  const { data: assignRows, error: assignFetchErr } = await supabase
+    .from("shift_assignments")
+    .select("shift_id, employee_id")
+    .in("shift_id", shiftIds);
+
+  if (assignFetchErr) {
+    return { ok: false, error: assignFetchErr.message };
+  }
+
+  const byShift = new Map<string, string[]>();
+  for (const a of assignRows ?? []) {
+    const sid = (a as { shift_id: string }).shift_id;
+    const eid = (a as { employee_id: string }).employee_id;
+    if (!byShift.has(sid)) byShift.set(sid, []);
+    byShift.get(sid)!.push(eid);
+  }
+
+  function employeeIdsForShift(row: (typeof rows)[0]): string[] {
+    const fromA = byShift.get(row.id);
+    const raw =
+      fromA && fromA.length > 0 ? fromA : [row.employee_id];
+    return [...new Set(raw)];
+  }
+
+  const inserts = rows.map((r) => {
+    const empIds = employeeIdsForShift(r);
+    const { shift_start, shift_end } = shiftTimesOneWeekForward(r.shift_start, r.shift_end);
+    return {
+      employee_id: empIds[0] ?? r.employee_id,
+      location_id: r.location_id,
+      job_id: r.job_id,
+      shift_group_id: r.shift_group_id,
+      shift_start,
+      shift_end,
+      notes: r.notes,
+      slots_total: r.slots_total ?? 2,
+      notify_badge_count: r.notify_badge_count ?? 1,
+      is_published: false as const,
+    };
+  });
+
+  const { data: inserted, error: insErr } = await supabase
+    .from("shifts")
+    .insert(inserts)
+    .select("id");
+
+  if (insErr) {
+    return { ok: false, error: insErr.message };
+  }
+
+  const newIds = (inserted ?? []) as { id: string }[];
+  if (newIds.length !== rows.length) {
+    return { ok: false, error: "Could not copy all shifts (insert mismatch)." };
+  }
+
+  const assignmentInserts: { shift_id: string; employee_id: string }[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const oldRow = rows[i]!;
+    const newId = newIds[i]!.id;
+    for (const employeeId of employeeIdsForShift(oldRow)) {
+      assignmentInserts.push({ shift_id: newId, employee_id: employeeId });
+    }
+  }
+
+  if (assignmentInserts.length > 0) {
+    const { error: aErr } = await supabase.from("shift_assignments").insert(assignmentInserts);
+    if (aErr) {
+      return { ok: false, error: aErr.message };
+    }
+  }
+
+  revalidatePath("/schedule/board");
+  revalidatePath("/schedule");
+  return { ok: true, copied: rows.length };
 }
 
 export type AutoAssignJobsResult =
@@ -544,26 +862,14 @@ export async function autoAssignJobsForWeek(
   weekParam: string | undefined,
 ): Promise<AutoAssignJobsResult> {
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const ctx = await getRbacContext(supabase, user);
+  const [{ data: authData }, cookieStore] = await Promise.all([
+    supabase.auth.getUser(),
+    cookies(),
+  ]);
+  const ctx = await getRbacContext(supabase, authData.user);
 
-  const { data: locRows } = await supabase
-    .from("locations")
-    .select("id, name")
-    .order("sort_order", { ascending: true });
-
-  let rawLocations: LocationRow[] = (locRows ?? []).map((r) => ({ id: r.id, name: r.name }));
-  if (rawLocations.length === 0) rawLocations = DEMO_LOCATIONS;
-  const locations = locationsForSession(rawLocations);
-
-  const cookieStore = await cookies();
-  const locationId = resolveSelectedLocationId(
-    locations,
-    cookieStore.get("hr_location_id")?.value,
-  );
-  const scopeAll = isAllLocations(locationId);
+  const scope = await loadScheduleLocationScope(supabase, cookieStore);
+  const { scopeAll, resolvedLocationId: locationId } = scope;
 
   const weekMonday = parseWeekMondayParam(weekParam);
   const weekEnd = addDays(weekMonday, 7);
@@ -632,8 +938,13 @@ export async function autoAssignJobsForWeek(
 
   // Enforce per-store manager edit rule: if scoped to one store, require manager/owner.
   if (!scopeAll) {
-    const denied = await assertCanEditScheduleForLocation(supabase, ctx, locationId);
-    if (denied && !denied.ok) return { ok: false, error: denied.error };
+    const denied = await assertCanEditScheduleForLocation(
+      supabase,
+      ctx,
+      locationId,
+      scope.managerByLocation.get(locationId),
+    );
+    if (denied?.ok === false) return denied;
   } else if (ctx.enabled && ctx.roleKey !== "owner") {
     return { ok: false, error: "Switch to a specific store to run this fix." };
   }
@@ -655,39 +966,32 @@ export type SeedDemoWeekResult =
   | { ok: true; inserted: number }
   | { ok: false; error: string };
 
-/** Create demo shifts for the visible week/scope when schedule is empty (demo helper). */
+/** Create sample shifts for the visible week/scope (preview helper). */
 export async function seedDemoShiftsForWeek(
   weekParam: string | undefined,
 ): Promise<SeedDemoWeekResult> {
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const ctx = await getRbacContext(supabase, user);
+  const [{ data: authData }, cookieStore] = await Promise.all([
+    supabase.auth.getUser(),
+    cookies(),
+  ]);
+  const ctx = await getRbacContext(supabase, authData.user);
 
-  const { data: locRows } = await supabase
-    .from("locations")
-    .select("id, name")
-    .order("sort_order", { ascending: true });
+  const scope = await loadScheduleLocationScope(supabase, cookieStore);
+  const { scopeAll, resolvedLocationId: locationId } = scope;
 
-  let rawLocations: LocationRow[] = (locRows ?? []).map((r) => ({ id: r.id, name: r.name }));
-  if (rawLocations.length === 0) rawLocations = DEMO_LOCATIONS;
-  const locations = locationsForSession(rawLocations);
-
-  const cookieStore = await cookies();
-  const locationId = resolveSelectedLocationId(
-    locations,
-    cookieStore.get("hr_location_id")?.value,
-  );
-  const scopeAll = isAllLocations(locationId);
-
-  // For safety: only owners can seed across all locations.
+  // For safety: only owners can generate across all locations.
   if (scopeAll) {
     if (ctx.enabled && ctx.roleKey !== "owner") {
-      return { ok: false, error: "Switch to a specific store to generate demo shifts." };
+      return { ok: false, error: "Switch to a specific store to generate sample shifts." };
     }
   } else {
-    const denied = await assertCanEditScheduleForLocation(supabase, ctx, locationId);
+    const denied = await assertCanEditScheduleForLocation(
+      supabase,
+      ctx,
+      locationId,
+      scope.managerByLocation.get(locationId),
+    );
     if (denied) return denied.ok ? { ok: false, error: "Permission denied." } : denied;
   }
 
@@ -909,11 +1213,27 @@ export async function createUnavailability(input: {
   reason?: string | null;
 }): Promise<UnavailabilityResult> {
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const ctx = await getRbacContext(supabase, user);
-  const denied = await assertCanEditScheduleForLocation(supabase, ctx, input.locationId);
+  const [{ data: authData }, cookieStore] = await Promise.all([
+    supabase.auth.getUser(),
+    cookies(),
+  ]);
+  const ctx = await getRbacContext(supabase, authData.user);
+
+  const [scope, empRes] = await Promise.all([
+    loadScheduleLocationScope(supabase, cookieStore),
+    supabase
+      .from("employees")
+      .select("id, location_id, status")
+      .eq("id", input.employeeId)
+      .maybeSingle(),
+  ]);
+
+  const denied = await assertCanEditScheduleForLocation(
+    supabase,
+    ctx,
+    input.locationId,
+    scope.managerByLocation.get(input.locationId),
+  );
   if (denied) return denied;
 
   const start = new Date(input.startAtIso);
@@ -922,23 +1242,28 @@ export async function createUnavailability(input: {
     return { ok: false, error: "Invalid unavailability times." };
   }
 
-  // Ensure employee belongs to location.
-  const { data: emp, error: empErr } = await supabase
-    .from("employees")
-    .select("id, location_id, status")
-    .eq("id", input.employeeId)
-    .maybeSingle();
+  const { data: emp, error: empErr } = empRes;
   if (empErr || !emp) return { ok: false, error: "Employee not found." };
   const e = emp as { location_id: string; status?: string };
   if (e.status && e.status !== "active") return { ok: false, error: "Employee is not active." };
   if (e.location_id !== input.locationId) return { ok: false, error: "Employee does not belong to this store." };
 
-  const overlapsExistingUnavail = await anyUnavailabilityBlockOverlap(supabase, {
-    employeeId: input.employeeId,
-    locationId: input.locationId,
-    startIso: start.toISOString(),
-    endIso: end.toISOString(),
-  });
+  const startIso = start.toISOString();
+  const endIso = end.toISOString();
+
+  const [overlapsExistingUnavail, overlapsShift] = await Promise.all([
+    anyUnavailabilityBlockOverlap(supabase, {
+      employeeId: input.employeeId,
+      locationId: input.locationId,
+      startIso,
+      endIso,
+    }),
+    anyShiftTimeOverlap(supabase, {
+      employeeIds: [input.employeeId],
+      startIso,
+      endIso,
+    }),
+  ]);
   if (overlapsExistingUnavail) {
     return {
       ok: false,
@@ -946,12 +1271,6 @@ export async function createUnavailability(input: {
     };
   }
 
-  const overlapsShift = await anyShiftTimeOverlap(supabase, {
-    employeeIds: [input.employeeId],
-    locationId: input.locationId,
-    startIso: start.toISOString(),
-    endIso: end.toISOString(),
-  });
   if (overlapsShift) {
     return {
       ok: false,
@@ -966,8 +1285,8 @@ export async function createUnavailability(input: {
     .eq("employee_id", input.employeeId)
     .eq("location_id", input.locationId)
     .eq("time_off_type", "Unavailability")
-    .eq("start_at", start.toISOString())
-    .eq("end_at", end.toISOString())
+    .eq("start_at", startIso)
+    .eq("end_at", endIso)
     .maybeSingle();
 
   let timeOffId: string | null = (existingTor as { id?: string } | null)?.id ?? null;
@@ -1012,20 +1331,31 @@ export async function deleteUnavailability(input: {
   unavailabilityId: string;
 }): Promise<UnavailabilityResult> {
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const ctx = await getRbacContext(supabase, user);
+  const [{ data: authData }, cookieStore] = await Promise.all([
+    supabase.auth.getUser(),
+    cookies(),
+  ]);
+  const ctx = await getRbacContext(supabase, authData.user);
 
-  const { data: row, error: fetchErr } = await supabase
-    .from("employee_unavailability")
-    .select("id, location_id, time_off_record_id")
-    .eq("id", input.unavailabilityId)
-    .maybeSingle();
+  const [scope, rowRes] = await Promise.all([
+    loadScheduleLocationScope(supabase, cookieStore),
+    supabase
+      .from("employee_unavailability")
+      .select("id, location_id, time_off_record_id")
+      .eq("id", input.unavailabilityId)
+      .maybeSingle(),
+  ]);
+
+  const { data: row, error: fetchErr } = rowRes;
   if (fetchErr || !row) return { ok: false, error: "Unavailability not found." };
 
   const locId = (row as { location_id: string }).location_id;
-  const denied = await assertCanEditScheduleForLocation(supabase, ctx, locId);
+  const denied = await assertCanEditScheduleForLocation(
+    supabase,
+    ctx,
+    locId,
+    scope.managerByLocation.get(locId),
+  );
   if (denied) return denied;
 
   const timeOffId = (row as { time_off_record_id?: string | null }).time_off_record_id ?? null;

@@ -12,6 +12,10 @@ export type EmployeeProfilePayload = {
   mobile_phone: string;
   email: string;
   employment_start_date: string;
+  /** Full-time equivalent (e.g. 1.0 full-time, 0.5 half-time). */
+  fte: string;
+  /** Optional target hours per week (informational; used for planning). */
+  standard_hours_per_week: string;
   role: string;
   location_id: string;
   direct_manager_id: string;
@@ -107,6 +111,21 @@ export async function updateEmployeeProfile(
   const birth_date = payload.birth_date.trim() || null;
   const employment_start_date = payload.employment_start_date.trim() || null;
 
+  const fteRaw = payload.fte.trim();
+  const fteParsed = fteRaw ? Number.parseFloat(fteRaw) : 1.0;
+  if (!Number.isFinite(fteParsed) || fteParsed <= 0 || fteParsed > 2) {
+    return { ok: false, error: "FTE must be a number between 0 and 2." };
+  }
+
+  const standardHoursRaw = payload.standard_hours_per_week.trim();
+  const standardHoursParsed = standardHoursRaw ? Number.parseFloat(standardHoursRaw) : null;
+  if (
+    standardHoursParsed !== null &&
+    (!Number.isFinite(standardHoursParsed) || standardHoursParsed < 0)
+  ) {
+    return { ok: false, error: "Standard hours per week must be a non-negative number." };
+  }
+
   const { error } = await supabase
     .from("employees")
     .update({
@@ -122,6 +141,8 @@ export async function updateEmployeeProfile(
       birth_date,
       employment_start_date,
       employee_code,
+      fte: fteParsed,
+      standard_hours_per_week: standardHoursParsed,
     })
     .eq("id", id);
 

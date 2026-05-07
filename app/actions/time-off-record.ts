@@ -259,7 +259,7 @@ export async function approveTimeOffRequest(
 
   const { data: rec, error: fetchErr } = await supabase
     .from("time_off_records")
-    .select("id, employee_id, location_id, status")
+    .select("id, employee_id, location_id, status, time_off_type, all_day, start_at, end_at, total_hours, days_of_leave")
     .eq("id", id)
     .maybeSingle();
 
@@ -268,6 +268,12 @@ export async function approveTimeOffRequest(
     employee_id: string;
     location_id: string;
     status: string;
+    time_off_type?: string;
+    all_day?: boolean;
+    start_at?: string;
+    end_at?: string;
+    total_hours?: number | string | null;
+    days_of_leave?: number | string | null;
   } | null;
   if (!r) return { ok: false, error: "Request not found." };
   if (r.location_id !== locId) {
@@ -275,6 +281,46 @@ export async function approveTimeOffRequest(
   }
   if (r.status !== "pending") {
     return { ok: false, error: "Only pending requests can be approved." };
+  }
+
+  // PTO ledger guard: block approvals that exceed available balance for PTO / Sick leave.
+  if (r.time_off_type === "PTO" || r.time_off_type === "Sick leave") {
+    const { getPtoBalancesForEmployee } = await import("./pto-balances");
+    const bal = await getPtoBalancesForEmployee(r.employee_id);
+    if (bal.ok) {
+      const dayH = bal.standardDayHours > 0 ? bal.standardDayHours : 8;
+      const n = (v: unknown): number | null => {
+        if (typeof v === "number" && Number.isFinite(v)) return v;
+        if (typeof v === "string" && v.trim() !== "") {
+          const m = Number(v);
+          if (Number.isFinite(m)) return m;
+        }
+        return null;
+      };
+      let neededH: number | null = n(r.total_hours);
+      if (neededH == null || neededH <= 0) {
+        const d = n(r.days_of_leave);
+        if (d != null && d > 0) neededH = d * dayH;
+      }
+      if (neededH == null || neededH <= 0) {
+        if (r.all_day) neededH = dayH;
+      }
+      if (neededH == null || neededH <= 0) {
+        const s = r.start_at ? Date.parse(r.start_at) : NaN;
+        const e = r.end_at ? Date.parse(r.end_at) : NaN;
+        if (Number.isFinite(s) && Number.isFinite(e) && e >= s) neededH = (e - s) / 3600000;
+      }
+
+      if (neededH != null && neededH > 0) {
+        const available = r.time_off_type === "PTO" ? bal.vacationHours : bal.sickHours;
+        if (neededH > available + 1e-6) {
+          return {
+            ok: false,
+            error: `Insufficient ${r.time_off_type === "PTO" ? "vacation" : "sick"} balance (${available.toFixed(1)}h available).`,
+          };
+        }
+      }
+    }
   }
 
   const now = new Date().toISOString();

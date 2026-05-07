@@ -1,17 +1,15 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { AppHeader } from "@/components/dashboard/app-header";
-import { AppSidebar } from "@/components/dashboard/app-sidebar";
+import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import type { NotificationBellItem } from "@/components/layout/notification-bell";
 import { displayNameFromUser } from "@/lib/auth/display-name";
 import { locationsForSession } from "@/lib/dashboard/locations-for-session";
 import {
-  isAllLocations,
   resolveSelectedLocationId,
   type LocationRow,
 } from "@/lib/dashboard/resolve-location";
-import { getRbacContext, hasPermission } from "@/lib/rbac/context";
+import { getRbacContext } from "@/lib/rbac/context";
 import { DASHBOARD_NAV, filterNavForRbac } from "@/lib/rbac/nav";
-import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /** Cookie + session + Supabase — must not be statically prerendered at build time. */
@@ -57,21 +55,6 @@ export default async function DashboardLayout({
     cookieStore.get("hr_location_id")?.value,
   );
 
-  let pendingTimeOffCount = 0;
-  const canManageTimeOff = hasPermission(rbac, PERMISSIONS.TIME_CLOCK_MANAGE);
-  if (canManageTimeOff) {
-    const scopeAll = isAllLocations(selectedLocationId);
-    let torQuery = supabase
-      .from("time_off_records")
-      .select("id", { count: "exact", head: true })
-      .eq("status", "pending");
-    if (!scopeAll) {
-      torQuery = torQuery.eq("location_id", selectedLocationId);
-    }
-    const { count } = await torQuery;
-    pendingTimeOffCount = count ?? 0;
-  }
-
   let displayName = displayNameFromUser(user);
   let profileEmployeeId = rbac.employeeId;
   const emailNorm = user?.email?.trim().toLowerCase() ?? "";
@@ -86,12 +69,30 @@ export default async function DashboardLayout({
   const myProfileHref = profileEmployeeId ? `/users/${profileEmployeeId}` : null;
   const profileUnlinked = Boolean(user) && Boolean(emailNorm) && !myProfileHref;
 
+  let notificationItems: NotificationBellItem[] = [];
+  let unreadNotificationCount = 0;
   if (profileEmployeeId) {
-    const { data: empGreet } = await supabase
-      .from("employees")
-      .select("first_name, last_name, full_name")
-      .eq("id", profileEmployeeId)
-      .maybeSingle();
+    // Greeting + notifications can run in parallel — both gated on profileEmployeeId only.
+    const [greetRes, recentRes, unreadCountRes] = await Promise.all([
+      supabase
+        .from("employees")
+        .select("first_name, last_name, full_name")
+        .eq("id", profileEmployeeId)
+        .maybeSingle(),
+      supabase
+        .from("notifications")
+        .select("id, title, message, link, is_read, created_at")
+        .eq("employee_id", profileEmployeeId)
+        .order("created_at", { ascending: false })
+        .limit(20),
+      supabase
+        .from("notifications")
+        .select("id", { count: "exact", head: true })
+        .eq("employee_id", profileEmployeeId)
+        .eq("is_read", false),
+    ]);
+
+    const empGreet = greetRes.data;
     if (empGreet) {
       const er = empGreet as {
         first_name?: string | null;
@@ -104,6 +105,20 @@ export default async function DashboardLayout({
       if (combined) displayName = combined;
       else if (er.full_name?.trim()) displayName = er.full_name.trim();
     }
+
+    if (!recentRes.error && Array.isArray(recentRes.data)) {
+      notificationItems = recentRes.data.map((r) => ({
+        id: (r as { id: string }).id,
+        title: (r as { title: string }).title,
+        message: (r as { message: string }).message,
+        link: ((r as { link?: string | null }).link ?? null) as string | null,
+        is_read: Boolean((r as { is_read?: boolean }).is_read),
+        created_at: (r as { created_at: string }).created_at,
+      }));
+    }
+    if (!unreadCountRes.error) {
+      unreadNotificationCount = unreadCountRes.count ?? 0;
+    }
   }
 
   const rbacProfileHint =
@@ -114,38 +129,27 @@ export default async function DashboardLayout({
   const mvpDemoRibbon = process.env.NEXT_PUBLIC_MVP_DEMO === "true";
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
-      <AppSidebar
-        navItems={navItems}
-        signedIn={Boolean(user)}
-        myProfileHref={myProfileHref}
-        profileUnlinked={profileUnlinked}
-        userEmail={user?.email ?? ""}
-      />
-      <div className="flex min-w-0 flex-1 flex-col">
-        {mvpDemoRibbon ? (
-          <div className="border-b border-amber-500/50 bg-amber-950 px-4 py-1.5 text-center text-[11px] font-semibold tracking-wide text-amber-50">
-            MVP demo build — relaxed RBAC/RLS; not for production or sensitive data
-          </div>
-        ) : null}
-        <AppHeader
-          userEmail={user?.email ?? ""}
-          displayName={displayName}
-          locations={locations}
-          selectedLocationId={selectedLocationId}
-          signedIn={Boolean(user)}
-          myProfileHref={myProfileHref}
-          profileUnlinked={profileUnlinked}
-          rbacProfileHint={rbacProfileHint}
-          pendingTimeOffCount={pendingTimeOffCount}
-          canManageTimeOff={canManageTimeOff}
-        />
-        <main className="flex-1 py-6">
-          <div className="mx-auto w-full max-w-[1600px] px-4 sm:px-6 lg:px-8">
-            {children}
-          </div>
-        </main>
-      </div>
-    </div>
+    <DashboardShell
+      navItems={navItems}
+      signedIn={Boolean(user)}
+      myProfileHref={myProfileHref}
+      profileUnlinked={profileUnlinked}
+      userEmail={user?.email ?? ""}
+      mvpDemoRibbon={mvpDemoRibbon}
+      header={{
+        userEmail: user?.email ?? "",
+        displayName,
+        locations,
+        selectedLocationId,
+        signedIn: Boolean(user),
+        myProfileHref,
+        profileUnlinked,
+        rbacProfileHint,
+        notifications: notificationItems,
+        unreadNotificationCount,
+      }}
+    >
+      {children}
+    </DashboardShell>
   );
 }

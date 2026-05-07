@@ -1,9 +1,19 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, Download, Filter, Plus, Search } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  Download,
+  Filter,
+  Lock,
+  LockOpen,
+  Plus,
+  Search,
+} from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 import { approveTimeEntry, unapproveTimeEntry } from "@/app/actions/time-entry-approval";
+import { lockPayPeriod, unlockPayPeriod } from "@/app/actions/pay-period-lock";
 import { seedSampleTimesheetPunches } from "@/app/actions/seed-time-entries";
 import { EmployeeTimecardModal } from "@/components/time-clock/employee-timecard-modal";
 import type { StoreEmployeeOption } from "@/components/time-clock/time-off-request-sidebar";
@@ -12,6 +22,16 @@ import {
   buildTimesheetPunchesCsv,
   downloadTimesheetCsv,
 } from "@/lib/time-clock/export-timesheet-csv";
+import {
+  calculatePayableHours,
+  DEFAULT_PAYROLL_POLICY,
+  formatGrossPayLabel,
+  summarizePayableHours,
+  type PayableHoursResult,
+  type PayrollPolicy,
+} from "@/lib/payroll/payable-hours";
+import { downloadUnifiedPayrollCsv } from "@/lib/csv/unified-payroll-csv";
+import { generateUnifiedPayrollCsv } from "@/app/actions/payroll-export";
 import { TimesheetRangePicker } from "@/components/time-clock/timesheet-range-picker";
 import {
   enumerateDaysInPeriod,
@@ -21,7 +41,10 @@ import {
   type TimesheetPeriodConfig,
   type TimesheetPeriodKind,
 } from "@/lib/time-clock/timesheet-period";
-import type { TimeOffRecordForUi } from "@/lib/time-clock/time-off-display";
+import {
+  rollupTimeOffForEmployeeInRange,
+  type TimeOffRecordForUi,
+} from "@/lib/time-clock/time-off-display";
 import type { EnrichedPunchRow } from "@/lib/time-clock/types";
 
 type Props = {
@@ -43,6 +66,33 @@ type Props = {
   clockDefaultKind: TimesheetPeriodKind;
   storeEmployees: StoreEmployeeOption[];
   holidays?: { holiday_date: string; name: string; is_paid?: boolean | null; paid_hours?: number | null }[];
+  /**
+   * Track A — Payable hours rollup. Map of `employee_id -> hourly_rate`. `null`
+   * means no wage on file → calculator drops to the marked DEMO fallback and
+   * the UI shows the "DEMO RATE — UPDATE IN PROFILE" badge.
+   */
+  hourlyRatesByEmployee?: Record<string, number | null>;
+  /** Track B — only Owners see the lock/unlock control. */
+  canLockPayPeriods?: boolean;
+  /**
+   * Track B — current lock row for the visible period, or a synthetic open row
+   * when no `pay_periods` row exists yet. `null` when the lookup failed (e.g.
+   * pre-migration); the lock control is hidden in that case.
+   */
+  payPeriodLock?: {
+    id: string;
+    status: "open" | "locked";
+    startDateYmd: string;
+    endDateYmd: string;
+    lockedAt: string | null;
+    lockedByName: string | null;
+  } | null;
+  /**
+   * Track C — active OT policy for this clock's location (resolved server-side
+   * via `payroll_policies`: store override → global default). When omitted,
+   * the calculator uses the FLSA fallback (40h/wk @ 1.5x).
+   */
+  payrollPolicy?: PayrollPolicy;
 };
 
 function dayKeyLocal(d: Date): string {
@@ -82,6 +132,10 @@ export function TimeSheetsPanel({
   clockDefaultKind,
   storeEmployees,
   holidays = [],
+  hourlyRatesByEmployee = {},
+  canLockPayPeriods = false,
+  payPeriodLock = null,
+  payrollPolicy = DEFAULT_PAYROLL_POLICY,
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -93,6 +147,67 @@ export function TimeSheetsPanel({
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [timecardAnchorRow, setTimecardAnchorRow] = useState<EnrichedPunchRow | null>(null);
   const [approvalErr, setApprovalErr] = useState<string | null>(null);
+  const [lockPending, startLockTransition] = useTransition();
+  const [lockErr, setLockErr] = useState<string | null>(null);
+  const [payrollCsvPending, startPayrollCsvTransition] = useTransition();
+  const [payrollCsvErr, setPayrollCsvErr] = useState<string | null>(null);
+
+  const isPeriodLocked = payPeriodLock?.status === "locked";
+
+  function onToggleLock() {
+    if (!payPeriodLock) return;
+    setLockErr(null);
+    startLockTransition(async () => {
+      const args = {
+        timeClockId,
+        startDateYmd: payPeriodLock.startDateYmd,
+        endDateYmd: payPeriodLock.endDateYmd,
+      };
+      const r = isPeriodLocked ? await unlockPayPeriod(args) : await lockPayPeriod(args);
+      if (!r.ok) {
+        setLockErr(r.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  /**
+   * Track C: download the Gusto-ready unified payroll CSV for the visible
+   * period. We POST through a Server Action so RLS, RBAC, and the policy
+   * lookup all stay server-side; the client just saves the returned text.
+   */
+  function onDownloadPayrollCsv() {
+    setPayrollCsvErr(null);
+    startPayrollCsvTransition(async () => {
+      // Use the same local-day YMD as the Track B pay-period lookup so the
+      // server-side query targets the same calendar window the user sees.
+      const ymdLocal = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+      };
+      const startYmd =
+        payPeriodLock?.startDateYmd ?? ymdLocal(new Date(periodStartIso));
+      let endYmd = payPeriodLock?.endDateYmd;
+      if (!endYmd) {
+        const endInclusive = new Date(periodEndExclusiveIso);
+        endInclusive.setDate(endInclusive.getDate() - 1);
+        endYmd = ymdLocal(endInclusive);
+      }
+      const r = await generateUnifiedPayrollCsv({
+        timeClockId,
+        startDateYmd: startYmd,
+        endDateYmd: endYmd,
+      });
+      if (!r.ok) {
+        setPayrollCsvErr(r.error);
+        return;
+      }
+      downloadUnifiedPayrollCsv(r.csv, r.filename);
+    });
+  }
 
   const filteredRows = useMemo(() => {
     if (statusFilter === "all") return rows;
@@ -203,7 +318,6 @@ export function TimeSheetsPanel({
       q.set("anchor", updates.anchor.toISOString());
     }
     router.push(`/time-clock/${timeClockId}?${q.toString()}`);
-    router.refresh();
   }
 
   const byEmployee = useMemo(() => {
@@ -300,6 +414,66 @@ export function TimeSheetsPanel({
     return map;
   }, [filteredEmployees, dayIndexByKey, dayKeys, days.length, holidayByDayKey]);
 
+  /**
+   * Track A rollup: actual worked minutes (net of unpaid breaks), paid PTO
+   * hours overlapping the period, and paid holiday hours auto-credited on
+   * "no logged time" days. Keep these three components separate so the gross-
+   * pay calculation stays auditable.
+   */
+  const payableByEmployeeId = useMemo(() => {
+    const periodStart = bounds.start;
+    const periodEnd = bounds.endExclusive;
+    const map = new Map<string, PayableHoursResult>();
+
+    for (const e of filteredEmployees) {
+      let workedMinutes = 0;
+      for (const r of e.rows) {
+        const m = punchMinutes(r);
+        if (m != null && m > 0) workedMinutes += m;
+      }
+
+      // Holiday auto-credit minutes already merged into minutesForEmployeeByDay.
+      // Subtract worked from that to recover the "holiday-only" portion (no double count).
+      const dayMins = minutesForEmployeeByDay.get(e.employeeId) ?? [];
+      const dayMinsTotal = dayMins.reduce((a, b) => a + b, 0);
+      const paidHolidayMinutes = Math.max(0, dayMinsTotal - workedMinutes);
+      const paidHolidayHours = paidHolidayMinutes / 60;
+
+      const pto = rollupTimeOffForEmployeeInRange(
+        e.employeeId,
+        timeOffRecords,
+        periodStart,
+        periodEnd,
+      );
+      const approvedPtoHours = pto.paidMinutes / 60;
+
+      const rate = hourlyRatesByEmployee[e.employeeId] ?? null;
+      map.set(
+        e.employeeId,
+        calculatePayableHours({
+          workedMinutes,
+          approvedPtoHours,
+          paidHolidayHours,
+          hourlyRate: rate,
+          policy: payrollPolicy,
+        }),
+      );
+    }
+    return map;
+  }, [
+    filteredEmployees,
+    minutesForEmployeeByDay,
+    timeOffRecords,
+    hourlyRatesByEmployee,
+    bounds,
+    payrollPolicy,
+  ]);
+
+  const payableSummary = useMemo(
+    () => summarizePayableHours([...payableByEmployeeId.values()]),
+    [payableByEmployeeId],
+  );
+
   const gridTemplate = `260px repeat(${days.length}, minmax(52px, 1fr))`;
 
   const subtitle =
@@ -320,12 +494,48 @@ export function TimeSheetsPanel({
         </p>
       ) : null}
 
+      {lockErr ? (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
+          {lockErr}
+        </p>
+      ) : null}
+
+      {payrollCsvErr ? (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
+          {payrollCsvErr}
+        </p>
+      ) : null}
+
       <div className="rounded-2xl border border-slate-200/80 bg-white shadow-sm">
         <div className="border-b border-slate-100 px-4 py-4 sm:px-5">
-          <h2 className="text-sm font-semibold text-slate-800">Timesheets</h2>
-          <p className="mt-0.5 text-xs text-slate-500">
-            {subtitle}. Green pill = total worked time that day · scroll horizontally when needed.
-          </p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-800">Timesheets</h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {subtitle}. Green pill = total worked time that day · scroll horizontally when needed.
+              </p>
+            </div>
+            {isPeriodLocked && payPeriodLock ? (
+              <div
+                role="status"
+                className="inline-flex items-start gap-2 rounded-lg border-2 border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-900 shadow-sm"
+              >
+                <Lock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                <div className="leading-snug">
+                  <span className="block uppercase tracking-wide">Pay period locked</span>
+                  <span className="mt-0.5 block font-medium">
+                    Punches in this period are read-only.
+                    {payPeriodLock.lockedByName
+                      ? ` Locked by ${payPeriodLock.lockedByName}`
+                      : " Locked"}
+                    {payPeriodLock.lockedAt
+                      ? ` on ${new Date(payPeriodLock.lockedAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}.`
+                      : "."}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
@@ -457,12 +667,54 @@ export function TimeSheetsPanel({
                 Export Report
               </button>
 
+              <button
+                type="button"
+                onClick={onDownloadPayrollCsv}
+                disabled={payrollCsvPending}
+                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-800 shadow-sm hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Gusto-ready unified payroll CSV: regular vs OT hours, PTO, holiday hours, hourly rate, gross pay, and a flag if any wage is using the demo fallback."
+              >
+                <Download className="h-4 w-4 shrink-0" aria-hidden />
+                {payrollCsvPending ? "Building…" : "Download Payroll CSV"}
+              </button>
+
+              {canLockPayPeriods && payPeriodLock ? (
+                <button
+                  type="button"
+                  onClick={onToggleLock}
+                  disabled={lockPending}
+                  className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded px-3 text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${
+                    isPeriodLocked
+                      ? "border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                      : "border border-rose-300 bg-rose-600 text-white hover:bg-rose-700"
+                  }`}
+                  title={
+                    isPeriodLocked
+                      ? "Unlock this pay period — punches inside will become editable again."
+                      : "Lock this pay period — Owner only. Punches inside become read-only at the database level."
+                  }
+                >
+                  {isPeriodLocked ? (
+                    <LockOpen className="h-4 w-4 shrink-0" aria-hidden />
+                  ) : (
+                    <Lock className="h-4 w-4 shrink-0" aria-hidden />
+                  )}
+                  {lockPending
+                    ? isPeriodLocked
+                      ? "Unlocking…"
+                      : "Locking…"
+                    : isPeriodLocked
+                      ? "Unlock pay period"
+                      : "Lock pay period"}
+                </button>
+              ) : null}
+
               {canArchive ? (
                 <button
                   type="button"
                   disabled={seedPending}
                   className="h-10 shrink-0 rounded bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
-                  title="Insert sample clock-ins for this and last week (demo only)"
+                  title="Insert sample clock-ins for this and last week (preview only)"
                   onClick={() => {
                     setErr(null);
                     setSeedPending(true);
@@ -477,7 +729,7 @@ export function TimeSheetsPanel({
                     });
                   }}
                 >
-                  {seedPending ? "…" : "Sample data"}
+                  {seedPending ? "…" : "Add sample data"}
                 </button>
               ) : null}
             </div>
@@ -551,6 +803,74 @@ export function TimeSheetsPanel({
           ) : null}
         </div>
 
+        {filteredEmployees.length > 0 ? (
+          <div className="border-b border-slate-100 px-4 py-3 sm:px-5">
+            <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Total payable hours
+                  </p>
+                  <p className="mt-0.5 text-lg font-bold tabular-nums text-slate-900">
+                    {payableSummary.totalPayableHours.toFixed(2)} h
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Worked − unpaid breaks + approved PTO + paid holidays
+                  </p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Reg / OT (worked only)
+                  </p>
+                  <p className="mt-0.5 text-lg font-bold tabular-nums text-slate-900">
+                    <span>{payableSummary.regularHours.toFixed(2)}h</span>
+                    <span className="text-slate-300"> · </span>
+                    <span
+                      className={
+                        payableSummary.overtimeHours > 0 ? "text-rose-700" : "text-slate-500"
+                      }
+                    >
+                      OT {payableSummary.overtimeHours.toFixed(2)}h
+                    </span>
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Over 40h/wk = 1.5× ·{" "}
+                    {payableSummary.employeesWithOvertime} employee
+                    {payableSummary.employeesWithOvertime === 1 ? "" : "s"} on OT
+                  </p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Estimated gross pay
+                  </p>
+                  <p className="mt-0.5 text-lg font-bold tabular-nums text-slate-900">
+                    {formatGrossPayLabel(payableSummary.estimatedGrossPay)}
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Reg {formatGrossPayLabel(payableSummary.estimatedRegularPay)} · OT{" "}
+                    {formatGrossPayLabel(payableSummary.estimatedOvertimePay)}
+                  </p>
+                </div>
+              </div>
+              {payableSummary.employeesOnFallbackRate > 0 ? (
+                <div
+                  role="alert"
+                  className="flex items-start gap-2 rounded-lg border-2 border-amber-400 bg-amber-100 px-3 py-2 text-xs font-bold text-amber-900 shadow-sm"
+                >
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                  <div className="leading-snug">
+                    <span className="block uppercase tracking-wide">⚠️ Demo rate in use</span>
+                    <span className="mt-0.5 block font-semibold">
+                      {payableSummary.employeesOnFallbackRate} of {payableSummary.employeeCount}{" "}
+                      employees have no wage on file. Update Profile → Hourly rate before exporting.
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
         {filteredEmployees.length === 0 ? (
           <div className="px-5 py-10 text-center text-sm text-slate-500">
             No team members match this period or search. Try a different date range or clear the search.
@@ -603,6 +923,7 @@ export function TimeSheetsPanel({
                 const mins = minutesForEmployeeByDay.get(e.employeeId) ?? new Array(days.length).fill(0);
                 const totalPeriod = mins.reduce((a, b) => a + b, 0);
                 const canOpenAnyTimecard = e.rows.length > 0;
+                const payable = payableByEmployeeId.get(e.employeeId) ?? null;
                 return (
                   <div
                     key={e.employeeId}
@@ -633,6 +954,55 @@ export function TimeSheetsPanel({
                           {totalPeriod ? `${formatHoursMinutes(totalPeriod)} this period` : "—"}
                         </span>
                       </div>
+                      {payable ? (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+                          <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 font-semibold tabular-nums text-slate-700">
+                            <span className="text-slate-500">Reg</span>
+                            {payable.regularHours.toFixed(2)}h
+                          </span>
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-semibold tabular-nums ${
+                              payable.overtimeHours > 0
+                                ? "border-rose-300 bg-rose-50 text-rose-800"
+                                : "border-slate-200 bg-white text-slate-500"
+                            }`}
+                            title={`Over ${payable.weeklyOtThreshold}h/wk → 1.5× rate`}
+                          >
+                            <span className={payable.overtimeHours > 0 ? "text-rose-600" : "text-slate-400"}>
+                              OT
+                            </span>
+                            {payable.overtimeHours.toFixed(2)}h
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 font-semibold tabular-nums text-slate-700">
+                            <span className="text-slate-500">Payable</span>
+                            {payable.totalPayableHours.toFixed(2)}h
+                          </span>
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-bold tabular-nums shadow-sm ${
+                              payable.isUsingFallbackRate
+                                ? "bg-amber-100 text-amber-900 ring-1 ring-amber-400"
+                                : "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
+                            }`}
+                            title={
+                              payable.overtimeHours > 0
+                                ? `Reg ${formatGrossPayLabel(payable.estimatedRegularPay)} · OT ${formatGrossPayLabel(payable.estimatedOvertimePay)} (1.5× of ${formatGrossPayLabel(payable.hourlyRate)}/hr)`
+                                : `@ ${formatGrossPayLabel(payable.hourlyRate)}/hr × ${payable.totalPayableHours.toFixed(2)}h`
+                            }
+                          >
+                            {formatGrossPayLabel(payable.estimatedGrossPay)}
+                          </span>
+                          {payable.isUsingFallbackRate ? (
+                            <span
+                              className="inline-flex items-center gap-1 rounded-md bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-amber-950 shadow-sm"
+                              role="alert"
+                              aria-label="Demo rate in use — update employee profile"
+                            >
+                              <AlertTriangle className="h-3 w-3" aria-hidden />
+                              Demo rate — update in profile
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </button>
 
                     {mins.map((m, di) => {

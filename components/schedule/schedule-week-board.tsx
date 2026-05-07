@@ -1,16 +1,10 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import {
-  autoAssignJobsForWeek,
-  deleteUnavailability,
-  deleteShift,
-  publishDraftShiftsForWeek,
-  seedDemoShiftsForWeek,
-} from "@/app/actions/schedule";
-import { DayPicker } from "react-day-picker";
+import { autoAssignJobsForWeek, copyPreviousWeekShifts, publishDraftShiftsForWeek } from "@/app/actions/schedule";
 import { formatWeekQueryParam, mondayOfWeekContaining } from "@/lib/schedule/week";
 import {
   AddShiftModal,
@@ -18,6 +12,9 @@ import {
   type ScheduleLocationOption,
 } from "@/components/schedule/add-shift-modal";
 import { AddUnavailabilityModal } from "@/components/schedule/add-unavailability-modal";
+import { ScheduleBoardCalendarPopover } from "@/components/schedule/schedule-board-calendar-popover";
+import { ScheduleCellHoverActions } from "@/components/schedule/schedule-cell-hover-actions";
+import { sameCalendarDay, toYmdLocal } from "@/components/schedule/schedule-board-format";
 import {
   buildDayColumns,
   draftPublishCount,
@@ -26,8 +23,6 @@ import {
   jobRowsForSection,
   type ShiftForBoard,
   sectionTotals,
-  shiftsForCell,
-  shiftsForUserCell,
   uniqueGroupSections,
   weekTotals,
 } from "@/lib/schedule/board-model";
@@ -38,176 +33,37 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Copy,
   Filter,
   Loader2,
-  MinusCircle,
-  MoreHorizontal,
-  Plus,
   Search,
-  Sun,
-  Trash2,
   Users,
+  X,
 } from "lucide-react";
 
-function formatSpan(isoStart: string, isoEnd: string): string {
-  try {
-    const a = new Date(isoStart);
-    const b = new Date(isoEnd);
-    const t1 = a.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
-    const t2 = b.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
-    return `${t1} – ${t2}`;
-  } catch {
-    return "—";
-  }
-}
+const ScheduleBoardListView = dynamic(
+  () =>
+    import("@/components/schedule/schedule-board-list-view").then((m) => ({
+      default: m.ScheduleBoardListView,
+    })),
+  { loading: () => null },
+);
 
-function formatDateShort(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-  } catch {
-    return "—";
-  }
-}
+const ScheduleBoardJobGridRows = dynamic(
+  () =>
+    import("@/components/schedule/schedule-board-job-grid").then((m) => ({
+      default: m.ScheduleBoardJobGridRows,
+    })),
+  { loading: () => null },
+);
 
-function hoursBetweenIso(isoStart: string, isoEnd: string): string {
-  const a = new Date(isoStart).getTime();
-  const b = new Date(isoEnd).getTime();
-  if (Number.isNaN(a) || Number.isNaN(b) || b <= a) return "0:00";
-  const totalMin = Math.round((b - a) / 60000);
-  const hh = Math.floor(totalMin / 60);
-  const mm = totalMin % 60;
-  return `${hh}:${String(mm).padStart(2, "0")}`;
-}
-
-function sameCalendarDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
-type CellHoverActionsProps = {
-  menuKey: string;
-  openMenuKey: string | null;
-  setOpenMenuKey: (k: string | null) => void;
-  onQuickAdd: () => void;
-  onTimeOff: () => void;
-  onUnavailability: () => void;
-  unavailabilityLabel?: string;
-};
-
-function ScheduleCellHoverActions({
-  menuKey,
-  openMenuKey,
-  setOpenMenuKey,
-  onQuickAdd,
-  onTimeOff,
-  onUnavailability,
-  unavailabilityLabel = "Add unavailability",
-}: CellHoverActionsProps) {
-  const open = openMenuKey === menuKey;
-  const rootRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onDoc(e: MouseEvent) {
-      if (!rootRef.current?.contains(e.target as Node)) setOpenMenuKey(null);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpenMenuKey(null);
-    }
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, setOpenMenuKey]);
-
-  return (
-    <div
-      ref={rootRef}
-      data-schedule-cell-menu-root
-      className="pointer-events-none absolute inset-0 z-[2] flex items-center justify-center opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100"
-    >
-      <div className="flex items-center gap-0.5 rounded-full border border-slate-200/90 bg-white/95 p-0.5 shadow-md ring-1 ring-slate-900/5 backdrop-blur-[2px]">
-        <button
-          type="button"
-          className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm hover:bg-blue-700"
-          title="Add shift"
-          onClick={(e) => {
-            e.stopPropagation();
-            setOpenMenuKey(null);
-            onQuickAdd();
-          }}
-        >
-          <Plus className="h-4 w-4" strokeWidth={2.5} aria-hidden />
-        </button>
-        <div className="relative">
-          <button
-            type="button"
-            className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-            title="More options"
-            aria-haspopup="menu"
-            aria-expanded={open}
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpenMenuKey(open ? null : menuKey);
-            }}
-          >
-            <MoreHorizontal className="h-4 w-4" aria-hidden />
-          </button>
-          {open ? (
-            <div
-              role="menu"
-              className="absolute left-1/2 top-[calc(100%+8px)] z-40 min-w-[216px] -translate-x-1/2 rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
-            >
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-slate-800 hover:bg-slate-50"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setOpenMenuKey(null);
-                  onTimeOff();
-                }}
-              >
-                <Sun className="h-4 w-4 shrink-0 text-amber-500" aria-hidden />
-                Add time off
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-slate-800 hover:bg-slate-50"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setOpenMenuKey(null);
-                  onUnavailability();
-                }}
-              >
-                <MinusCircle className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
-                {unavailabilityLabel}
-              </button>
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function toYmdLocal(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function toHmLocal(d: Date): string {
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
+const ScheduleBoardUserGridRows = dynamic(
+  () =>
+    import("@/components/schedule/schedule-board-user-grid").then((m) => ({
+      default: m.ScheduleBoardUserGridRows,
+    })),
+  { loading: () => null },
+);
 
 function localMidnight(d: Date): Date {
   const x = new Date(d);
@@ -320,8 +176,9 @@ export function ScheduleWeekBoard({
   const [publishPending, startPublishTransition] = useTransition();
   const [deletePending, startDeleteTransition] = useTransition();
   const [fixJobsPending, startFixJobsTransition] = useTransition();
-  const [seedPending, startSeedTransition] = useTransition();
+  const [copyPending, startCopyTransition] = useTransition();
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState<boolean>(initialAddOpen && canEditSchedule);
   const [unavailOpen, setUnavailOpen] = useState(false);
@@ -338,6 +195,7 @@ export function ScheduleWeekBoard({
     | null
   >(null);
   const [lastPickedDay, setLastPickedDay] = useState<Date | null>(null);
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"job" | "users" | "list">(() => {
     if (typeof window === "undefined") return "users";
@@ -407,6 +265,11 @@ export function ScheduleWeekBoard({
       };
     }
   }, [calendarOpen]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 200);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   const afterMutation = () => {
     router.replace(`/schedule/board?week=${encodeURIComponent(weekParam)}`);
@@ -755,13 +618,17 @@ export function ScheduleWeekBoard({
             <div className="relative" ref={rangeMenuRef}>
               <button
                 type="button"
-                className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
+                className={`inline-flex h-9 items-center gap-2 rounded-full border px-4 text-xs font-semibold shadow-sm transition focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${
+                  viewRange !== "week"
+                    ? "border-blue-200 bg-blue-50 text-blue-950 hover:bg-blue-100/60"
+                    : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                }`}
                 aria-haspopup="menu"
                 aria-expanded={rangeMenuOpen}
                 onClick={() => setRangeMenuOpen((v) => !v)}
               >
-                {viewRange === "day" ? "Day" : viewRange === "month" ? "Month" : "Week"}{" "}
-                <span className="text-slate-400">▾</span>
+                {viewRange === "day" ? "Day" : viewRange === "month" ? "Month" : "Week"}
+                <ChevronDown className="h-3.5 w-3.5 opacity-60" aria-hidden />
               </button>
               {rangeMenuOpen ? (
                 <div
@@ -813,184 +680,18 @@ export function ScheduleWeekBoard({
             >
               <ChevronLeft className="h-4 w-4" />
             </Link>
-            <div className="relative" ref={calendarRef}>
-              <button
-                type="button"
-                className="flex min-w-[160px] items-center justify-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50"
-                onClick={() => {
-                  setCalendarOpen((v) => {
-                    const next = !v;
-                    if (next) {
-                      setCalendarMonth(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1));
-                    }
-                    return next;
-                  });
-                }}
-                aria-haspopup="dialog"
-                aria-expanded={calendarOpen}
-              >
-                <CalendarDays className="h-4 w-4 text-slate-500" />
-                {rangeLabel}
-              </button>
-              {calendarOpen ? (
-                <div className="absolute left-1/2 top-[calc(100%+10px)] z-30 w-[288px] -translate-x-1/2 rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_20px_50px_-20px_rgba(15,23,42,0.35)]">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                        Calendar
-                      </div>
-                      <div className="text-[13px] font-semibold leading-4 text-slate-900">Jump to date</div>
-                    </div>
-                    <button
-                      type="button"
-                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                      onClick={() => {
-                        const d = new Date();
-                        const params = new URLSearchParams(window.location.search);
-                        params.set("view", viewRange);
-                        if (viewRange === "week") {
-                          const monday = mondayOfWeekContaining(d);
-                          params.set("week", formatWeekQueryParam(monday));
-                          // Keep a stable anchor date so other UI (like toolbar Add) doesn't snap to "today".
-                          params.set(
-                            "date",
-                            `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`,
-                          );
-                        } else {
-                          params.set(
-                            "date",
-                            `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
-                          );
-                          params.delete("week");
-                        }
-                        router.push(`/schedule/board?${params.toString()}`);
-                        setCalendarOpen(false);
-                      }}
-                    >
-                      Today
-                    </button>
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <label className="block">
-                      <span className="sr-only">Month</span>
-                      <div className="relative">
-                        <select
-                          className="h-7 w-full cursor-pointer appearance-none rounded-xl border border-slate-200 bg-white pl-2 pr-7 text-[11px] font-semibold text-slate-800 shadow-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                          value={calendarMonth.getMonth()}
-                          onChange={(e) => {
-                            const m = Number(e.target.value);
-                            if (Number.isNaN(m)) return;
-                            setCalendarMonth(new Date(calendarMonth.getFullYear(), m, 1));
-                          }}
-                        >
-                          {Array.from({ length: 12 }, (_, i) => {
-                            const label = new Date(2000, i, 1).toLocaleString(undefined, {
-                              month: "long",
-                            });
-                            return (
-                              <option key={i} value={i}>
-                                {label}
-                              </option>
-                            );
-                          })}
-                        </select>
-                        <ChevronDown
-                          className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500"
-                          aria-hidden
-                        />
-                      </div>
-                    </label>
-                    <label className="block">
-                      <span className="sr-only">Year</span>
-                      <div className="relative">
-                        <select
-                          className="h-7 w-full cursor-pointer appearance-none rounded-xl border border-slate-200 bg-white pl-2 pr-7 text-[11px] font-semibold text-slate-800 shadow-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                          value={calendarMonth.getFullYear()}
-                          onChange={(e) => {
-                            const y = Number(e.target.value);
-                            if (Number.isNaN(y)) return;
-                            setCalendarMonth(new Date(y, calendarMonth.getMonth(), 1));
-                          }}
-                        >
-                          {Array.from({ length: 9 }, (_, i) => {
-                            const y = today.getFullYear() - 4 + i;
-                            return (
-                              <option key={y} value={y}>
-                                {y}
-                              </option>
-                            );
-                          })}
-                        </select>
-                        <ChevronDown
-                          className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500"
-                          aria-hidden
-                        />
-                      </div>
-                    </label>
-                  </div>
-
-                  <div className="mt-2.5 rounded-xl border border-slate-200 bg-slate-50/60 p-1.5">
-                    <DayPicker
-                      mode="single"
-                      selected={selectedDate}
-                      showOutsideDays
-                      month={calendarMonth}
-                      onMonthChange={(d) => {
-                        setCalendarMonth(new Date(d.getFullYear(), d.getMonth(), 1));
-                      }}
-                      className="w-full"
-                      classNames={{
-                        months: "w-full",
-                        month: "w-full",
-                        month_caption: "flex items-center justify-between px-1.5 py-1",
-                        caption_label: "text-[12px] font-semibold text-slate-900",
-                        nav: "flex items-center gap-1",
-                        button_previous:
-                          "h-6 w-6 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
-                        button_next:
-                          "h-6 w-6 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
-                        month_grid: "w-full border-collapse",
-                        weekdays: "grid grid-cols-7 px-1",
-                        weekday:
-                          "text-[9px] font-semibold uppercase tracking-wide text-slate-500 text-center py-0.5",
-                        week: "grid grid-cols-7 px-1",
-                        day: "py-0 text-center",
-                        day_button:
-                          "mx-auto flex h-7 w-7 items-center justify-center rounded-lg text-[11px] font-semibold text-slate-800 hover:bg-white hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400",
-                        today: "ring-1 ring-blue-200 bg-blue-50 text-blue-900",
-                        selected: "bg-blue-600 text-white hover:bg-blue-600 hover:text-white",
-                        outside: "text-slate-400 opacity-60",
-                        disabled: "text-slate-400 opacity-40",
-                      }}
-                      onSelect={(d) => {
-                        if (!d) return;
-                        const params = new URLSearchParams(window.location.search);
-                        params.set("view", viewRange);
-                        if (viewRange === "week") {
-                          const monday = mondayOfWeekContaining(d);
-                          params.set("week", formatWeekQueryParam(monday));
-                          params.set(
-                            "date",
-                            `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`,
-                          );
-                        } else {
-                          params.set(
-                            "date",
-                            `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
-                          );
-                          params.delete("week");
-                        }
-                        router.push(`/schedule/board?${params.toString()}`);
-                        setCalendarOpen(false);
-                      }}
-                    />
-                  </div>
-
-                  <p className="mt-1.5 text-[10px] text-slate-500">Tip: use month/year to jump.</p>
-                </div>
-              ) : null}
-            </div>
+            <ScheduleBoardCalendarPopover
+              calendarRef={calendarRef}
+              rangeLabel={rangeLabel}
+              calendarOpen={calendarOpen}
+              setCalendarOpen={setCalendarOpen}
+              selectedDate={selectedDate}
+              calendarMonth={calendarMonth}
+              setCalendarMonth={setCalendarMonth}
+              viewRange={viewRange}
+              router={router}
+              today={today}
+            />
             <Link
               href={nextWeekHref}
               className="inline-flex items-center rounded-md border border-slate-200 bg-white p-2 text-slate-700 hover:bg-slate-50"
@@ -1017,7 +718,7 @@ export function ScheduleWeekBoard({
                 type="button"
                 className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50"
                 disabled={fixJobsPending}
-                title="Assign default jobs to shifts missing a job (demo helper)"
+                title="Assign default jobs to shifts missing a job"
                 onClick={() => {
                   startFixJobsTransition(async () => {
                     const r = await autoAssignJobsForWeek(weekParam);
@@ -1060,6 +761,39 @@ export function ScheduleWeekBoard({
             </button>
             <button
               type="button"
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-transparent px-3 py-1.5 text-xs font-medium text-slate-700 shadow-none hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={
+                !canEditSchedule || scopeAll || !defaultLocationId || copyPending
+              }
+              title={
+                scopeAll
+                  ? "Select a single store in the header to copy shifts."
+                  : !canEditSchedule
+                    ? "You don’t have permission to edit the schedule."
+                    : "Copy last week’s shifts into this week as drafts"
+              }
+              onClick={() => {
+                if (!canEditSchedule || scopeAll || !defaultLocationId) return;
+                setCopyError(null);
+                startCopyTransition(async () => {
+                  const r = await copyPreviousWeekShifts(defaultLocationId, weekParam);
+                  if (!r.ok) {
+                    setCopyError(r.error);
+                    return;
+                  }
+                  router.refresh();
+                });
+              }}
+            >
+              {copyPending ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+              ) : (
+                <Copy className="h-3.5 w-3.5 shrink-0 text-slate-500" aria-hidden />
+              )}
+              Copy Last Week
+            </button>
+            <button
+              type="button"
               className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
               disabled={publishN === 0 || publishPending}
               title={publishN === 0 ? "No draft shifts to publish" : "Publish shifts to employees"}
@@ -1087,10 +821,11 @@ export function ScheduleWeekBoard({
         </div>
 
         <div className="space-y-1">
-          <p className="text-[11px] text-slate-500">
-            Scope: <span className="font-medium text-slate-700">{locationLabel}</span>
-            {scopeAll ? " · All locations" : ""}
-          </p>
+          {copyError ? (
+            <p className="text-[11px] font-medium text-red-600" role="alert">
+              {copyError}
+            </p>
+          ) : null}
           {publishError ? (
             <p className="text-[11px] font-medium text-red-600" role="alert">
               {publishError}
@@ -1105,76 +840,7 @@ export function ScheduleWeekBoard({
 
         <div>
         {viewMode === "list" ? (
-          <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2">
-              <div className="text-xs font-semibold text-slate-700">List view</div>
-              <div className="text-xs text-slate-500">{listRows.length} shifts</div>
-            </div>
-            <table className="w-full min-w-[1000px] border-collapse">
-              <thead className="bg-slate-50/80">
-                <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  <th className="border-b border-slate-200 px-3 py-2">Users</th>
-                  <th className="border-b border-slate-200 px-3 py-2">Job</th>
-                  <th className="border-b border-slate-200 px-3 py-2">Date</th>
-                  <th className="border-b border-slate-200 px-3 py-2">Set times</th>
-                  <th className="border-b border-slate-200 px-3 py-2">Shift total</th>
-                  <th className="border-b border-slate-200 px-3 py-2">Status</th>
-                  <th className="border-b border-slate-200 px-3 py-2">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {listRows.map((s) => (
-                  <tr key={s.id} className="text-sm text-slate-800 hover:bg-slate-50">
-                    <td className="border-b border-slate-100 px-3 py-2">
-                      <div className="font-medium">{s.assignedLabel}</div>
-                      {s.assignedEmployeeNames.length > 1 ? (
-                        <div className="mt-0.5 text-[11px] text-slate-500">
-                          {s.assignedEmployeeNames.slice(0, 4).join(", ")}
-                          {s.assignedEmployeeNames.length > 4 ? "…" : ""}
-                        </div>
-                      ) : null}
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-2">
-                      <span
-                        className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1 text-[12px] font-semibold text-slate-800"
-                        title={s.jobName ?? "—"}
-                      >
-                        <span
-                          className="h-2 w-2 rounded-full"
-                          style={{ backgroundColor: s.jobColorHex }}
-                          aria-hidden
-                        />
-                        {s.jobName ?? "—"}
-                      </span>
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-2 text-sm text-slate-700">
-                      {formatDateShort(s.shift_start)}
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">
-                      {formatSpan(s.shift_start, s.shift_end)}
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">
-                      {hoursBetweenIso(s.shift_start, s.shift_end)}
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-2">
-                      {!s.isPublished ? (
-                        <span className="rounded-md bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200/60">
-                          Draft
-                        </span>
-                      ) : (
-                        <span className="rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-800 ring-1 ring-emerald-200/60">
-                          Published
-                        </span>
-                      )}
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-2 text-sm text-slate-600">
-                      {s.notes ?? "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ScheduleBoardListView listRows={listRows} />
         ) : (
           <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
             {/* Row search + toggles */}
@@ -1183,18 +849,52 @@ export function ScheduleWeekBoard({
                 <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                 <input
                   type="search"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
                   placeholder="Search shifts, jobs, people…"
-                  className="w-full rounded-md border border-slate-200 py-1.5 pl-8 pr-3 text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-9 text-xs text-slate-900 shadow-sm transition placeholder:text-slate-400 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
+              {searchInput.trim().length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchInput("")}
+                  className="absolute right-1.5 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                  aria-label="Clear search"
+                  title="Clear search"
+                >
+                  <X className="h-4 w-4" aria-hidden />
+                </button>
+              ) : null}
               </div>
-              <button type="button" className="text-xs font-medium text-slate-500 hover:text-slate-800">
+            <button
+              type="button"
+              className="inline-flex h-8 items-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            >
                 Labor &amp; Sales
               </button>
-              <button type="button" className="text-xs font-medium text-slate-500 hover:text-slate-800">
-                Daily info {showDailyInfo ? "On" : "Off"}
+            <button
+              type="button"
+              onClick={() => setShowDailyInfo((v) => !v)}
+              className={`inline-flex h-8 items-center rounded-full border px-3 text-xs font-semibold shadow-sm transition focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${
+                showDailyInfo
+                  ? "border-slate-300 bg-slate-50 text-slate-900 hover:bg-slate-100/60"
+                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+              aria-pressed={showDailyInfo}
+            >
+              Daily info
               </button>
+            {searchInput.trim().length > 0 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchInput("");
+                }}
+                className="inline-flex h-8 items-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              >
+                Clear all
+              </button>
+            ) : null}
             </div>
 
             <div className="min-w-[1100px]">
@@ -1204,26 +904,6 @@ export function ScheduleWeekBoard({
                     <span>
                       No shifts for this range{search ? " (try clearing search)" : ""}. Add a shift to start scheduling.
                     </span>
-                    {canEditSchedule && !search.trim() ? (
-                      <button
-                        type="button"
-                        className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                        disabled={seedPending}
-                        title="Generate demo shifts for this week (draft)"
-                        onClick={() => {
-                          startSeedTransition(async () => {
-                            const r = await seedDemoShiftsForWeek(weekParam);
-                            if (!r.ok) {
-                              window.alert(r.error);
-                              return;
-                            }
-                            router.refresh();
-                          });
-                        }}
-                      >
-                        {seedPending ? "Generating…" : "Generate demo week"}
-                      </button>
-                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -1288,9 +968,6 @@ export function ScheduleWeekBoard({
                             <div className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-700">
                               {e.full_name}
                             </div>
-                            <div className="mt-0.5 text-[10px] text-slate-500">
-                              No shifts yet — click to add
-                            </div>
                           </button>
                         ) : (
                           <Link
@@ -1301,7 +978,6 @@ export function ScheduleWeekBoard({
                             <div className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-700">
                               {e.full_name}
                             </div>
-                            <div className="mt-0.5 text-[10px] text-slate-500">No shifts yet</div>
                           </Link>
                         )}
                       </div>
@@ -1401,373 +1077,67 @@ export function ScheduleWeekBoard({
                       </div>
                     ) : null}
                     {viewMode === "job" ? (
-                      jobs.map((jobRow) => (
-                      <div
-                        key={`${section}-${jobRow.rowKey}`}
-                        className="grid border-b border-slate-100 bg-white"
-                        style={{
-                          gridTemplateColumns: `200px repeat(7, minmax(110px, 1fr))`,
-                          boxShadow: `inset 4px 0 0 0 ${jobRow.colorHex}`,
-                        }}
-                      >
-                        <div className="border-r border-slate-200 px-2 py-2">
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
-                            {jobRow.label}
-                          </span>
-                          <div className="mt-0.5 text-[10px] text-slate-500">
-                            Row color matches shift cards
-                          </div>
-                        </div>
-                        {displayedColumns.map((_, di) => {
-                          const dayIndex = viewRange === "day"
-                            ? Math.max(0, Math.min(6, Math.floor((displayedColumns[0]!.date.getTime() - weekMonday.getTime()) / 86400000)))
-                            : di;
-                          const cell = shiftsForCell(shifts, section, jobRow.rowKey, weekMonday, dayIndex);
-                          const isToday = sameCalendarDay(columns[di].date, today);
-                          const dateForCell = displayedColumns[di]?.date ?? columns[di]!.date;
-                          const start = new Date(dateForCell);
-                          start.setHours(9, 0, 0, 0);
-                          const end = new Date(dateForCell);
-                          end.setHours(17, 0, 0, 0);
-                          const locSeed =
-                            (!scopeAll && defaultLocationId) ||
-                            locationsForPicker[0]?.id ||
-                            undefined;
-                          return (
-                            <div
-                              key={di}
-                              className={`group relative min-h-[80px] border-r border-slate-100 p-1 last:border-r-0 ${
-                                isToday ? "bg-sky-50/50" : ""
-                              }`}
-                            >
-                              {canEditSchedule && cell.length === 0 ? (
-                                <ScheduleCellHoverActions
-                                  menuKey={`job-${section}-${jobRow.rowKey}-${di}`}
-                                  openMenuKey={cellMenuKey}
-                                  setOpenMenuKey={setCellMenuKey}
-                                  onQuickAdd={() =>
-                                    openCreateShift({
-                                      locationId: locSeed,
-                                      // In job view, we don't know which employee you intend.
-                                      // Force selection in the side panel instead of auto-picking the first employee.
-                                      employeeIds: [],
-                                      jobId: jobRow.rowKey,
-                                      start,
-                                      end,
-                                    })
-                                  }
-                                  onTimeOff={goTimeClockForTimeOff}
-                                  onUnavailability={openUnavailabilityComingSoon}
-                                />
-                              ) : null}
-                              <div className="relative z-[1] flex flex-col gap-1">
-                                {cell.map((s) => (
-                                  <div
-                                    key={s.id}
-                                    className="group relative w-full rounded-md border border-slate-200/90 bg-white text-left shadow-sm transition hover:shadow-md"
-                                    style={{ borderTop: `3px solid ${s.jobColorHex}` }}
-                                  >
-                                    {s.notifyBadgeCount > 0 ? (
-                                      <span className="absolute -left-1 -top-1 z-[1] flex h-5 w-5 items-center justify-center rounded-full bg-blue-500 text-[9px] font-bold text-white shadow">
-                                        {s.notifyBadgeCount}
-                                      </span>
-                                    ) : null}
-                                    {canEditSchedule ? (
-                                      <button
-                                        type="button"
-                                        className="absolute right-0.5 top-0.5 z-[1] rounded p-0.5 text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-red-600 group-hover:opacity-100"
-                                        title="Delete shift"
-                                        disabled={deletePending}
-                                        aria-label="Delete shift"
-                                        onClick={() => {
-                                          if (
-                                            !confirm(
-                                              "Delete this shift? This cannot be undone.",
-                                            )
-                                          ) {
-                                            return;
-                                          }
-                                          setDeleteError(null);
-                                          startDeleteTransition(async () => {
-                                            const r = await deleteShift({ shiftId: s.id });
-                                            if (!r.ok) {
-                                              setDeleteError(r.error);
-                                              return;
-                                            }
-                                            afterMutation();
-                                          });
-                                        }}
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                      </button>
-                                    ) : null}
-                                    <div className="px-2 pb-1.5 pt-2 pr-7">
-                                      <button
-                                        type="button"
-                                        className="block w-full text-left focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                        disabled={!canEditSchedule}
-                                        title={
-                                          canEditSchedule
-                                            ? "Edit shift"
-                                            : "You don’t have permission to edit shifts."
-                                        }
-                                        onClick={() => {
-                                          if (!canEditSchedule) return;
-                                          setDeleteError(null);
-                                          setPublishError(null);
-                                          setEditingShiftId(s.id);
-                                          setModalNonce((n) => n + 1);
-                                          setAddOpen(true);
-                                        }}
-                                      >
-                                        <div className="text-[11px] font-semibold text-slate-900">
-                                          {formatSpan(s.shift_start, s.shift_end)}
-                                        </div>
-                                        <div className="truncate text-[11px] text-slate-700">
-                                          {s.assignedLabel}
-                                        </div>
-                                      </button>
-                                      {scopeAll ? (
-                                        <div className="mt-0.5 truncate text-[9px] text-slate-400">
-                                          {locationNamesById.get(s.location_id) ?? "Store"}
-                                        </div>
-                                      ) : null}
-                                      {!s.isPublished ? (
-                                        <div className="mt-0.5 text-[9px] font-medium text-amber-700">
-                                          Draft
-                                        </div>
-                                      ) : null}
-                                      <div className="mt-1 flex justify-end text-[10px] font-medium tabular-nums text-slate-500">
-                                        {s.assignCount}/{s.slotsTotal}
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ))
+                      <ScheduleBoardJobGridRows
+                        section={section}
+                        jobs={jobs}
+                        shifts={shifts}
+                        weekMonday={weekMonday}
+                        displayedColumns={displayedColumns}
+                        columns={columns}
+                        viewRange={viewRange}
+                        today={today}
+                        canEditSchedule={canEditSchedule}
+                        cellMenuKey={cellMenuKey}
+                        setCellMenuKey={setCellMenuKey}
+                        openCreateShift={openCreateShift}
+                        goTimeClockForTimeOff={goTimeClockForTimeOff}
+                        openUnavailabilityComingSoon={openUnavailabilityComingSoon}
+                        deletePending={deletePending}
+                        startDeleteTransition={startDeleteTransition}
+                        afterMutation={afterMutation}
+                        setDeleteError={setDeleteError}
+                        setEditingShiftId={setEditingShiftId}
+                        setPublishError={setPublishError}
+                        setModalNonce={setModalNonce}
+                        setAddOpen={setAddOpen}
+                        scopeAll={scopeAll}
+                        locationNamesById={locationNamesById}
+                        defaultLocationId={defaultLocationId}
+                        locationsForPicker={locationsForPicker}
+                      />
                     ) : (
-                      employeesForPicker.map((emp) => (
-                        <div
-                          key={`${section}-${emp.id}`}
-                          className="grid border-b border-slate-100 bg-white"
-                          style={{
-                            gridTemplateColumns: `200px repeat(7, minmax(110px, 1fr))`,
-                            boxShadow: `inset 4px 0 0 0 #e2e8f0`,
-                          }}
-                        >
-                          <div className="border-r border-slate-200 px-2 py-2">
-                            {canEditSchedule ? (
-                              <button
-                                type="button"
-                                className="w-full rounded-md px-1 py-0.5 text-left transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                onClick={() => openSchedulePanelForEmployee(emp)}
-                                title="Add or edit shifts for this team member"
-                              >
-                                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
-                                  {emp.full_name}
-                                </span>
-                                <div className="mt-0.5 text-[10px] text-slate-500">View by users</div>
-                              </button>
-                            ) : (
-                              <Link
-                                href={`/users/${emp.id}`}
-                                className="block w-full rounded-md px-1 py-0.5 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                title="Open employee profile"
-                              >
-                                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
-                                  {emp.full_name}
-                                </span>
-                                <div className="mt-0.5 text-[10px] text-slate-500">View by users</div>
-                              </Link>
-                            )}
-                          </div>
-                          {displayedColumns.map((_, di) => {
-                            const dayIndex = viewRange === "day"
-                              ? Math.max(0, Math.min(6, Math.floor((displayedColumns[0]!.date.getTime() - weekMonday.getTime()) / 86400000)))
-                              : di;
-                            const cell = shiftsForUserCell(shifts, section, emp.id, weekMonday, dayIndex);
-                            const isToday = sameCalendarDay(columns[di].date, today);
-                            const dateForCell = displayedColumns[di]?.date ?? columns[di]!.date;
-                            const start = new Date(dateForCell);
-                            start.setHours(9, 0, 0, 0);
-                            const end = new Date(dateForCell);
-                            end.setHours(17, 0, 0, 0);
-                            const unKey = `${emp.id}:${toYmdLocal(dateForCell)}`;
-                            const unBlocks = unavailByEmployeeDay.get(unKey) ?? [];
-                            const locSeed =
-                              employeesForPicker.find((e) => e.id === emp.id)?.location_id ||
-                              ((!scopeAll && defaultLocationId) || locationsForPicker[0]?.id || undefined);
-                            const locName = locationNamesById.get(locSeed ?? "") ?? locationLabel;
-                            return (
-                              <div
-                                key={di}
-                                className={`group relative min-h-[80px] border-r border-slate-100 p-1 last:border-r-0 ${
-                                  isToday ? "bg-sky-50/50" : ""
-                                }`}
-                              >
-                                {unBlocks.length ? (
-                                  <div
-                                    className="pointer-events-none absolute inset-0 rounded-md ring-1 ring-amber-200/70"
-                                    title={
-                                      unBlocks
-                                        .map((b) => {
-                                          const s = new Date(b.start_at);
-                                          const e = new Date(b.end_at);
-                                          const span =
-                                            Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())
-                                              ? "Unavailable"
-                                              : `${toHmLocal(s)}–${toHmLocal(e)}`;
-                                          return `${span}${b.reason ? ` — ${b.reason}` : ""}`;
-                                        })
-                                        .join("\n")
-                                    }
-                                  >
-                                    <div
-                                      className="absolute inset-0 rounded-md bg-amber-50/70"
-                                      style={{
-                                        backgroundImage:
-                                          "repeating-linear-gradient(135deg, rgba(245,158,11,0.22) 0px, rgba(245,158,11,0.22) 8px, rgba(255,251,235,0.65) 8px, rgba(255,251,235,0.65) 16px)",
-                                      }}
-                                    />
-                                    <div className="absolute left-1 top-1 rounded-full bg-amber-600/90 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
-                                      Unavailable{unBlocks.length > 1 ? ` ×${unBlocks.length}` : ""}
-                                    </div>
-                                    {(() => {
-                                      const first = unBlocks[0];
-                                      if (!first) return null;
-                                      const s = new Date(first.start_at);
-                                      const e = new Date(first.end_at);
-                                      if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return null;
-                                      return (
-                                        <div className="absolute left-1 top-6 rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold text-amber-900 ring-1 ring-amber-200/70">
-                                          {toHmLocal(s)}–{toHmLocal(e)}
-                                        </div>
-                                      );
-                                    })()}
-                                  </div>
-                                ) : null}
-                                {canEditSchedule && cell.length === 0 ? (
-                                  <ScheduleCellHoverActions
-                                    menuKey={`user-${section}-${emp.id}-${di}`}
-                                    openMenuKey={cellMenuKey}
-                                    setOpenMenuKey={setCellMenuKey}
-                                    onQuickAdd={() =>
-                                      openCreateShift({
-                                        locationId: locSeed,
-                                        employeeIds: [emp.id],
-                                        start,
-                                        end,
-                                      })
-                                    }
-                                    onTimeOff={goTimeClockForTimeOff}
-                                    onUnavailability={() =>
-                                      unBlocks.length
-                                        ? startDeleteTransition(async () => {
-                                            const r = await deleteUnavailability({
-                                              unavailabilityId: unBlocks[0]!.id,
-                                            });
-                                            if (!r.ok) {
-                                              window.alert(r.error);
-                                              return;
-                                            }
-                                            router.refresh();
-                                          })
-                                        : openUnavailability({
-                                            employeeId: emp.id,
-                                            employeeName: emp.full_name,
-                                            locationId: locSeed ?? emp.location_id,
-                                            locationName: locName,
-                                            start,
-                                            end,
-                                          })
-                                    }
-                                    unavailabilityLabel={
-                                      unBlocks.length
-                                        ? `Remove unavailability${unBlocks.length > 1 ? " (earliest)" : ""}`
-                                        : "Add unavailability"
-                                    }
-                                  />
-                                ) : null}
-                                <div className="relative z-[1] flex flex-col gap-1">
-                                  {cell.map((s) => (
-                                    <div
-                                      key={s.id}
-                                      className="group relative w-full rounded-md border border-slate-200/90 bg-white text-left shadow-sm transition hover:shadow-md"
-                                      style={{ borderTop: `3px solid ${s.jobColorHex}` }}
-                                    >
-                                      {canEditSchedule ? (
-                                        <button
-                                          type="button"
-                                          className="absolute right-0.5 top-0.5 z-[1] rounded p-0.5 text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-red-600 group-hover:opacity-100"
-                                          title="Delete shift"
-                                          disabled={deletePending}
-                                          aria-label="Delete shift"
-                                          onClick={() => {
-                                            if (
-                                              !confirm(
-                                                "Delete this shift? This cannot be undone.",
-                                              )
-                                            ) {
-                                              return;
-                                            }
-                                            setDeleteError(null);
-                                            startDeleteTransition(async () => {
-                                              const r = await deleteShift({ shiftId: s.id });
-                                              if (!r.ok) {
-                                                setDeleteError(r.error);
-                                                return;
-                                              }
-                                              afterMutation();
-                                            });
-                                          }}
-                                        >
-                                          <Trash2 className="h-3.5 w-3.5" />
-                                        </button>
-                                      ) : null}
-                                      <div className="px-2 pb-1.5 pt-2 pr-7">
-                                        <button
-                                          type="button"
-                                          className="block w-full text-left focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                          disabled={!canEditSchedule}
-                                          title={
-                                            canEditSchedule
-                                              ? "Edit shift"
-                                              : "You don’t have permission to edit shifts."
-                                          }
-                                          onClick={() => {
-                                            if (!canEditSchedule) return;
-                                            setDeleteError(null);
-                                            setPublishError(null);
-                                            setEditingShiftId(s.id);
-                                            setModalNonce((n) => n + 1);
-                                            setAddOpen(true);
-                                          }}
-                                        >
-                                          <div className="text-[11px] font-semibold text-slate-900">
-                                            {formatSpan(s.shift_start, s.shift_end)}
-                                          </div>
-                                          <div className="truncate text-[11px] text-slate-700">
-                                            {s.jobName ?? "No job"}
-                                          </div>
-                                        </button>
-                                        {!s.isPublished ? (
-                                          <div className="mt-0.5 text-[9px] font-medium text-amber-700">
-                                            Draft
-                                          </div>
-                                        ) : null}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ))
+                      <ScheduleBoardUserGridRows
+                        section={section}
+                        employeesForPicker={employeesForPicker}
+                        shifts={shifts}
+                        weekMonday={weekMonday}
+                        displayedColumns={displayedColumns}
+                        columns={columns}
+                        viewRange={viewRange}
+                        today={today}
+                        canEditSchedule={canEditSchedule}
+                        cellMenuKey={cellMenuKey}
+                        setCellMenuKey={setCellMenuKey}
+                        openCreateShift={openCreateShift}
+                        openSchedulePanelForEmployee={openSchedulePanelForEmployee}
+                        goTimeClockForTimeOff={goTimeClockForTimeOff}
+                        openUnavailability={openUnavailability}
+                        deletePending={deletePending}
+                        startDeleteTransition={startDeleteTransition}
+                        routerRefresh={() => router.refresh()}
+                        afterMutation={afterMutation}
+                        setDeleteError={setDeleteError}
+                        setEditingShiftId={setEditingShiftId}
+                        setPublishError={setPublishError}
+                        setModalNonce={setModalNonce}
+                        setAddOpen={setAddOpen}
+                        scopeAll={scopeAll}
+                        locationNamesById={locationNamesById}
+                        locationLabel={locationLabel}
+                        defaultLocationId={defaultLocationId}
+                        locationsForPicker={locationsForPicker}
+                        unavailByEmployeeDay={unavailByEmployeeDay}
+                      />
                     )}
                   </div>
                 );

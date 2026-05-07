@@ -13,6 +13,7 @@ import type { DirectoryEmployee } from "@/lib/users/directory-buckets";
 export type LocationRowIn = {
   id: string;
   name: string;
+  chain_id?: string | null;
   manager_employee_id: string | null;
   status?: LocationStatus | null;
 };
@@ -50,6 +51,19 @@ export function StoreDirectoryClient({ locations, employees, canManageStores }: 
     if (tab === "not_running") return rows.filter((l) => (l.status ?? "running") === "not_running");
     return rows;
   }, [locations, tab]);
+
+  const grouped = useMemo(() => {
+    const east: LocationRowIn[] = [];
+    const west: LocationRowIn[] = [];
+    const other: LocationRowIn[] = [];
+    for (const l of filteredLocations) {
+      const cid = l.chain_id ?? null;
+      if (cid === "c0000000-0000-4000-8000-000000000001") east.push(l);
+      else if (cid === "c0000000-0000-4000-8000-000000000002") west.push(l);
+      else other.push(l);
+    }
+    return { east, west, other };
+  }, [filteredLocations]);
 
   const managersByLocation = useMemo(() => {
     const m = new Map<string, { id: string; label: string }[]>();
@@ -153,7 +167,22 @@ export function StoreDirectoryClient({ locations, employees, canManageStores }: 
             </tr>
           </thead>
           <tbody className="text-slate-800">
-            {filteredLocations.map((loc, i) => {
+            {[
+              { id: "east", title: "East Stores", rows: grouped.east },
+              { id: "west", title: "West Stores", rows: grouped.west },
+              { id: "other", title: "Other", rows: grouped.other },
+            ]
+              .filter((s) => s.rows.length > 0)
+              .flatMap((section) => {
+                const head = (
+                  <tr key={`section-${section.id}`} className="bg-slate-50/70">
+                    <td colSpan={4} className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      {section.title}{" "}
+                      <span className="font-normal text-slate-400">({section.rows.length})</span>
+                    </td>
+                  </tr>
+                );
+                const body = section.rows.map((loc, i) => {
               const options = managersByLocation.get(loc.id) ?? [];
               const status = (loc.status ?? "running") as LocationStatus;
               return (
@@ -295,14 +324,16 @@ export function StoreDirectoryClient({ locations, employees, canManageStores }: 
                   </td>
                 </tr>
               );
-            })}
+                });
+                return [head, ...body];
+              })}
           </tbody>
         </table>
       </div>
 
       {!canManageStores ? (
         <p className="text-xs text-slate-500">
-          Only admins and organization owners can manage stores when RBAC is enabled.
+          Only admins and company owners can manage stores when access controls are enabled.
         </p>
       ) : null}
 

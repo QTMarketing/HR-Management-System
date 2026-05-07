@@ -1,57 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { SidebarAccountFooter } from "@/components/dashboard/sidebar-account-footer";
-import {
-  Activity,
-  BarChart2,
-  Building2,
-  CalendarRange,
-  Clock,
-  LayoutDashboard,
-  Menu,
-  Network,
-  PanelLeftClose,
-  Shield,
-  Users,
-} from "lucide-react";
-
-const ICONS = {
-  "/": LayoutDashboard,
-  "/users": Users,
-  "/locations": Building2,
-  "/security-audit": Shield,
-  "/users/groups": Network,
-  "/activity": Activity,
-  "/time-clock": Clock,
-  "/schedule": CalendarRange,
-  "/reports/labor": BarChart2,
-} as const;
-
-type NavLink = { href: string; label: string; group?: "main" | "operations" };
-
-const defaultNav: NavLink[] = [
-  { href: "/", label: "Dashboard", group: "main" },
-  { href: "/users", label: "Users", group: "main" },
-  { href: "/users/groups", label: "Smart groups", group: "main" },
-  { href: "/activity", label: "Activity", group: "operations" },
-  { href: "/time-clock", label: "Time Clock", group: "operations" },
-  { href: "/schedule", label: "Schedule", group: "operations" },
-  { href: "/reports/labor", label: "Labor report", group: "operations" },
-];
-
-function activePath(pathname: string, href: string) {
-  if (href === "/") return pathname === "/";
-  /** Directory home only — /users/groups is its own nav item. */
-  if (href === "/users") return pathname === "/users";
-  return pathname === href || pathname.startsWith(`${href}/`);
-}
+import { DashboardNavList, type DashboardNavItem } from "@/components/dashboard/dashboard-nav-list";
+import { Menu, PanelLeftClose } from "lucide-react";
 
 type SidebarProps = {
   /** When set (from server RBAC), only these links are shown. */
-  navItems?: NavLink[];
+  navItems?: DashboardNavItem[];
   signedIn?: boolean;
   myProfileHref?: string | null;
   profileUnlinked?: boolean;
@@ -65,16 +22,23 @@ export function AppSidebar({
   profileUnlinked = false,
   userEmail = "",
 }: SidebarProps) {
-  const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
-  const links: NavLink[] =
+  const links: DashboardNavItem[] =
     navItems && navItems.length > 0
       ? navItems
-      : defaultNav;
+      : [
+          { href: "/", label: "Dashboard", group: "main" },
+          { href: "/users", label: "Users", group: "main" },
+          { href: "/users/groups", label: "Smart groups", group: "main" },
+          { href: "/activity", label: "Activity", group: "operations" },
+          { href: "/time-clock", label: "Time Clock", group: "operations" },
+          { href: "/schedule", label: "Schedule", group: "operations" },
+          { href: "/reports/labor", label: "Labor report", group: "operations" },
+        ];
 
   return (
     <aside
-      className={`sticky top-0 flex h-screen shrink-0 flex-col border-r border-slate-200 bg-white shadow-sm transition-[width] duration-300 ease-in-out ${
+      className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r border-slate-200 bg-white shadow-sm transition-[width] duration-300 ease-in-out md:flex ${
         collapsed ? "w-[4.5rem]" : "w-64"
       }`}
     >
@@ -100,37 +64,7 @@ export function AppSidebar({
         </button>
       </div>
 
-      <nav className="flex flex-1 flex-col gap-0.5 p-2">
-        {links.map((item, i) => {
-          const { href, label, group } = item;
-          const prevGroup = i > 0 ? links[i - 1]?.group : undefined;
-          const showOperationsHeading =
-            !collapsed && group === "operations" && prevGroup !== "operations";
-          const active = activePath(pathname, href);
-          const Icon = ICONS[href as keyof typeof ICONS] ?? LayoutDashboard;
-          return (
-            <div key={href}>
-              {showOperationsHeading ? (
-                <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  Operations
-                </p>
-              ) : null}
-              <Link
-                href={href}
-                className={`flex items-center gap-3 rounded-lg py-2.5 pl-3 pr-2 text-sm font-semibold transition-colors ${
-                  active
-                    ? "border-l-4 border-orange-500 bg-orange-50 text-orange-950"
-                    : "border-l-4 border-transparent text-slate-800 hover:bg-slate-50"
-                } ${collapsed ? "justify-center px-0" : ""}`}
-                title={collapsed ? label : undefined}
-              >
-                <Icon className="h-5 w-5 shrink-0" aria-hidden />
-                {!collapsed && <span className="truncate">{label}</span>}
-              </Link>
-            </div>
-          );
-        })}
-      </nav>
+      <DashboardNavList links={links} collapsed={collapsed} />
 
       <SidebarAccountFooter
         signedIn={signedIn}

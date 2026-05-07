@@ -104,7 +104,7 @@ export default async function ActivityPage() {
 
       {usedDemoFallback && forceMock ? (
         <p className="rounded-lg border border-orange-200 bg-orange-50/90 px-4 py-3 text-sm text-orange-950">
-          Demo mode — mock events only.
+          Preview — sample activity only.
         </p>
       ) : null}
 

@@ -208,6 +208,10 @@ export function AddShiftModal({
     () => jobs.filter((j) => j.location_id === locationId),
     [jobs, locationId],
   );
+  const selectedLocationName = useMemo(
+    () => locations.find((l) => l.id === locationId)?.name ?? null,
+    [locations, locationId],
+  );
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -571,31 +575,41 @@ export function AddShiftModal({
                     <label htmlFor={`${baseId}-date`} className="block text-xs font-medium text-slate-700">
                       Date
                     </label>
-                    <input
-                      id={`${baseId}-date`}
-                      type="date"
-                      className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                      value={startLocal.slice(0, 10)}
-                      onChange={(e) => {
-                        const ymd = e.target.value;
-                        if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return;
-                        setStartLocal((prev) => `${ymd}${prev.slice(10)}`);
-                        setEndLocal((prev) => `${ymd}${prev.slice(10)}`);
-                      }}
-                      required
-                    />
+                      <div className="mt-1 flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
+                        <div className="text-sm font-medium text-slate-900">
+                          {startDt.toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })}
+                        </div>
+                        <input
+                          id={`${baseId}-date`}
+                          type="date"
+                          className="h-9 w-[11.5rem] rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-900 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          value={startLocal.slice(0, 10)}
+                          onChange={(e) => {
+                            const ymd = e.target.value;
+                            if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return;
+                            setStartLocal((prev) => `${ymd}${prev.slice(10)}`);
+                            setEndLocal((prev) => `${ymd}${prev.slice(10)}`);
+                          }}
+                          required
+                          aria-label="Change date"
+                        />
+                      </div>
                   </div>
-                  <div className="pt-6 text-right">
-                    <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      Total
+                    <div className="pt-6 text-right">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Total
+                      </div>
+                      <div className="mt-0.5 text-sm font-semibold text-slate-900 tabular-nums">
+                        {hoursLabel}
+                      </div>
                     </div>
-                    <div className="mt-0.5 text-sm font-semibold text-slate-900 tabular-nums">
-                      {hoursLabel}
-                    </div>
-                  </div>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
                   <div>
                     <label htmlFor={`${baseId}-start`} className="block text-xs font-medium text-slate-700">
                       Start
@@ -629,6 +643,14 @@ export function AddShiftModal({
                       }}
                       required
                     />
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      Total
+                    </div>
+                    <div className="mt-0.5 text-sm font-semibold text-slate-900 tabular-nums">
+                      {hoursLabel}
+                    </div>
                   </div>
                 </div>
 
@@ -686,11 +708,8 @@ export function AddShiftModal({
               </select>
             </div>
           ) : (
-            <p className="text-xs text-slate-600">
-              Store:{" "}
-              <span className="font-medium text-slate-800">
-                {locations.find((l) => l.id === locationId)?.name ?? "—"}
-              </span>
+            <p className="text-sm font-medium text-slate-800">
+              {selectedLocationName ?? "—"}
             </p>
           )}
 

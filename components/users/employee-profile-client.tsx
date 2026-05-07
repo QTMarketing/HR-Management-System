@@ -30,6 +30,8 @@ export type EmployeeProfileInitial = {
   mobile_phone: string;
   email: string;
   employment_start_date: string;
+  fte: string;
+  standard_hours_per_week: string;
   role: string;
   location_id: string;
   direct_manager_id: string;
@@ -65,6 +67,26 @@ type Props = {
   storeManagers: ProfileManagerOption[];
   groupNames: string[];
   canEdit: boolean;
+  ptoPanel?: {
+    vacationHours: number;
+    sickHours: number;
+    standardDayHours: number;
+    vacationCashoutEnabled: boolean;
+    nextVacationCashoutAt: string | null;
+    nextVacationCashoutHours: number;
+    lastVacationCashoutAt: string | null;
+    lastVacationCashoutHours: number;
+    ytdVacationUsedHours: number;
+    ledger: {
+      id: string;
+      bucket: string;
+      entry_type: string;
+      amount_hours: number;
+      effective_at: string;
+      notes: string | null;
+      metadata: unknown;
+    }[];
+  } | null;
   /** User management: archive this profile (no hard delete). */
   canArchiveUser?: boolean;
   isArchivedProfile?: boolean;
@@ -83,6 +105,7 @@ export function EmployeeProfileClient({
   storeManagers,
   groupNames,
   canEdit,
+  ptoPanel = null,
   canArchiveUser = false,
   isArchivedProfile = false,
   canSetOrgOwner = false,
@@ -102,6 +125,10 @@ export function EmployeeProfileClient({
   const [email, setEmail] = useState(initial.email);
   const [employment_start_date, setEmploymentStart] = useState(
     toInputDate(initial.employment_start_date),
+  );
+  const [fte, setFte] = useState(initial.fte ?? "1.0");
+  const [standard_hours_per_week, setStandardHoursPerWeek] = useState(
+    initial.standard_hours_per_week ?? "",
   );
   const [role, setRole] = useState(initial.role || "Employee");
   const [location_id, setLocationId] = useState(initial.location_id);
@@ -132,6 +159,8 @@ export function EmployeeProfileClient({
         mobile_phone,
         email,
         employment_start_date,
+        fte,
+        standard_hours_per_week,
         role,
         location_id,
         direct_manager_id,
@@ -155,6 +184,8 @@ export function EmployeeProfileClient({
       mobile_phone,
       email,
       employment_start_date,
+      fte,
+      standard_hours_per_week,
       role,
       location_id,
       direct_manager_id,
@@ -172,6 +203,42 @@ export function EmployeeProfileClient({
     "rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm";
 
   const groupCount = groupNames.length;
+
+  const fmtShortDate = (iso: string | null | undefined) => {
+    if (!iso) return "—";
+    try {
+      return new Date(iso).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+    } catch {
+      return "—";
+    }
+  };
+
+  const ptoTimelineLabel = (t: string) => {
+    switch (t) {
+      case "annual_grant":
+        return "Annual grant";
+      case "usage":
+        return "Used (time off)";
+      case "adjustment":
+        return "Adjustment";
+      case "forfeit":
+        return "Forfeit";
+      case "payout":
+        return "Payout";
+      case "opening_balance":
+        return "Opening balance";
+      case "termination_payout":
+        return "Termination payout";
+      case "termination_forfeit":
+        return "Termination forfeit";
+      default:
+        return t.replace(/_/g, " ");
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -317,6 +384,38 @@ export function EmployeeProfileClient({
                 />
               </div>
               <div className="sm:col-span-1">
+                <label className={labelCls} htmlFor="employment_type">
+                  Employment Type
+                </label>
+                <select
+                  id="employment_type"
+                  className={inputCls}
+                  value={Number(fte) >= 0.75 ? "full" : "half"}
+                  onChange={(e) => setFte(e.target.value === "full" ? "1.0" : "0.5")}
+                  disabled={!canEdit || pending}
+                >
+                  <option value="full">Full time</option>
+                  <option value="half">Half time</option>
+                </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  Full time maps to 1.0 FTE. Half time maps to 0.5 FTE.
+                </p>
+              </div>
+              <div className="sm:col-span-1">
+                <label className={labelCls} htmlFor="standard_hours_per_week">
+                  Standard hours / week
+                </label>
+                <input
+                  id="standard_hours_per_week"
+                  inputMode="decimal"
+                  className={inputCls}
+                  value={standard_hours_per_week}
+                  onChange={(e) => setStandardHoursPerWeek(e.target.value)}
+                  disabled={!canEdit || pending}
+                  placeholder="40"
+                />
+              </div>
+              <div className="sm:col-span-1">
                 <label className={labelCls} htmlFor="role">
                   Position
                 </label>
@@ -452,10 +551,10 @@ export function EmployeeProfileClient({
 
           {canSetOrgOwner || isOrgOwner ? (
             <div className={sectionCard}>
-              <h2 className="text-sm font-semibold text-slate-900">Organization owner</h2>
+              <h2 className="text-sm font-semibold text-slate-900">Company owner</h2>
               <p className="mt-0.5 text-xs text-slate-500">
-                Owners can promote Store Managers, edit admin module access, assign store leads, and
-                view the security audit log. Keep at least one owner at all times.
+                Company owners can promote Store Managers, edit admin access, assign store leads, and
+                view the security audit log. Keep at least one company owner at all times.
               </p>
               {canSetOrgOwner ? (
                 <label className="mt-4 flex cursor-pointer items-start gap-3">
@@ -478,24 +577,24 @@ export function EmployeeProfileClient({
                         setMessage({
                           kind: "ok",
                           text: next
-                            ? "Saved as organization owner."
-                            : "Organization owner removed; role set to Employee.",
+                            ? "Saved as company owner."
+                            : "Company owner removed; role set to Employee.",
                         });
                         router.refresh();
                       });
                     }}
                   />
                   <span className="text-sm text-slate-800">
-                    <span className="font-medium">Organization owner</span>
+                    <span className="font-medium">Company owner</span>
                     <span className="mt-0.5 block text-xs font-normal text-slate-500">
-                      Full company-level admin powers (see internal rule: org.owner).
+                      Full company-level admin access.
                     </span>
                   </span>
                 </label>
               ) : (
                 <p className="mt-3 text-sm text-slate-700">
-                  This person is an <strong className="font-semibold">organization owner</strong>. Only
-                  owners can add or remove this access.
+                  This person is a <strong className="font-semibold">company owner</strong>. Only
+                  company owners can add or remove this access.
                 </p>
               )}
             </div>
@@ -521,6 +620,123 @@ export function EmployeeProfileClient({
         </form>
 
         <aside className="space-y-4 lg:col-span-1 xl:col-span-1">
+          {ptoPanel ? (
+            <div className={sectionCard}>
+              <h2 className="text-sm font-semibold text-slate-900">PTO</h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Balances and recent PTO activity (ledger).
+              </p>
+
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Vacation balance
+                  </p>
+                  <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
+                    {ptoPanel.vacationHours.toFixed(1)}h
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Sick balance
+                  </p>
+                  <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
+                    {ptoPanel.sickHours.toFixed(1)}h
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Next cash-out
+                  </p>
+                  <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
+                    {ptoPanel.vacationCashoutEnabled && ptoPanel.nextVacationCashoutAt
+                      ? `${ptoPanel.nextVacationCashoutHours.toFixed(1)}h`
+                      : "—"}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {ptoPanel.vacationCashoutEnabled
+                      ? fmtShortDate(ptoPanel.nextVacationCashoutAt)
+                      : "Disabled"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Last cash-out
+                  </p>
+                  <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
+                    {ptoPanel.lastVacationCashoutAt
+                      ? `${ptoPanel.lastVacationCashoutHours.toFixed(1)}h`
+                      : "—"}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {fmtShortDate(ptoPanel.lastVacationCashoutAt)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    YTD vacation used
+                  </p>
+                  <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
+                    {ptoPanel.ytdVacationUsedHours.toFixed(1)}h
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Recent ledger entries
+                </p>
+                {ptoPanel.ledger.length ? (
+                  <ul className="mt-2 space-y-2">
+                    {ptoPanel.ledger.map((e) => {
+                      const amt = Number.isFinite(e.amount_hours) ? e.amount_hours : 0;
+                      const sign = amt > 0 ? "+" : "";
+                      const tone =
+                        amt > 0
+                          ? "text-emerald-800"
+                          : amt < 0
+                            ? "text-red-800"
+                            : "text-slate-700";
+                      return (
+                        <li
+                          key={e.id}
+                          className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-slate-900">
+                              {ptoTimelineLabel(e.entry_type)}
+                            </p>
+                            <p className="mt-0.5 text-xs text-slate-500">
+                              {fmtShortDate(e.effective_at)}{" "}
+                              <span className="text-slate-300">·</span>{" "}
+                              {e.bucket}
+                              {e.notes ? (
+                                <>
+                                  {" "}
+                                  <span className="text-slate-300">·</span>{" "}
+                                  {e.notes}
+                                </>
+                              ) : null}
+                            </p>
+                          </div>
+                          <p className={`shrink-0 font-mono text-sm font-semibold tabular-nums ${tone}`}>
+                            {sign}
+                            {amt.toFixed(1)}h
+                          </p>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-sm text-slate-500">No PTO ledger entries yet.</p>
+                )}
+              </div>
+            </div>
+          ) : null}
+
           <div className={sectionCard}>
             <h2 className="text-sm font-semibold text-slate-900">Groups ({groupCount})</h2>
             {groupNames.length ? (

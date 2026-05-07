@@ -1,9 +1,12 @@
 "use client";
 
+import { ArrowRight, Coffee, LogIn, LogOut, MapPinOff, Pause, Play, UserX } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { toast } from "sonner";
 import { clockIn, clockOut } from "@/app/actions/time-clock";
 import { endBreak, startBreak } from "@/app/actions/time-entry-breaks";
+import { setSelectedLocationId } from "@/app/actions/location";
 import { EmployeeTimeOffRequestModal } from "@/components/time-clock/employee-time-off-request-modal";
 
 type Props = {
@@ -14,6 +17,10 @@ type Props = {
   viewerEmployeeName?: string | null;
   /** True when the viewer’s employee row matches this clock’s location. */
   viewerAtLocation: boolean;
+  /** Employee's "home" store (for wrong-store recovery). */
+  viewerHomeLocationId?: string | null;
+  viewerHomeLocationName?: string | null;
+  viewerHomeClockId?: string | null;
   /** Open punch id on this clock for the viewer, if any. */
   viewerOpenEntryId: string | null;
   /** Clock-in timestamp for the viewer's open punch (Today UX). */
@@ -32,6 +39,8 @@ type Props = {
   requireCategorization: boolean;
   jobCodes: { id: string; label: string }[];
   locationCodes: { id: string; label: string }[];
+  breaksEnabled?: boolean;
+  allowPaidBreaks?: boolean;
   /** Archived clock — hide widget. */
   disabled?: boolean;
 };
@@ -49,6 +58,9 @@ export function TimeClockSelfServe({
   viewerEmployeeId,
   viewerEmployeeName = null,
   viewerAtLocation,
+  viewerHomeLocationId = null,
+  viewerHomeLocationName = null,
+  viewerHomeClockId = null,
   viewerOpenEntryId,
   viewerOpenEntryClockInAt = null,
   viewerOpenBreakId = null,
@@ -59,15 +71,30 @@ export function TimeClockSelfServe({
   requireCategorization,
   jobCodes,
   locationCodes,
+  breaksEnabled = true,
+  allowPaidBreaks = true,
   disabled = false,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [msg, setMsg] = useState<string | null>(null);
   const [timeOffOpen, setTimeOffOpen] = useState(false);
   const [jobCodeId, setJobCodeId] = useState("");
   const [locationCodeId, setLocationCodeId] = useState("");
   const [breakPaid, setBreakPaid] = useState(false);
+  const [clockOutArmed, setClockOutArmed] = useState(false);
+  const [clockOutSlide, setClockOutSlide] = useState(0);
+
+  const trackingOn = useMemo(
+    () => locationTrackingMode === "clock_in_out" || locationTrackingMode === "breadcrumbs",
+    [locationTrackingMode],
+  );
+  const gpsRequired = geofenceActive || trackingOn || requireLocationForPunch;
+
+  useEffect(() => {
+    // Reset confirmation when the open entry changes.
+    setClockOutArmed(false);
+    setClockOutSlide(0);
+  }, [viewerOpenEntryId]);
 
   function getPosition(): Promise<{ lat: number; lng: number } | null> {
     return new Promise((resolve) => {
@@ -84,20 +111,15 @@ export function TimeClockSelfServe({
   }
 
   function onClockIn() {
-    setMsg(null);
     startTransition(async () => {
       if (!viewerEmployeeId || !viewerAtLocation) return;
       let clockInLat: number | undefined;
       let clockInLng: number | undefined;
-      const trackingOn =
-        locationTrackingMode === "clock_in_out" || locationTrackingMode === "breadcrumbs";
-      if (geofenceActive || trackingOn) {
+      if (gpsRequired) {
         const pos = await getPosition();
         if (!pos) {
-          if (geofenceActive || requireLocationForPunch) {
-            setMsg("Location access is required to clock in at this store.");
-            return;
-          }
+          toast.error("Location access is required to clock in at this store.");
+          return;
         } else {
           clockInLat = pos.lat;
           clockInLng = pos.lng;
@@ -112,11 +134,11 @@ export function TimeClockSelfServe({
       const needsCode = requireCategorization && (cm === "job" || cm === "location");
       if (needsCode) {
         if (cm === "job" && !jobCodeId) {
-          setMsg("Pick a job before clocking in.");
+          toast.error("Pick a job before clocking in.");
           return;
         }
         if (cm === "location" && !locationCodeId) {
-          setMsg("Pick a location before clocking in.");
+          toast.error("Pick a location before clocking in.");
           return;
         }
       }
@@ -133,30 +155,31 @@ export function TimeClockSelfServe({
         locationCodeId: categorizationMode === "location" && locationCodeId ? locationCodeId : undefined,
       });
       if (!r.ok) {
-        setMsg(r.error);
+        toast.error(r.error);
         return;
       }
       setJobCodeId("");
       setLocationCodeId("");
+      const stamp = new Date().toLocaleTimeString(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+      toast.success(`Clocked in at ${stamp}`);
       router.refresh();
     });
   }
 
   function onClockOut() {
     if (!viewerOpenEntryId) return;
-    setMsg(null);
     startTransition(async () => {
       let clockOutLat: number | undefined;
       let clockOutLng: number | undefined;
-      const trackingOn =
-        locationTrackingMode === "clock_in_out" || locationTrackingMode === "breadcrumbs";
-      if (geofenceActive || trackingOn) {
+      if (gpsRequired) {
         const pos = await getPosition();
         if (!pos) {
-          if (geofenceActive || requireLocationForPunch) {
-            setMsg("Location access is required to clock out at this store.");
-            return;
-          }
+          toast.error("Location access is required to clock out at this store.");
+          return;
         } else {
           clockOutLat = pos.lat;
           clockOutLng = pos.lng;
@@ -169,16 +192,23 @@ export function TimeClockSelfServe({
         clockOutLng,
       });
       if (!r.ok) {
-        setMsg(r.error);
+        toast.error(r.error);
         return;
       }
+      setClockOutArmed(false);
+      setClockOutSlide(0);
+      const stamp = new Date().toLocaleTimeString(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+      toast.success(`Clocked out at ${stamp}`);
       router.refresh();
     });
   }
 
   function onStartBreak() {
     if (!viewerOpenEntryId) return;
-    setMsg(null);
     startTransition(async () => {
       const r = await startBreak({
         timeEntryId: viewerOpenEntryId,
@@ -186,22 +216,23 @@ export function TimeClockSelfServe({
         isPaid: breakPaid,
       });
       if (!r.ok) {
-        setMsg(r.error);
+        toast.error(r.error);
         return;
       }
+      toast.success(breakPaid ? "Paid break started" : "Break started");
       router.refresh();
     });
   }
 
   function onEndBreak() {
     if (!viewerOpenBreakId) return;
-    setMsg(null);
     startTransition(async () => {
       const r = await endBreak({ breakId: viewerOpenBreakId, locationId });
       if (!r.ok) {
-        setMsg(r.error);
+        toast.error(r.error);
         return;
       }
+      toast.success("Break ended");
       router.refresh();
     });
   }
@@ -210,24 +241,69 @@ export function TimeClockSelfServe({
 
   if (!viewerEmployeeId) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-        <span className="font-medium text-slate-800">Self-serve clock in</span> — Your login email must
-        match an active employee in Users to clock in here.
-      </div>
+      <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 rounded-xl border border-slate-200 bg-white p-2 text-slate-700">
+            <UserX className="h-5 w-5" aria-hidden />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Self-serve</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">Account not linked</p>
+            <p className="mt-1 text-sm text-slate-600">
+              Ask HR to link your login email to your employee profile.
+            </p>
+          </div>
+        </div>
+      </section>
     );
   }
 
   if (!viewerAtLocation) {
+    const canAutoGo = Boolean(viewerHomeLocationId) && Boolean(viewerHomeLocationName);
     const who =
       viewerEmployeeName && viewerEmployeeName.trim().length > 0
         ? viewerEmployeeName.trim()
         : "You";
     return (
-      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-        <span className="font-medium text-amber-950">{who}</span> — You’re assigned to a different store.
-        Use the location selector in the header to choose this clock’s store, or ask HR to update your
-        assignment.
-      </div>
+      <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+          <div className="mt-0.5 rounded-xl border border-amber-200 bg-white p-2 text-amber-900">
+            <MapPinOff className="h-5 w-5" aria-hidden />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-800/80">Self-serve</p>
+            <p className="mt-1 text-sm font-semibold text-amber-950">{who}</p>
+            <p className="mt-1 text-sm text-amber-900">
+              Switch to this store (top header). If it’s wrong, ask HR to update your assignment.
+            </p>
+          </div>
+          </div>
+          {canAutoGo ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                startTransition(async () => {
+                  await setSelectedLocationId(viewerHomeLocationId!);
+                  router.push(
+                    viewerHomeClockId
+                      ? `/time-clock/${viewerHomeClockId}`
+                      : "/time-clock",
+                  );
+                  router.refresh();
+                });
+              }}
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-3 text-sm font-bold text-amber-950 shadow-sm hover:bg-amber-100 disabled:opacity-60"
+              aria-label={`Go to ${viewerHomeLocationName}`}
+              title={`Go to ${viewerHomeLocationName}`}
+            >
+              {viewerHomeLocationName}
+              <ArrowRight className="h-4 w-4" aria-hidden />
+            </button>
+          ) : null}
+        </div>
+      </section>
     );
   }
 
@@ -245,39 +321,78 @@ export function TimeClockSelfServe({
         })
       : null;
 
+  const isClockedIn = Boolean(viewerOpenEntryId);
+  const isOnBreak = Boolean(viewerOpenEntryId && viewerOpenBreakId);
+  const needsCode = !isClockedIn && requireCategorization && (categorizationMode === "job" || categorizationMode === "location");
+  const readyForClockIn =
+    !needsCode ||
+    (categorizationMode === "job" ? Boolean(jobCodeId) : Boolean(locationCodeId));
+
+  const blockBase =
+    "group relative overflow-hidden rounded-2xl p-5 shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60";
+  const blockInner = "flex items-center justify-between gap-4";
+  const blockTitle = "text-xl font-black tracking-tight";
+  const blockHint = "mt-1 text-xs font-semibold uppercase tracking-wide opacity-85";
+
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="text-sm font-semibold text-slate-800">Your time today</h3>
-      <p className="mt-1 text-sm text-slate-700">
-        Clocking in as <span className="font-semibold text-slate-900">{displayName}</span>
-      </p>
-      {geofenceActive || locationTrackingMode === "clock_in_out" ? (
-        <p className="mt-1 text-xs text-slate-500">
-          Location can be captured at clock-in/out (browser may ask for location).
-        </p>
-      ) : (
-        <p className="mt-1 text-xs text-slate-500">
-          Punch in/out is saved to the time clock with a timestamp. Optional job code is for payroll
-          coding only.
-        </p>
-      )}
-      {!viewerOpenEntryId && categorizationMode !== "none" ? (
-        <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-3">
-          <p className="text-xs font-semibold text-slate-700">
-            {categorizationMode === "job"
-              ? `Job${requireCategorization ? " (required)" : " (optional)"}`
-              : `Location${requireCategorization ? " (required)" : " (optional)"}`}
+    <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">{displayName}</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {gpsRequired ? "GPS required for this clock." : "GPS optional."}
           </p>
-          <div className="mt-2 max-w-xs">
+        </div>
+        {isClockedIn ? (
+          <div
+            className={`rounded-xl border px-4 py-2 ${
+              isOnBreak
+                ? "border-amber-200 bg-amber-50 text-amber-950"
+                : "border-emerald-200 bg-emerald-50 text-emerald-950"
+            }`}
+            role="status"
+            aria-live="polite"
+          >
+            <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
+              {isOnBreak ? "On break" : "Clocked in"}
+            </p>
+            <p className="mt-1 font-mono text-sm font-bold tabular-nums">
+              {clockInTimeLabel ? `Since ${clockInTimeLabel}` : "—"}
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Status
+            </p>
+            <p className="mt-1 text-sm font-bold text-slate-900">Clocked out</p>
+          </div>
+        )}
+      </div>
+
+      {/* Optional required code picker (minimal, only when it blocks clock-in). */}
+      {!isClockedIn && categorizationMode !== "none" ? (
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {categorizationMode === "job" ? "Job" : "Location"}
+              {requireCategorization ? " · Required" : ""}
+            </p>
+            <p className="text-xs text-slate-500">
+              {categorizationMode === "job" ? "Payroll coding" : "Costing tag"}
+            </p>
+          </div>
+          <div className="mt-3 max-w-sm">
             {categorizationMode === "job" ? (
               <select
                 value={jobCodeId}
                 onChange={(e) => setJobCodeId(e.target.value)}
                 disabled={pending}
-                className="h-10 w-full cursor-pointer appearance-none rounded-md border border-slate-200 bg-white px-3 pr-10 text-sm text-slate-800 shadow-sm focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/15 disabled:opacity-60"
+                className="h-12 w-full cursor-pointer appearance-none rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/15 disabled:opacity-60"
                 aria-label="Pick job"
               >
-                <option value="">Select job</option>
+                <option value="">Select…</option>
                 {jobCodes.map((j) => (
                   <option key={j.id} value={j.id}>
                     {j.label}
@@ -289,10 +404,10 @@ export function TimeClockSelfServe({
                 value={locationCodeId}
                 onChange={(e) => setLocationCodeId(e.target.value)}
                 disabled={pending}
-                className="h-10 w-full cursor-pointer appearance-none rounded-md border border-slate-200 bg-white px-3 pr-10 text-sm text-slate-800 shadow-sm focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/15 disabled:opacity-60"
+                className="h-12 w-full cursor-pointer appearance-none rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/15 disabled:opacity-60"
                 aria-label="Pick location code"
               >
-                <option value="">Select location</option>
+                <option value="">Select…</option>
                 {locationCodes.map((l) => (
                   <option key={l.id} value={l.id}>
                     {l.label}
@@ -301,93 +416,196 @@ export function TimeClockSelfServe({
               </select>
             )}
           </div>
-          <p className="mt-2 text-xs text-slate-500">
-            {categorizationMode === "job"
-              ? "Tags this shift for reporting and payroll export."
-              : "Tags this shift for reporting and store costing."}
-          </p>
         </div>
       ) : null}
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        {viewerOpenEntryId ? (
-          <>
-            <div
-              className="inline-flex items-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm"
-              role="status"
-              aria-live="polite"
-            >
-              Clocked in
-              {clockInTimeLabel ? (
-                <span className="ml-2 tabular-nums font-medium text-emerald-100">
-                  since {clockInTimeLabel}
-                </span>
-              ) : null}
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        {/* CLOCK IN (vibrant green) */}
+        {!isClockedIn ? (
+          <button
+            type="button"
+            disabled={pending || !readyForClockIn}
+            onClick={onClockIn}
+            className={`${blockBase} border border-emerald-300 bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-500/25`}
+            aria-label="Clock in"
+          >
+            <div className={blockInner}>
+              <div className="min-w-0">
+                <p className={blockTitle}>In</p>
+                <p className={blockHint}>{pending ? "Working…" : "Tap once"}</p>
+              </div>
+              <div className="rounded-2xl bg-white/15 p-3">
+                <LogIn className="h-7 w-7" aria-hidden />
+              </div>
             </div>
-            {viewerOpenBreakId ? (
+          </button>
+        ) : null}
+
+        {/* CLOCK OUT (bold red) */}
+        {isClockedIn ? (
+          <div
+            className={`${blockBase} border border-red-300 bg-red-600 text-white focus-within:ring-4 focus-within:ring-red-500/25`}
+            aria-label="Clock out"
+          >
+            <div className={blockInner}>
+              <div className="min-w-0">
+                <p className={blockTitle}>Out</p>
+                <p className={blockHint}>
+                  {pending ? "Working…" : clockOutArmed ? "Slide to confirm" : "Tap to arm"}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-white/15 p-3">
+                <LogOut className="h-7 w-7" aria-hidden />
+              </div>
+            </div>
+
+            {!clockOutArmed ? (
               <button
                 type="button"
                 disabled={pending}
-                onClick={onEndBreak}
-                className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50"
+                onClick={() => {
+                  setClockOutArmed(true);
+                }}
+                className="mt-4 w-full rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-bold tracking-tight text-white hover:bg-white/15 disabled:opacity-60"
               >
-                {pending ? "…" : "End break"}
+                Confirm
               </button>
             ) : (
-              <>
-                <label className="block text-xs font-medium text-slate-600">
-                  Break type
-                  <select
-                    value={breakPaid ? "paid" : "unpaid"}
-                    onChange={(e) => setBreakPaid(e.target.value === "paid")}
+              <div className="mt-4 space-y-2">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={clockOutSlide}
+                  disabled={pending}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setClockOutSlide(v);
+                    if (v >= 98) {
+                      // Execute once; reset slider immediately for repeat safety.
+                      setClockOutSlide(0);
+                      onClockOut();
+                    }
+                  }}
+                  className="w-full accent-white"
+                  aria-label="Slide to confirm clock out"
+                />
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
                     disabled={pending}
-                    className="mt-1 block rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800"
+                    onClick={() => {
+                      setClockOutArmed(false);
+                      setClockOutSlide(0);
+                    }}
+                    className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15 disabled:opacity-60"
                   >
-                    <option value="unpaid">Unpaid (meal / rest)</option>
-                    <option value="paid">Paid break</option>
-                  </select>
-                </label>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={onClockOut}
+                    className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15 disabled:opacity-60"
+                    aria-label="Tap to confirm clock out"
+                  >
+                    Tap to confirm
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {/* BREAK (amber) */}
+        {isClockedIn && breaksEnabled ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 shadow-sm">
+            <div className="grid gap-3">
+              {isOnBreak ? (
                 <button
                   type="button"
                   disabled={pending}
-                  onClick={onStartBreak}
-                  className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                  onClick={onEndBreak}
+                  className={`${blockBase} border border-amber-300 bg-amber-500 text-amber-950 hover:bg-amber-600 focus:outline-none focus:ring-4 focus:ring-amber-400/30`}
+                  aria-label="End break"
                 >
-                  {pending ? "…" : "Start break"}
+                  <div className={blockInner}>
+                    <div className="min-w-0">
+                      <p className={blockTitle}>Break</p>
+                      <p className={blockHint}>End</p>
+                    </div>
+                    <div className="rounded-2xl bg-white/35 p-3">
+                      <Play className="h-7 w-7" aria-hidden />
+                    </div>
+                  </div>
                 </button>
-              </>
-            )}
-            <button
-              type="button"
-              disabled={pending}
-              onClick={onClockOut}
-              className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-900 disabled:opacity-50"
-            >
-              {pending ? "…" : "Clock out"}
-            </button>
-          </>
-        ) : (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={onClockIn}
-            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
-          >
-            {pending ? "…" : "Clock in"}
-          </button>
-        )}
+              ) : (
+                <>
+                  {allowPaidBreaks ? (
+                    <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-white px-3 py-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
+                        Break type
+                      </p>
+                      <div className="flex items-center rounded-lg border border-amber-200 bg-amber-50 p-1 text-xs font-semibold text-amber-950">
+                        <button
+                          type="button"
+                          disabled={pending}
+                          onClick={() => setBreakPaid(false)}
+                          className={`rounded-md px-2 py-1 ${!breakPaid ? "bg-white shadow-sm" : "opacity-70"}`}
+                        >
+                          Unpaid
+                        </button>
+                        <button
+                          type="button"
+                          disabled={pending}
+                          onClick={() => setBreakPaid(true)}
+                          className={`ml-1 rounded-md px-2 py-1 ${breakPaid ? "bg-white shadow-sm" : "opacity-70"}`}
+                        >
+                          Paid
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={onStartBreak}
+                    className={`${blockBase} border border-amber-300 bg-amber-500 text-amber-950 hover:bg-amber-600 focus:outline-none focus:ring-4 focus:ring-amber-400/30`}
+                    aria-label="Start break"
+                  >
+                    <div className={blockInner}>
+                      <div className="min-w-0">
+                        <p className={blockTitle}>Break</p>
+                        <p className={blockHint}>Start</p>
+                      </div>
+                      <div className="rounded-2xl bg-white/35 p-3">
+                        <Coffee className="h-7 w-7" aria-hidden />
+                      </div>
+                    </div>
+                    <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-amber-900/80">
+                      {allowPaidBreaks ? (breakPaid ? "Paid" : "Unpaid") : "Unpaid"}
+                    </p>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
       </div>
-      <div className="mt-4 border-t border-slate-100 pt-3">
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
         <button
           type="button"
           onClick={() => setTimeOffOpen(true)}
           disabled={pending}
           aria-haspopup="dialog"
-          className="text-sm font-medium text-orange-700 underline decoration-orange-300 underline-offset-2 hover:text-orange-900 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
         >
-          Request time off
+          <Pause className="h-4 w-4 text-orange-700" aria-hidden />
+          Time off
         </button>
       </div>
-      {msg ? <p className="mt-2 text-sm text-red-600">{msg}</p> : null}
+
       <EmployeeTimeOffRequestModal
         open={timeOffOpen}
         onClose={() => setTimeOffOpen(false)}
@@ -395,6 +613,6 @@ export function TimeClockSelfServe({
         employeeId={viewerEmployeeId}
         onSaved={() => router.refresh()}
       />
-    </div>
+    </section>
   );
 }

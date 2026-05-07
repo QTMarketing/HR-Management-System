@@ -18,14 +18,14 @@ export function AttendanceTrendChart({ points, errorMessage, emptyHint }: Props)
   return (
     <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
       <h2 className="text-sm font-semibold text-slate-800">Attendance trends</h2>
-      <p className="mt-0.5 text-xs text-slate-500">Last 7 days · on-time % (from Supabase)</p>
+      <p className="mt-0.5 text-xs text-slate-500">Last 7 days · on-time %</p>
 
       {errorMessage ? (
         <p className="mt-6 text-sm text-red-600">{errorMessage}</p>
       ) : points.length === 0 ? (
         <p className="mt-6 text-sm text-slate-500">
           {emptyHint ??
-            "No trend data. Run supabase/migrations/002_attendance_and_staff_updates.sql in the SQL Editor."}
+            "No trend data yet. Attendance trends will appear once there’s enough history."}
         </p>
       ) : (
         <div className="mt-6 flex h-56 items-end justify-between gap-2">

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useTransition, type ReactNode } from "react";
+import { Settings } from "lucide-react";
 
 type View = "today" | "timesheets" | "settings";
 
@@ -104,7 +105,10 @@ export function TimeClockDetailShell({
                   : "border-transparent text-slate-500 hover:text-slate-800"
               }`}
             >
-              Setup
+              <span className="inline-flex items-center gap-2">
+                <Settings className="h-4 w-4" aria-hidden />
+                Settings
+              </span>
             </button>
           ) : null}
         </nav>

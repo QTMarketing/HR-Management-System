@@ -49,8 +49,7 @@ export function RecentStaffUpdates({ rows, errorMessage, emptyHint }: Props) {
         <p className="px-5 py-4 text-sm text-red-600">{errorMessage}</p>
       ) : rows.length === 0 ? (
         <p className="px-5 py-4 text-sm text-slate-500">
-          {emptyHint ??
-            "No rows yet. Run supabase/migrations/002_attendance_and_staff_updates.sql."}
+          {emptyHint ?? "No updates yet. Team updates will show up here as they come in."}
         </p>
       ) : (
         <div className="overflow-x-auto">

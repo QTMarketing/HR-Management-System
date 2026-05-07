@@ -802,13 +802,10 @@ export function UsersDirectory({
       </div>
 
       <p className="text-xs text-slate-500">
-        Roles map through <code className="rounded bg-slate-100 px-1">lib/rbac/matrix.ts</code>{" "}
-        (<strong className="font-semibold text-slate-600">Owner</strong> / Org Owner includes{" "}
-        <code className="rounded bg-slate-100 px-1">org.owner</code>: promote admins & edit module access).
-        Store Managers keep day-to-day user management where permitted.{" "}
-        <strong className="font-semibold text-slate-600">Users and time entries are not deleted</strong>{" "}
-        — archive from the profile (users) or from Timesheets (time entry). Canonical store lead per
-        location is on{" "}
+        <strong className="font-semibold text-slate-600">Company owners</strong> can promote store managers
+        and update admin access. Store managers keep day-to-day user management where permitted.{" "}
+        <strong className="font-semibold text-slate-600">Users and time entries aren’t deleted</strong> —
+        archive from the profile (users) or from Timesheets (time entry). Store leads are managed on{" "}
         <strong className="font-semibold text-slate-600">Stores</strong>.
       </p>
 

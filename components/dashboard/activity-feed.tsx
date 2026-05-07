@@ -54,7 +54,7 @@ export function ActivityFeed({
       ) : items.length === 0 ? (
         <p className="shrink-0 px-5 py-4 text-sm text-slate-500">
           {emptyHint ??
-            "No events yet. Add rows in Supabase or run the seed SQL in supabase/migrations/001_activity_events.sql."}
+            "No activity yet. Once your system is connected, recent changes and time events will show here."}
         </p>
       ) : (
         <>

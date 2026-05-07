@@ -33,6 +33,8 @@ export function weekRangeLabel(fromMonday: Date, toSunday: Date): string {
 
 /** Minutes worked for one punch when closed. */
 export function punchMinutes(row: EnrichedPunchRow): number | null {
+  // Prefer enriched minutes (net of unpaid breaks when attached).
+  if (row.workedMinutes != null) return row.workedMinutes;
   return dailyTotalLabel(row.clockInAt, row.clockOutAt).minutes;
 }
 

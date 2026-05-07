@@ -1,15 +1,12 @@
-const CX = 50;
-const CY = 50;
-const OUTER_R = 40;
-/** Number of equal pie sections around the circle */
-const SLICE_COUNT = 12;
-/** Extra turn so the wedge pattern sits how we want (45° clockwise from default top start). */
-const PIE_ROTATION_RAD = Math.PI / 4;
-
 type Props = {
   percent: number;
   scopeLabel: string;
   hasMetrics: boolean;
+  scheduled: number;
+  present: number;
+  onLeave: number;
+  /** Trend pill rendered next to Present in footer (e.g. "+2.4%"). */
+  presentTrendText?: string | null;
 };
 
 function clampPct(n: number): number {
@@ -17,54 +14,45 @@ function clampPct(n: number): number {
   return Math.min(100, Math.max(0, n));
 }
 
-function wedgePath(sliceIndex: number, total: number): string {
-  const base = -Math.PI / 2 + PIE_ROTATION_RAD;
-  const a0 = base + (sliceIndex * 2 * Math.PI) / total;
-  const a1 = base + ((sliceIndex + 1) * 2 * Math.PI) / total;
-  const x0 = CX + OUTER_R * Math.cos(a0);
-  const y0 = CY + OUTER_R * Math.sin(a0);
-  const x1 = CX + OUTER_R * Math.cos(a1);
-  const y1 = CY + OUTER_R * Math.sin(a1);
-  return `M ${CX} ${CY} L ${x0} ${y0} A ${OUTER_R} ${OUTER_R} 0 0 1 ${x1} ${y1} Z`;
-}
-
-/** Stronger on first filled slice, softer toward the end of the filled run */
-function filledSliceOpacity(indexInFilledRun: number, filledCount: number): number {
-  if (filledCount <= 0) return 0;
-  if (filledCount === 1) return 1;
-  const t = indexInFilledRun / (filledCount - 1);
-  return 1 - t * 0.35;
-}
-
-export function TotalAttendanceChart({ percent, scopeLabel, hasMetrics }: Props) {
+export function TotalAttendanceChart({
+  percent,
+  scopeLabel,
+  hasMetrics,
+  scheduled,
+  present,
+  onLeave,
+  presentTrendText = null,
+}: Props) {
   const pct = clampPct(percent);
   const display = hasMetrics
     ? `${Number.isInteger(pct) ? pct : pct.toFixed(1)}%`
     : "—";
-  const filledCount = hasMetrics
-    ? Math.min(SLICE_COUNT, Math.round((pct / 100) * SLICE_COUNT))
-    : 0;
+
+  // Continuous half-circle tube gauge.
+  // viewBox is intentionally tall to give the percentage text a generous hollow.
+  const cx = 120;
+  const cy = 110;
+  const r = 90;
+  const stroke = 18;
+  const arcLen = Math.PI * r;
+  const progress = hasMetrics ? pct / 100 : 0;
+  const dashFilled = Math.max(0, Math.min(arcLen, arcLen * progress));
+  const dashGap = Math.max(0, arcLen - dashFilled);
+
+  const arcPath = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
 
   return (
-    <div className="relative flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-xl bg-gradient-to-br from-orange-400 to-orange-600 py-2.5 pl-4 pr-6 shadow-md shadow-orange-600/30 sm:py-3 sm:pl-5 sm:pr-7">
-      <div className="relative z-10 flex shrink-0 items-center gap-2">
-        <span
-          className="relative flex h-2 w-2 shrink-0"
-          title="Active — live metrics"
-          aria-hidden
-        >
-          <span className="absolute inline-flex h-full w-full rounded-full bg-lime-300 opacity-70 motion-safe:animate-ping motion-reduce:opacity-0" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-lime-300 shadow-[0_0_14px_rgba(190,242,100,1),0_0_6px_rgba(253,224,71,0.9)]" />
-        </span>
-        <h3 className="text-sm font-bold tracking-tight text-white">
-          Total attendance
-        </h3>
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col justify-between overflow-hidden rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+      <div className="shrink-0">
+        <h3 className="text-sm font-semibold tracking-tight text-slate-900">Total attendance</h3>
+        <p className="mt-0.5 text-xs text-slate-500">{scopeLabel}</p>
       </div>
-      <div className="relative z-10 flex min-h-0 flex-1 items-center justify-start gap-3 pt-2 sm:gap-4 sm:pt-2.5">
-        <div className="relative aspect-square w-full max-w-[170px] shrink-0 sm:max-w-[180px]">
+
+      <div className="relative flex min-h-0 flex-1 items-center justify-center pt-2">
+        <div className="relative w-full max-w-[380px]">
           <svg
-            viewBox="0 0 100 100"
-            className="h-full w-full"
+            viewBox="0 0 240 140"
+            className="block h-auto w-full"
             role="img"
             aria-label={
               hasMetrics
@@ -72,32 +60,74 @@ export function TotalAttendanceChart({ percent, scopeLabel, hasMetrics }: Props)
                 : "Total attendance, no data"
             }
           >
-            {Array.from({ length: SLICE_COUNT }, (_, i) => {
-              const isFilled = i < filledCount;
-              const opacity = isFilled
-                ? filledSliceOpacity(i, filledCount)
-                : 0.22;
-              return (
-                <path
-                  key={i}
-                  d={wedgePath(i, SLICE_COUNT)}
-                  fill="rgb(255,255,255)"
-                  fillOpacity={opacity}
-                  stroke="rgba(255,255,255,0.38)"
-                  strokeWidth={0.65}
-                  strokeLinejoin="miter"
-                />
-              );
-            })}
+            <defs>
+              <linearGradient id="attendanceFill" x1="0" y1="1" x2="1" y2="0">
+                <stop offset="0%" stopColor="#34d399" />
+                <stop offset="100%" stopColor="#059669" />
+              </linearGradient>
+            </defs>
+
+            <path
+              d={arcPath}
+              fill="none"
+              stroke="rgb(241,245,249)"
+              strokeWidth={stroke}
+              strokeLinecap="round"
+            />
+            <path
+              d={arcPath}
+              fill="none"
+              stroke="url(#attendanceFill)"
+              strokeWidth={stroke}
+              strokeLinecap="round"
+              strokeDasharray={`${dashFilled} ${dashGap}`}
+            />
           </svg>
+
+          <div className="pointer-events-none absolute inset-x-0 bottom-[24%] text-center">
+            <div className="text-5xl font-extrabold tabular-nums tracking-tight text-slate-900">
+              {display}
+            </div>
+            <div className="mt-1 text-xs font-semibold text-slate-500">
+              {hasMetrics ? "On-time attendance rate" : "No attendance data yet"}
+            </div>
+          </div>
         </div>
-        <div className="flex min-w-0 flex-col justify-center gap-1.5 pl-1 pr-0 sm:pl-1.5">
-          <p className="whitespace-nowrap text-4xl font-bold leading-none tracking-tight text-white tabular-nums drop-shadow-sm sm:text-5xl lg:text-4xl xl:text-5xl 2xl:text-6xl">
-            {display}
-          </p>
-          <p className="max-w-full text-pretty text-sm font-medium leading-snug text-white/80 sm:text-base lg:text-lg">
-            {scopeLabel}
-          </p>
+      </div>
+
+      <div className="mt-5 shrink-0 border-t border-slate-100 pt-4">
+        <div className="grid grid-cols-3 divide-x divide-slate-100">
+          <div className="px-1.5 text-center">
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Scheduled
+            </div>
+            <div className="text-2xl font-bold tabular-nums text-slate-900">
+              {hasMetrics ? String(scheduled) : "—"}
+            </div>
+          </div>
+          <div className="px-1.5 text-center">
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Present
+            </div>
+            <div className="flex items-center justify-center gap-2">
+              <div className="text-2xl font-bold tabular-nums text-slate-900">
+                {hasMetrics ? String(present) : "—"}
+              </div>
+              {hasMetrics && !!presentTrendText?.trim() ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-100">
+                  <span aria-hidden>↑</span> {presentTrendText.trim()}
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <div className="px-1.5 text-center">
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              On Leave
+            </div>
+            <div className="text-2xl font-bold tabular-nums text-slate-900">
+              {hasMetrics ? String(onLeave) : "—"}
+            </div>
+          </div>
         </div>
       </div>
     </div>

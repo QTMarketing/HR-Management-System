@@ -14,6 +14,16 @@ export type TimesheetPeriodConfig = {
    */
   week_starts_on?: number;
   /**
+   * Bi-weekly epoch anchor start (YYYY-MM-DD, local calendar date).
+   * When present, bi-weekly periods are aligned to this exact start date
+   * (so schedules match legacy payroll calendars).
+   *
+   * Example:
+   * - West: 2025-12-15 (Mon start)
+   * - East: 2025-12-25 (Thu start)
+   */
+  biweekly_anchor_start?: string;
+  /**
    * Monthly pay-period cutoff day (calendar day). Mirrors Connecteam’s “Pay period ends”.
    * When set, the “monthly” period becomes (cutoff+1 of prior month) … (cutoff of current month).
    * Allowed: 26–30, or "last_day" (default when omitted).
@@ -65,10 +75,13 @@ export function normalizePeriodConfig(
   const payroll_software = typeof o.payroll_software === "string" ? o.payroll_software : undefined;
   const payroll_handled = typeof o.payroll_handled === "string" ? o.payroll_handled : undefined;
   const payroll_owner = typeof o.payroll_owner === "string" ? o.payroll_owner : undefined;
+  const bas = typeof o.biweekly_anchor_start === "string" ? o.biweekly_anchor_start : undefined;
+  const biweekly_anchor_start = bas && YMD_RE.test(bas) ? bas : undefined;
 
   const base: TimesheetPeriodConfig = {
     week_starts_on: weekStartsOn,
     monthly_ends_on: monthlyEndsOn,
+    biweekly_anchor_start,
     payroll_software,
     payroll_handled,
     payroll_owner,
@@ -145,7 +158,7 @@ export function getPeriodBounds(
   }
 
   if (kind === "bi_weekly") {
-    const start = startOfBiWeekContaining(anchor, weekStartsOn);
+    const start = startOfBiWeekContaining(anchor, weekStartsOn, config.biweekly_anchor_start);
     const endExclusive = new Date(start);
     endExclusive.setDate(endExclusive.getDate() + 14);
     return { start, endExclusive };
@@ -328,8 +341,17 @@ function biweekEpoch(weekStartsOn: number): Date {
   return startOfWeek(new Date(2020, 0, 5), weekStartsOn);
 }
 
-function startOfBiWeekContaining(anchor: Date, weekStartsOn: number): Date {
-  const epoch = biweekEpoch(weekStartsOn);
+function parseYmdLocal(ymd: string): Date | null {
+  if (!YMD_RE.test(ymd)) return null;
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(y, m - 1, d, 0, 0, 0, 0);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function startOfBiWeekContaining(anchor: Date, weekStartsOn: number, anchorYmd?: string): Date {
+  const customEpoch =
+    anchorYmd && YMD_RE.test(anchorYmd) ? parseYmdLocal(anchorYmd) : null;
+  const epoch = customEpoch ? startOfWeek(customEpoch, weekStartsOn) : biweekEpoch(weekStartsOn);
   const weekStart = startOfWeek(anchor, weekStartsOn);
   const msPerDay = 86400000;
   const diffDays = Math.round((weekStart.getTime() - epoch.getTime()) / msPerDay);
