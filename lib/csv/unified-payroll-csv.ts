@@ -47,6 +47,16 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * Render a money value for the CSV. Returns an empty string when the input
+ * is null so payroll ops can fill in the rate manually without us shipping
+ * a fake $0.00. (This is the Track-C "manual flexibility" guarantee.)
+ */
+function moneyCell(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "";
+  return round2(value).toFixed(2);
+}
+
 /** Stable, payroll-provider-friendly column order. Don't reorder casually. */
 const HEADER_COLUMNS = [
   "Employee ID",
@@ -59,7 +69,10 @@ const HEADER_COLUMNS = [
   "Holiday Hours",
   "Hourly Rate",
   "Gross Pay",
-  "Demo Rate Flag",
+  // Renamed from "Demo Rate Flag" — semantics are now "TRUE = no rate on
+  // file, fill it in by hand". Same column position so existing payroll
+  // greps still work; the header changed.
+  "Rate Missing Flag",
   "Period Start",
   "Period End",
 ] as const;
@@ -94,8 +107,10 @@ export function buildUnifiedPayrollCsv(
         round2(p.overtimeHours).toFixed(2),
         round2(p.approvedPtoHours).toFixed(2),
         round2(p.paidHolidayHours).toFixed(2),
-        round2(p.hourlyRate).toFixed(2),
-        round2(p.estimatedGrossPay).toFixed(2),
+        // Hourly rate + Gross pay are now nullable. Empty cell = "no rate
+        // on file"; payroll fills it in. We never ship a fake $15.00.
+        moneyCell(p.hourlyRate),
+        moneyCell(p.estimatedGrossPay),
         // Loud-fallback signal — payroll ops greps this column.
         p.isUsingFallbackRate,
         meta.startDateYmd,

@@ -14,11 +14,25 @@
  * so callers can render the warning.
  */
 
-/** Marked, deliberately round demo rate. Do NOT change without updating the UI badge copy. */
+/**
+ * Legacy demo rate — kept exported for historical callers but no longer
+ * substituted by the calculator. The new contract is:
+ *   - rate present → compute pay
+ *   - rate missing → pay = null (manager fills it in on the export)
+ * Don't reuse this in new code.
+ *
+ * @deprecated The calculator now returns null pay when `hourly_rate` is
+ * missing instead of substituting a demo wage. Kept only for any UI badge
+ * copy that still references it.
+ */
 export const DEMO_FALLBACK_HOURLY_RATE = 15;
 
-/** What an HR system shows next to the money so no one ships it as real payroll. */
-export const DEMO_FALLBACK_BADGE_LABEL = "⚠️ DEMO RATE — UPDATE IN PROFILE";
+/**
+ * Banner copy reused by the timesheets panel when at least one row in the
+ * period is missing a wage. The banner now reads "wages missing" rather
+ * than "DEMO RATE", since we no longer fake numbers.
+ */
+export const DEMO_FALLBACK_BADGE_LABEL = "⚠️ Hourly rate missing — set in profile";
 
 /** Federal FLSA default. Used as the seed default for `payroll_policies.weekly_ot_threshold`. */
 export const DEFAULT_WEEKLY_OT_THRESHOLD_HOURS = 40;
@@ -92,20 +106,28 @@ export type PayableHoursResult = {
   paidHolidayHours: number;
   /** regularHours + overtimeHours + approvedPtoHours + paidHolidayHours, rounded to 0.01h. */
   totalPayableHours: number;
-  /** What we actually multiplied by — the real rate or the DEMO fallback. */
-  hourlyRate: number;
-  /** When true, the UI MUST render a `DEMO RATE` warning badge next to the money. */
+  /**
+   * Real wage from `employees.hourly_rate`. **Null when no rate is on file** —
+   * we no longer substitute a demo $15/hr. Callers must show "—" / "set rate"
+   * and let payroll fill it in manually on the export.
+   */
+  hourlyRate: number | null;
+  /**
+   * `true` when the input had no usable hourly rate. Drives the timesheet
+   * panel's "Hourly rate missing — set in profile" banner. (Renamed in
+   * spirit; kept under the old key so no downstream UI breaks.)
+   */
   isUsingFallbackRate: boolean;
   /** Threshold actually applied (after defaulting). Useful for the UI to show "(over 40h/wk)". */
   weeklyOtThreshold: number;
   /** Multiplier actually applied (typically 1.5). Surfaced for UI tooltip math. */
   otMultiplier: number;
-  /** (regular + PTO + holiday) * rate, rounded to 0.01. */
-  estimatedRegularPay: number;
-  /** overtime * rate * otMultiplier, rounded to 0.01. */
-  estimatedOvertimePay: number;
-  /** estimatedRegularPay + estimatedOvertimePay, rounded to 0.01. */
-  estimatedGrossPay: number;
+  /** (regular + PTO + holiday) * rate, rounded to 0.01. **Null when no rate.** */
+  estimatedRegularPay: number | null;
+  /** overtime * rate * otMultiplier, rounded to 0.01. **Null when no rate.** */
+  estimatedOvertimePay: number | null;
+  /** estimatedRegularPay + estimatedOvertimePay, rounded to 0.01. **Null when no rate.** */
+  estimatedGrossPay: number | null;
 };
 
 /** Round to 2 decimals without floating-point fuzz like 24.299999999999997. */
@@ -114,10 +136,21 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Sanitize a rate input. Returns `{ rate, isFallback }`. */
-function resolveHourlyRate(raw: number | null | undefined): { rate: number; isFallback: boolean } {
+/**
+ * Sanitize a rate input. Returns `{ rate: number | null, isFallback }`.
+ *
+ * Contract change (post-audit): if no real rate is supplied we **return
+ * null** instead of substituting a demo wage. The calculator then leaves
+ * pay fields as null and the UI shows "—" / a banner that nudges the
+ * manager to fill it in on the export. This keeps payroll honest by
+ * never inventing money.
+ */
+function resolveHourlyRate(raw: number | null | undefined): {
+  rate: number | null;
+  isFallback: boolean;
+} {
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
-    return { rate: DEMO_FALLBACK_HOURLY_RATE, isFallback: true };
+    return { rate: null, isFallback: true };
   }
   return { rate: raw, isFallback: false };
 }
@@ -207,13 +240,25 @@ export function calculatePayableHours(input: PayableHoursInput): PayableHoursRes
 
   const { rate, isFallback } = resolveHourlyRate(input.hourlyRate);
 
-  // Regular pay covers reg-rate buckets: regular worked + PTO + holiday.
-  // Overtime pay multiplies only the OT-worked bucket by the policy multiplier.
-  const estimatedRegularPay = round2(
-    (regularHours + approvedPtoHours + paidHolidayHours) * rate,
-  );
-  const estimatedOvertimePay = round2(overtimeHours * rate * otMultiplier);
-  const estimatedGrossPay = round2(estimatedRegularPay + estimatedOvertimePay);
+  // No rate on file → return hours but leave every pay field null so the
+  // export / UI can render "—" instead of inventing dollars.
+  let estimatedRegularPay: number | null;
+  let estimatedOvertimePay: number | null;
+  let estimatedGrossPay: number | null;
+
+  if (rate === null) {
+    estimatedRegularPay = null;
+    estimatedOvertimePay = null;
+    estimatedGrossPay = null;
+  } else {
+    // Regular pay covers reg-rate buckets: regular worked + PTO + holiday.
+    // Overtime pay multiplies only the OT-worked bucket by the policy multiplier.
+    estimatedRegularPay = round2(
+      (regularHours + approvedPtoHours + paidHolidayHours) * rate,
+    );
+    estimatedOvertimePay = round2(overtimeHours * rate * otMultiplier);
+    estimatedGrossPay = round2(estimatedRegularPay + estimatedOvertimePay);
+  }
 
   return {
     workedHours,
@@ -265,9 +310,12 @@ export function summarizePayableHours(rows: PayableHoursResult[]): PayableHoursS
     totalPayableHours += r.totalPayableHours;
     regularHours += r.regularHours;
     overtimeHours += r.overtimeHours;
-    estimatedGrossPay += r.estimatedGrossPay;
-    estimatedRegularPay += r.estimatedRegularPay;
-    estimatedOvertimePay += r.estimatedOvertimePay;
+    // Pay is now nullable per row — when a row has no rate, we skip its
+    // dollars from the rollup. Hours still aggregate normally so the
+    // period total isn't distorted by missing wages.
+    if (r.estimatedGrossPay !== null) estimatedGrossPay += r.estimatedGrossPay;
+    if (r.estimatedRegularPay !== null) estimatedRegularPay += r.estimatedRegularPay;
+    if (r.estimatedOvertimePay !== null) estimatedOvertimePay += r.estimatedOvertimePay;
     if (r.isUsingFallbackRate) employeesOnFallbackRate += 1;
     if (r.overtimeHours > 0) employeesWithOvertime += 1;
   }
@@ -293,10 +341,16 @@ export function formatPayableHoursLabel(totalHours: number): string {
   return `${h}h ${m}m`;
 }
 
-/** "$1,234.56" — locale-agnostic for now (en-US). Swap to org currency when we model it. */
-export function formatGrossPayLabel(amount: number): string {
-  const safe = Number.isFinite(amount) ? amount : 0;
-  return safe.toLocaleString("en-US", {
+/**
+ * "$1,234.56" — locale-agnostic for now (en-US). Returns the literal "—" when
+ * `amount` is `null`, so the caller can pass `payable.estimatedGrossPay`
+ * directly without a guard. Swap to org currency when we model it.
+ */
+export function formatGrossPayLabel(amount: number | null | undefined): string {
+  if (amount === null || amount === undefined || !Number.isFinite(amount)) {
+    return "—";
+  }
+  return amount.toLocaleString("en-US", {
     style: "currency",
     currency: "USD",
     minimumFractionDigits: 2,

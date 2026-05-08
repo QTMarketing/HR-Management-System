@@ -559,12 +559,12 @@ export function EmployeeTimecardModal({
                 <button
                   type="button"
                   onClick={() => setAddMenuOpen((o) => !o)}
-                  className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-orange-400/60 bg-gradient-to-br from-orange-500 to-red-600 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-white shadow-sm transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-orange-500/40"
                   aria-expanded={addMenuOpen}
                   aria-haspopup="menu"
                 >
-                  Add
-                  <ChevronDown className="h-3.5 w-3.5 opacity-70" aria-hidden />
+                  Add time entry
+                  <ChevronDown className="h-3.5 w-3.5 opacity-90" aria-hidden />
                 </button>
                 {addMenuOpen ? (
                   <div
@@ -807,10 +807,10 @@ export function EmployeeTimecardModal({
                               </select>
                             </div>
                           </td>
-                          <td className={`${cellBorder} ${tdPad} whitespace-nowrap tabular-nums text-slate-800`}>
+                          <td className={`${cellBorder} ${tdPad} whitespace-nowrap tabular-nums font-semibold text-emerald-700`}>
                             {formatTimeOnly(r.clockInAt)}
                           </td>
-                          <td className={`${cellBorder} ${tdPad} whitespace-nowrap tabular-nums text-slate-600`}>
+                          <td className={`${cellBorder} ${tdPad} whitespace-nowrap tabular-nums font-semibold text-slate-500`}>
                             {r.clockOutAt ? formatTimeOnly(r.clockOutAt) : "—"}
                           </td>
                           <td className={`${cellBorder} ${tdPad} font-mono text-sm tabular-nums text-slate-800`}>

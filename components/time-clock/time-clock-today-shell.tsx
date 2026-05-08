@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { TimeClockSelfServe } from "@/components/time-clock/time-clock-self-serve";
 import { TimePunchTable } from "@/components/time-clock/time-punch-table";
 import type { StoreEmployeeOption } from "@/components/time-clock/time-off-request-sidebar";
@@ -9,10 +9,13 @@ import type { PendingTimeOffRequestRow } from "@/lib/time-clock/pending-time-off
 import type { EnrichedPunchRow, TimeClockTodayMetrics } from "@/lib/time-clock/types";
 
 function fmtHm(minutes: number): string {
-  const m = Math.max(0, Math.round(minutes));
-  const h = Math.floor(m / 60);
-  const mm = String(m % 60).padStart(2, "0");
-  return `${h}:${mm}`;
+  // Render as a duration ("8m" or "1h 23m") so it is never confused with a
+  // wall-clock time like "22:36".
+  const total = Math.max(0, Math.round(minutes));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (h <= 0) return `${m}m`;
+  return `${h}h ${String(m).padStart(2, "0")}m`;
 }
 
 function minutesBetween(startIso: string, endIso: string): number | null {
@@ -71,7 +74,22 @@ type Props = {
 };
 
 export function TimeClockTodayShell(props: Props) {
-  const today = useMemo(() => new Date(), []);
+  /*
+   * Re-render every 30s so "Hours today" actually ticks up. Without this
+   * the memo below only recomputes when `viewerOpenEntryClockInAt` (or
+   * the row list) changes, which means the tile froze at "0m" right after
+   * a punch and never updated. 30s is plenty for a minute-resolution
+   * label and keeps the cost negligible. The ticker also drives `today`
+   * so we re-anchor across a midnight rollover instead of comparing
+   * against a stale mount-time `Date`.
+   */
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const today = useMemo(() => new Date(nowMs), [nowMs]);
 
   const viewerRow = useMemo(() => {
     if (!props.viewerEmployeeId) return null;
@@ -115,17 +133,24 @@ export function TimeClockTodayShell(props: Props) {
             ? "border-orange-200 bg-orange-50 text-orange-950"
             : "border-slate-200 bg-slate-50 text-slate-800";
 
-  // Bottom: "Today" summary for the viewer (simple + robust).
+  // Header tile: how long the viewer has been working today on this clock.
+  // Prefer the live `viewerOpenEntryClockInAt` prop (set the moment they
+  // punch in) so the tile updates immediately, before the team list
+  // refetches. `nowMs` is the ticker — including it in deps is what makes
+  // the memo recompute every 30s so the label actually counts up.
   const todayWorkedMinutes = useMemo(() => {
-    if (!viewerRow) return null;
-    if (!viewerRow.hasRealTimeEntry) return null;
+    const nowIso = new Date(nowMs).toISOString();
+    const openAt = props.viewerOpenEntryClockInAt;
+    if (openAt && sameLocalDay(openAt, today)) {
+      return minutesBetween(openAt, nowIso);
+    }
+    if (!viewerRow || !viewerRow.hasRealTimeEntry) return null;
     if (!sameLocalDay(viewerRow.clockInAt, today)) return null;
     if (viewerRow.status === "open" || !viewerRow.clockOutAt) {
-      const m = minutesBetween(viewerRow.clockInAt, new Date().toISOString());
-      return m;
+      return minutesBetween(viewerRow.clockInAt, nowIso);
     }
     return viewerRow.workedMinutes ?? minutesBetween(viewerRow.clockInAt, viewerRow.clockOutAt);
-  }, [today, viewerRow]);
+  }, [today, viewerRow, props.viewerOpenEntryClockInAt, nowMs]);
 
   const recent = useMemo(() => {
     const rows = props.latestRows
@@ -147,10 +172,10 @@ export function TimeClockTodayShell(props: Props) {
           </div>
           <div className="rounded-xl border border-slate-200 bg-white/70 px-4 py-3 text-right">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-              Today (you)
+              Hours today
             </p>
             <p className="mt-1 font-mono text-lg font-bold tabular-nums text-slate-900">
-              {todayWorkedMinutes == null ? "—" : fmtHm(todayWorkedMinutes)}
+              {todayWorkedMinutes == null ? "0m" : fmtHm(todayWorkedMinutes)}
             </p>
           </div>
         </div>
@@ -238,7 +263,7 @@ export function TimeClockTodayShell(props: Props) {
               ))}
             </ul>
           ) : (
-            <p className="mt-2 text-sm text-slate-500">No recent punches yet.</p>
+            <p className="mt-2 text-sm text-slate-500">No recent time logs yet.</p>
           )}
         </div>
       </section>
@@ -247,7 +272,7 @@ export function TimeClockTodayShell(props: Props) {
       <TimePunchTable
         rows={props.latestRows}
         title="Team"
-        subtitle="One row per team member — latest punch on this clock"
+        subtitle="One row per team member — latest time log on this clock"
         emptyMessage="No employees to show."
         timeClockId={props.timeClockId}
         canManage={props.canManage}

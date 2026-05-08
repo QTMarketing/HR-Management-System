@@ -14,8 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Retail HR Management",
-  description: "Multi-location retail HR dashboard — scheduling, time, and people.",
+  title: "Internal Staff Management Portal",
+  description:
+    "Internal staff management portal — scheduling, time tracking, and people across all stores.",
 };
 
 export default function RootLayout({

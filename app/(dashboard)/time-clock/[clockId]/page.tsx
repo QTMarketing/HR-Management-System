@@ -651,6 +651,16 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
     geoRow!.geofence_radius_meters != null &&
     (geoRow!.geofence_radius_meters ?? 0) > 0;
 
+  // Self-serve scope: when the viewer can't manage time entries, narrow the
+  // Today team list AND the Timesheets grid to their own rows. Managers (Owner
+  // / Store Manager with time_clock.manage) keep the full team view. This
+  // protects coworker punch data and answers "where's *my* timesheet?".
+  if (!canArchiveTimeEntries && viewerEmployeeId) {
+    entries = entries.filter((r) => r.employeeId === viewerEmployeeId);
+    clockedInNowRows = clockedInNowRows.filter((r) => r.employeeId === viewerEmployeeId);
+    timesheetRows = timesheetRows.filter((r) => r.employeeId === viewerEmployeeId);
+  }
+
   return (
     <Suspense
       fallback={

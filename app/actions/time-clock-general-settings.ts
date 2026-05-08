@@ -1,6 +1,7 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
+import { timeClockTag } from "@/lib/cache/tags";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
@@ -70,6 +71,7 @@ export async function saveTimeClockGeneralSettings(params: {
 
   revalidatePath("/time-clock");
   revalidatePath(`/time-clock/${timeClockId}`);
+  updateTag(timeClockTag(timeClockId));
   return { ok: true };
 }
 

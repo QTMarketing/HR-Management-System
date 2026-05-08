@@ -19,12 +19,13 @@
  * Owner-only writes via RLS + RBAC. Reads are open to authenticated users.
  */
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import {
   SECURITY_AUDIT_ACTIONS,
   insertSecurityAudit,
   resolveActorEmployeeId,
 } from "@/lib/audit/security-audit";
+import { PAYROLL_POLICIES_TAG, payrollPolicyTag } from "@/lib/cache/tags";
 import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -193,6 +194,12 @@ export async function updatePayrollPolicy(
 
   revalidatePath("/pto-admin");
   revalidatePath("/time-clock");
+  // Tag-based fan-out: invalidate the specific scope (location row or
+  // global) and the broad "all policies" bucket so any cached payroll
+  // calculator picks up the new threshold instantly. Critical when a
+  // global rule changes — every store needs to see the new OT cap.
+  updateTag(payrollPolicyTag(locationId));
+  updateTag(PAYROLL_POLICIES_TAG);
 
   return { ok: true, row };
 }

@@ -40,6 +40,12 @@ type Props = {
   jobCodes: { id: string; label: string }[];
   locationCodes: { id: string; label: string }[];
   breaksEnabled?: boolean;
+  /**
+   * Manager setting from `time_clocks.allow_paid_breaks`. The employee widget
+   * intentionally ignores this — staff just hit "Start Break" and payroll
+   * decides paid vs unpaid from duration later. Kept on the props so existing
+   * callers don't break.
+   */
   allowPaidBreaks?: boolean;
   /** Archived clock — hide widget. */
   disabled?: boolean;
@@ -72,17 +78,19 @@ export function TimeClockSelfServe({
   jobCodes,
   locationCodes,
   breaksEnabled = true,
-  allowPaidBreaks = true,
+  allowPaidBreaks: _allowPaidBreaks = true,
   disabled = false,
 }: Props) {
+  void _allowPaidBreaks;
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [timeOffOpen, setTimeOffOpen] = useState(false);
   const [jobCodeId, setJobCodeId] = useState("");
   const [locationCodeId, setLocationCodeId] = useState("");
-  const [breakPaid, setBreakPaid] = useState(false);
+  // Two-step "arm-then-confirm" guards against an accidental clock-out
+  // (the costliest mis-tap on a busy shift). We keep the arm step but no
+  // longer require a drag gesture — a second deliberate tap is enough.
   const [clockOutArmed, setClockOutArmed] = useState(false);
-  const [clockOutSlide, setClockOutSlide] = useState(0);
 
   const trackingOn = useMemo(
     () => locationTrackingMode === "clock_in_out" || locationTrackingMode === "breadcrumbs",
@@ -91,9 +99,9 @@ export function TimeClockSelfServe({
   const gpsRequired = geofenceActive || trackingOn || requireLocationForPunch;
 
   useEffect(() => {
-    // Reset confirmation when the open entry changes.
+    // Reset the arm state whenever the open entry changes (clock-in / out)
+    // so the next session always starts from a clean "Tap to arm" prompt.
     setClockOutArmed(false);
-    setClockOutSlide(0);
   }, [viewerOpenEntryId]);
 
   function getPosition(): Promise<{ lat: number; lng: number } | null> {
@@ -196,7 +204,6 @@ export function TimeClockSelfServe({
         return;
       }
       setClockOutArmed(false);
-      setClockOutSlide(0);
       const stamp = new Date().toLocaleTimeString(undefined, {
         hour: "2-digit",
         minute: "2-digit",
@@ -210,16 +217,17 @@ export function TimeClockSelfServe({
   function onStartBreak() {
     if (!viewerOpenEntryId) return;
     startTransition(async () => {
+      // No paid/unpaid choice from the employee — payroll classifies later
+      // based on break duration vs. the location's policy.
       const r = await startBreak({
         timeEntryId: viewerOpenEntryId,
         locationId,
-        isPaid: breakPaid,
       });
       if (!r.ok) {
         toast.error(r.error);
         return;
       }
-      toast.success(breakPaid ? "Paid break started" : "Break started");
+      toast.success("Break started");
       router.refresh();
     });
   }
@@ -420,13 +428,13 @@ export function TimeClockSelfServe({
       ) : null}
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        {/* CLOCK IN (vibrant green) */}
+        {/* CLOCK IN — vibrant emerald gradient (semantic green for "go"). */}
         {!isClockedIn ? (
           <button
             type="button"
             disabled={pending || !readyForClockIn}
             onClick={onClockIn}
-            className={`${blockBase} border border-emerald-300 bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-500/25`}
+            className={`${blockBase} border border-emerald-400/40 bg-gradient-to-br from-emerald-500 to-emerald-700 text-white shadow-md hover:shadow-lg hover:from-emerald-500 hover:to-emerald-800 focus:outline-none focus:ring-4 focus:ring-emerald-500/30`}
             aria-label="Clock in"
           >
             <div className={blockInner}>
@@ -441,17 +449,21 @@ export function TimeClockSelfServe({
           </button>
         ) : null}
 
-        {/* CLOCK OUT (bold red) */}
+        {/* CLOCK OUT — vibrant orange→red gradient (signals "ending"). */}
         {isClockedIn ? (
           <div
-            className={`${blockBase} border border-red-300 bg-red-600 text-white focus-within:ring-4 focus-within:ring-red-500/25`}
+            className={`${blockBase} border border-orange-400/40 bg-gradient-to-br from-orange-500 to-red-600 text-white shadow-md focus-within:ring-4 focus-within:ring-red-500/25`}
             aria-label="Clock out"
           >
             <div className={blockInner}>
               <div className="min-w-0">
                 <p className={blockTitle}>Out</p>
                 <p className={blockHint}>
-                  {pending ? "Working…" : clockOutArmed ? "Slide to confirm" : "Tap to arm"}
+                  {pending
+                    ? "Working…"
+                    : clockOutArmed
+                      ? "Tap once more to confirm"
+                      : "Tap to arm"}
                 </p>
               </div>
               <div className="rounded-2xl bg-white/15 p-3">
@@ -463,133 +475,60 @@ export function TimeClockSelfServe({
               <button
                 type="button"
                 disabled={pending}
-                onClick={() => {
-                  setClockOutArmed(true);
-                }}
+                onClick={() => setClockOutArmed(true)}
                 className="mt-4 w-full rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-bold tracking-tight text-white hover:bg-white/15 disabled:opacity-60"
               >
                 Confirm
               </button>
             ) : (
-              <div className="mt-4 space-y-2">
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={clockOutSlide}
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
                   disabled={pending}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setClockOutSlide(v);
-                    if (v >= 98) {
-                      // Execute once; reset slider immediately for repeat safety.
-                      setClockOutSlide(0);
-                      onClockOut();
-                    }
-                  }}
-                  className="w-full accent-white"
-                  aria-label="Slide to confirm clock out"
-                />
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    disabled={pending}
-                    onClick={() => {
-                      setClockOutArmed(false);
-                      setClockOutSlide(0);
-                    }}
-                    className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15 disabled:opacity-60"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={pending}
-                    onClick={onClockOut}
-                    className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15 disabled:opacity-60"
-                    aria-label="Tap to confirm clock out"
-                  >
-                    Tap to confirm
-                  </button>
-                </div>
+                  onClick={() => setClockOutArmed(false)}
+                  className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={onClockOut}
+                  className="flex-1 rounded-lg bg-white px-4 py-2.5 text-sm font-bold text-red-700 shadow-sm hover:bg-white/90 disabled:opacity-60"
+                  aria-label="Tap to confirm clock out"
+                >
+                  Tap to confirm
+                </button>
               </div>
             )}
           </div>
         ) : null}
 
-        {/* BREAK (amber) */}
+        {/* BREAK — single amber button that toggles Start ⇄ End. */}
         {isClockedIn && breaksEnabled ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 shadow-sm">
-            <div className="grid gap-3">
-              {isOnBreak ? (
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={onEndBreak}
-                  className={`${blockBase} border border-amber-300 bg-amber-500 text-amber-950 hover:bg-amber-600 focus:outline-none focus:ring-4 focus:ring-amber-400/30`}
-                  aria-label="End break"
-                >
-                  <div className={blockInner}>
-                    <div className="min-w-0">
-                      <p className={blockTitle}>Break</p>
-                      <p className={blockHint}>End</p>
-                    </div>
-                    <div className="rounded-2xl bg-white/35 p-3">
-                      <Play className="h-7 w-7" aria-hidden />
-                    </div>
-                  </div>
-                </button>
-              ) : (
-                <>
-                  {allowPaidBreaks ? (
-                    <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-white px-3 py-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">
-                        Break type
-                      </p>
-                      <div className="flex items-center rounded-lg border border-amber-200 bg-amber-50 p-1 text-xs font-semibold text-amber-950">
-                        <button
-                          type="button"
-                          disabled={pending}
-                          onClick={() => setBreakPaid(false)}
-                          className={`rounded-md px-2 py-1 ${!breakPaid ? "bg-white shadow-sm" : "opacity-70"}`}
-                        >
-                          Unpaid
-                        </button>
-                        <button
-                          type="button"
-                          disabled={pending}
-                          onClick={() => setBreakPaid(true)}
-                          className={`ml-1 rounded-md px-2 py-1 ${breakPaid ? "bg-white shadow-sm" : "opacity-70"}`}
-                        >
-                          Paid
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                  <button
-                    type="button"
-                    disabled={pending}
-                    onClick={onStartBreak}
-                    className={`${blockBase} border border-amber-300 bg-amber-500 text-amber-950 hover:bg-amber-600 focus:outline-none focus:ring-4 focus:ring-amber-400/30`}
-                    aria-label="Start break"
-                  >
-                    <div className={blockInner}>
-                      <div className="min-w-0">
-                        <p className={blockTitle}>Break</p>
-                        <p className={blockHint}>Start</p>
-                      </div>
-                      <div className="rounded-2xl bg-white/35 p-3">
-                        <Coffee className="h-7 w-7" aria-hidden />
-                      </div>
-                    </div>
-                    <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-amber-900/80">
-                      {allowPaidBreaks ? (breakPaid ? "Paid" : "Unpaid") : "Unpaid"}
-                    </p>
-                  </button>
-                </>
-              )}
+          <button
+            type="button"
+            disabled={pending}
+            onClick={isOnBreak ? onEndBreak : onStartBreak}
+            className={`${blockBase} border border-amber-300 bg-amber-500 text-amber-950 hover:bg-amber-600 focus:outline-none focus:ring-4 focus:ring-amber-400/30`}
+            aria-label={isOnBreak ? "End break" : "Start break"}
+          >
+            <div className={blockInner}>
+              <div className="min-w-0">
+                <p className={blockTitle}>{isOnBreak ? "End Break" : "Start Break"}</p>
+                <p className={blockHint}>
+                  {pending ? "Working…" : isOnBreak ? "Back to work" : "Step away"}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-white/35 p-3">
+                {isOnBreak ? (
+                  <Play className="h-7 w-7" aria-hidden />
+                ) : (
+                  <Coffee className="h-7 w-7" aria-hidden />
+                )}
+              </div>
             </div>
-          </div>
+          </button>
         ) : null}
       </div>
 

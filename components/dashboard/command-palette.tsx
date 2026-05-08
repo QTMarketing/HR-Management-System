@@ -66,8 +66,8 @@ export function CommandPalette() {
       {
         id: "go-time-clock",
         label: "Time Clock",
-        hint: "Punches & timesheets",
-        keywords: "clock punch timesheet hours",
+        hint: "Time logs & timesheets",
+        keywords: "clock punch timesheet hours time log shift",
         icon: Clock,
         run: () => {
           router.push("/time-clock");

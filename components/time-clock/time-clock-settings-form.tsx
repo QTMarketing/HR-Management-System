@@ -173,8 +173,15 @@ export function TimeClockSettingsForm({
   // Break settings
   const [breaksEnabled, setBreaksEnabled] = useState<boolean>(initialBreaksEnabled);
   const [allowPaidBreaks, setAllowPaidBreaks] = useState<boolean>(initialAllowPaidBreaks);
+  /*
+   * "automatic" is a *ghost* mode right now — the rules are stored but no
+   * payroll code consumes them, so leaving it selectable would silently
+   * undercount hours. We coerce any historical "automatic" value to
+   * "manual" on load so an admin opening these settings sees the safe
+   * mode, and we hide/disable the radio below until enforcement ships.
+   */
   const [breaksMode, setBreaksMode] = useState<"disabled" | "manual" | "automatic">(
-    initialBreaksMode ?? "manual",
+    initialBreaksMode === "automatic" ? "manual" : (initialBreaksMode ?? "manual"),
   );
 
   type ManualBreakRule = {
@@ -1013,7 +1020,7 @@ export function TimeClockSettingsForm({
                       Location tracking
                     </h3>
                     <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                      Choose how (and when) the app captures location for punches.
+                      Choose how (and when) the app captures location for time logs.
                     </p>
 
                     <div className="mt-8 grid grid-cols-1 gap-4 border-t border-gray-100 pt-6 sm:grid-cols-3">
@@ -1217,37 +1224,73 @@ export function TimeClockSettingsForm({
                             id: "automatic" as const,
                             title: "Automatic breaks",
                             body: "Deduct unpaid breaks automatically based on worked hours.",
+                            disabledReason:
+                              "Coming soon — payroll enforcement isn't wired up yet, so picking this would save the rule but never affect hours. Stick to Manual.",
                           },
                         ].map((opt) => {
                           const on = breaksMode === opt.id;
+                          /*
+                           * Hard-disable the "automatic" radio until payroll
+                           * actually consumes `breaks_auto_rules`. We surface
+                           * a "Coming soon" badge + tooltip so admins know
+                           * it's intentional rather than broken.
+                           */
+                          const isComingSoon = opt.id === "automatic";
                           return (
                             <button
                               key={opt.id}
                               type="button"
-                              disabled={pending}
+                              disabled={pending || isComingSoon}
+                              aria-disabled={isComingSoon || undefined}
                               onClick={() => {
+                                if (isComingSoon) return;
                                 setBreaksMode(opt.id);
                                 setBreaksEnabled(opt.id !== "disabled");
                               }}
+                              title={
+                                isComingSoon
+                                  ? "Coming soon — managers must review breaks manually until this is wired up."
+                                  : undefined
+                              }
                               className={`w-full rounded-xl border bg-white px-4 py-3 text-left shadow-sm transition ${
                                 on
                                   ? "border-orange-300 ring-2 ring-orange-500/10"
-                                  : "border-slate-200 hover:border-slate-300"
+                                  : isComingSoon
+                                    ? "cursor-not-allowed border-slate-200 bg-slate-50 opacity-60"
+                                    : "border-slate-200 hover:border-slate-300"
                               }`}
                             >
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                  <p className="text-sm font-semibold text-slate-900">{opt.title}</p>
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-sm font-semibold text-slate-900">
+                                      {opt.title}
+                                    </p>
+                                    {isComingSoon ? (
+                                      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-900 ring-1 ring-amber-200">
+                                        Coming soon
+                                      </span>
+                                    ) : null}
+                                  </div>
                                   <p className="mt-0.5 text-xs text-slate-600">{opt.body}</p>
                                   {opt.id === "manual" ? (
                                     <p className="mt-2 text-xs text-slate-500">
                                       Set a reminder (coming soon)
                                     </p>
                                   ) : null}
+                                  {isComingSoon ? (
+                                    <p className="mt-2 text-xs text-amber-800">
+                                      {opt.disabledReason}
+                                    </p>
+                                  ) : null}
                                 </div>
                                 <div
                                   className={`mt-0.5 h-4 w-4 rounded-full border ${
-                                    on ? "border-orange-500 bg-orange-500" : "border-slate-300 bg-white"
+                                    on
+                                      ? "border-orange-500 bg-orange-500"
+                                      : isComingSoon
+                                        ? "border-slate-300 bg-slate-100"
+                                        : "border-slate-300 bg-white"
                                   }`}
                                   aria-hidden
                                 />

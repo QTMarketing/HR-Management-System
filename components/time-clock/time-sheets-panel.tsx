@@ -11,7 +11,7 @@ import {
   Plus,
   Search,
 } from "lucide-react";
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { approveTimeEntry, unapproveTimeEntry } from "@/app/actions/time-entry-approval";
 import { lockPayPeriod, unlockPayPeriod } from "@/app/actions/pay-period-lock";
 import { seedSampleTimesheetPunches } from "@/app/actions/seed-time-entries";
@@ -68,8 +68,9 @@ type Props = {
   holidays?: { holiday_date: string; name: string; is_paid?: boolean | null; paid_hours?: number | null }[];
   /**
    * Track A — Payable hours rollup. Map of `employee_id -> hourly_rate`. `null`
-   * means no wage on file → calculator drops to the marked DEMO fallback and
-   * the UI shows the "DEMO RATE — UPDATE IN PROFILE" badge.
+   * means no wage on file → calculator returns null pay (we no longer
+   * substitute a $15 demo rate) and the UI shows an "Hourly rate missing"
+   * banner so the manager fills it in on the export.
    */
   hourlyRatesByEmployee?: Record<string, number | null>;
   /** Track B — only Owners see the lock/unlock control. */
@@ -143,7 +144,8 @@ export function TimeSheetsPanel({
   const [err, setErr] = useState<string | null>(null);
   const [seedPending, setSeedPending] = useState(false);
   const [query, setQuery] = useState("");
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  /** Collapsed by default — expanded panel is manager-focused (disabled placeholders). */
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [timecardAnchorRow, setTimecardAnchorRow] = useState<EnrichedPunchRow | null>(null);
   const [approvalErr, setApprovalErr] = useState<string | null>(null);
@@ -151,8 +153,14 @@ export function TimeSheetsPanel({
   const [lockErr, setLockErr] = useState<string | null>(null);
   const [payrollCsvPending, startPayrollCsvTransition] = useTransition();
   const [payrollCsvErr, setPayrollCsvErr] = useState<string | null>(null);
+  const exportMenuRef = useRef<HTMLDetailsElement>(null);
 
   const isPeriodLocked = payPeriodLock?.status === "locked";
+
+  function closeExportMenu() {
+    const el = exportMenuRef.current;
+    if (el) el.open = false;
+  }
 
   function onToggleLock() {
     if (!payPeriodLock) return;
@@ -249,6 +257,12 @@ export function TimeSheetsPanel({
     }
     return m;
   }, [dayKeys]);
+  /** Index of today within the visible day grid, or -1 if today isn't in this period. */
+  const todayIndex = useMemo(() => {
+    const n = new Date();
+    const key = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+    return dayIndexByKey.get(key) ?? -1;
+  }, [dayIndexByKey]);
   const rangeLabel = useMemo(() => formatPeriodRangeLabel(bounds), [bounds]);
 
   const periodEndInclusive = useMemo(() => {
@@ -364,7 +378,10 @@ export function TimeSheetsPanel({
   }, [byEmployee, storeEmployees]);
 
   const filteredEmployees = useMemo(() => {
-    let list = byEmployeeWithAll;
+    // Managers see the full store roster (including rows with no punches this period).
+    // Employees only see people who actually have punches in `rows` — no coworker
+    // names, no $0 payroll scaffolding for the whole team.
+    let list = canArchive ? byEmployeeWithAll : byEmployee;
     const q = query.trim().toLowerCase();
     if (q) {
       list = list.filter(
@@ -372,7 +389,7 @@ export function TimeSheetsPanel({
       );
     }
     return list;
-  }, [byEmployeeWithAll, query]);
+  }, [byEmployeeWithAll, byEmployee, canArchive, query]);
 
   const rowsForExport = useMemo(
     () => filteredEmployees.flatMap((e) => e.rows),
@@ -474,12 +491,73 @@ export function TimeSheetsPanel({
     [payableByEmployeeId],
   );
 
+  /** True when the period has any worked / payable signal worth showing in the metrics row. */
+  const payrollStripHasHours = useMemo(
+    () =>
+      payableSummary.totalPayableHours > 0.005 ||
+      payableSummary.regularHours > 0.005 ||
+      payableSummary.overtimeHours > 0.005 ||
+      Math.abs(payableSummary.estimatedGrossPay) > 0.005,
+    [payableSummary],
+  );
+  const payrollStripHasDemo = payableSummary.employeesOnFallbackRate > 0;
+  /** One org-level demo warning — suppress noisy per-row badges that repeat the same message. */
+  const suppressPerRowDemoBadge = canArchive && payrollStripHasDemo;
+
   const gridTemplate = `260px repeat(${days.length}, minmax(52px, 1fr))`;
 
   const subtitle =
     clockDefaultKind !== periodKind
       ? `Clock default: ${periodKindLabel(clockDefaultKind)} · View: ${periodKindLabel(periodKind)}`
       : `Period: ${periodKindLabel(periodKind)}`;
+
+  /**
+   * Premium header stats — three at-a-glance cards above the timesheet grid.
+   * Reuses data already computed for the table; no extra fetch / RBAC surface.
+   */
+  const isActive = useMemo(() => rows.some((r) => !r.clockOutAt), [rows]);
+  const periodTotalMinutes = useMemo(() => {
+    let total = 0;
+    for (const r of rows) {
+      const m = punchMinutes(r);
+      if (m != null && m > 0) total += m;
+    }
+    return total;
+  }, [rows]);
+  /**
+   * Renders 0.0h as "—" so empty periods stay calm. We only show the bold
+   * number once there's actually time logged worth displaying.
+   */
+  const periodTotalHoursLabel = useMemo(() => {
+    const h = periodTotalMinutes / 60;
+    if (!Number.isFinite(h) || h <= 0) return null;
+    return h.toFixed(2);
+  }, [periodTotalMinutes]);
+  const paydayInfo = useMemo(() => {
+    const payday = periodEndInclusive;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const target = new Date(payday);
+    target.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
+    return {
+      label: payday.toLocaleDateString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      }),
+      relative:
+        diffDays === 0
+          ? "Today"
+          : diffDays === 1
+            ? "Tomorrow"
+            : diffDays > 1
+              ? `In ${diffDays} days`
+              : diffDays === -1
+                ? "Yesterday"
+                : `${Math.abs(diffDays)} days ago`,
+    };
+  }, [periodEndInclusive]);
 
   return (
     <div className="space-y-3">
@@ -506,7 +584,67 @@ export function TimeSheetsPanel({
         </p>
       ) : null}
 
-      <div className="rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+      {/* Premium SaaS stats — three accent-bordered cards above the grid. */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl border border-slate-200 border-t-4 border-t-emerald-500 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+            Current status
+          </p>
+          <div className="mt-2 flex items-center gap-2.5">
+            {isActive ? (
+              <span className="relative flex h-2.5 w-2.5" aria-hidden>
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+              </span>
+            ) : (
+              <span className="h-2.5 w-2.5 rounded-full bg-slate-300" aria-hidden />
+            )}
+            <span className="text-2xl font-black tracking-tight text-slate-900">
+              {isActive ? "Active" : "Off the clock"}
+            </span>
+          </div>
+          <p className="mt-1.5 text-xs font-medium text-slate-500">
+            {isActive
+              ? canArchive
+                ? "Active shifts"
+                : "You're on a shift right now"
+              : canArchive
+                ? "No active shifts"
+                : "No open shift on file"}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 border-t-4 border-t-sky-500 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+            {periodKindLabel(periodKind)} hours
+          </p>
+          <p className="mt-2 text-2xl font-black tracking-tight tabular-nums text-slate-900">
+            {periodTotalHoursLabel == null ? (
+              <span className="text-slate-400">—</span>
+            ) : (
+              <>
+                {periodTotalHoursLabel}
+                <span className="ml-1 text-base font-medium text-slate-500">h</span>
+              </>
+            )}
+          </p>
+          <p className="mt-1.5 text-xs font-medium text-slate-500">
+            {canArchive ? "Team worked time this period" : "Your worked time this period"}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 border-t-4 border-t-orange-500 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+            Period end
+          </p>
+          <p className="mt-2 text-2xl font-black tracking-tight text-slate-900">{paydayInfo.label}</p>
+          <p className="mt-1.5 text-xs font-medium text-slate-500">
+            {paydayInfo.relative} · pay period close
+          </p>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200/80 bg-white shadow-md">
         <div className="border-b border-slate-100 px-4 py-4 sm:px-5">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -524,7 +662,7 @@ export function TimeSheetsPanel({
                 <div className="leading-snug">
                   <span className="block uppercase tracking-wide">Pay period locked</span>
                   <span className="mt-0.5 block font-medium">
-                    Punches in this period are read-only.
+                    Time logs in this period are read-only.
                     {payPeriodLock.lockedByName
                       ? ` Locked by ${payPeriodLock.lockedByName}`
                       : " Locked"}
@@ -540,32 +678,41 @@ export function TimeSheetsPanel({
 
         <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
           <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
-            <div className="relative min-w-0 flex-1 lg:max-w-md">
+            {/*
+             * Wide search by design — managers triaging 250+ employees need
+             * room to type a full name without truncating it under the icon.
+             * `flex-[2_1_320px]` gives the field 2× the grow weight of the
+             * sibling controls, so it always claims most of the toolbar's
+             * horizontal space on LG and never collapses below 300 px.
+             */}
+            <div className="relative min-w-[300px] flex-[2_1_320px]">
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 type="search"
-                placeholder="Search"
+                placeholder={canArchive ? "Search employees…" : "Search history"}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="w-full rounded border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-800 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-400/25"
-                aria-label="Search employees"
+                className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-800 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-400/25"
+                aria-label={canArchive ? "Search employees" : "Search"}
               />
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setFiltersOpen((o) => !o)}
-                className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded border transition-colors ${
-                  filtersOpen
-                    ? "border-sky-300 bg-sky-50 text-sky-700"
-                    : "border-slate-200 bg-white text-sky-600 hover:bg-slate-50"
-                }`}
-                aria-expanded={filtersOpen}
-                aria-label="Toggle filters"
-              >
-                <Filter className="h-4 w-4" />
-              </button>
+              {canArchive ? (
+                <button
+                  type="button"
+                  onClick={() => setFiltersOpen((o) => !o)}
+                  className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded border transition-colors ${
+                    filtersOpen
+                      ? "border-sky-300 bg-sky-50 text-sky-700"
+                      : "border-slate-200 bg-white text-sky-600 hover:bg-slate-50"
+                  }`}
+                  aria-expanded={filtersOpen}
+                  aria-label="Toggle filters"
+                >
+                  <Filter className="h-4 w-4" />
+                </button>
+              ) : null}
 
               <div className="relative min-w-[10rem] shrink-0">
                 <select
@@ -656,42 +803,93 @@ export function TimeSheetsPanel({
                 />
               </div>
 
-              <button
-                type="button"
-                disabled={rowsForExport.length === 0}
-                onClick={onExportCsv}
-                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                title="Download logged time for the visible period as a spreadsheet"
-              >
-                <Download className="h-4 w-4 shrink-0" aria-hidden />
-                Export Report
-              </button>
-
-              <button
-                type="button"
-                onClick={onDownloadPayrollCsv}
-                disabled={payrollCsvPending}
-                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-800 shadow-sm hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-                title="Gusto-ready unified payroll CSV: regular vs OT hours, PTO, holiday hours, hourly rate, gross pay, and a flag if any wage is using the demo fallback."
-              >
-                <Download className="h-4 w-4 shrink-0" aria-hidden />
-                {payrollCsvPending ? "Building…" : "Download Payroll CSV"}
-              </button>
+              {canArchive ? (
+                <details
+                  ref={exportMenuRef}
+                  className="group relative shrink-0"
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") closeExportMenu();
+                  }}
+                >
+                  <summary className="flex h-10 cursor-pointer list-none items-center gap-2 rounded border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 shadow-sm marker:content-none [&::-webkit-details-marker]:hidden hover:bg-slate-50">
+                    <Download className="h-4 w-4 shrink-0 text-slate-600" aria-hidden />
+                    Export
+                    <ChevronDown className="h-4 w-4 shrink-0 text-slate-500 transition-transform group-open:rotate-180" aria-hidden />
+                  </summary>
+                  <div
+                    role="menu"
+                    className="absolute right-0 z-40 mt-1 min-w-[14rem] overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={rowsForExport.length === 0}
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => {
+                        closeExportMenu();
+                        onExportCsv();
+                      }}
+                    >
+                      <Download className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+                      <span>
+                        <span className="font-semibold">Shift log report</span>
+                        <span className="mt-0.5 block text-xs font-normal text-slate-500">
+                          CSV · visible grid only
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={payrollCsvPending}
+                      className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2.5 text-left text-sm text-emerald-900 hover:bg-emerald-50/80 disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => {
+                        closeExportMenu();
+                        onDownloadPayrollCsv();
+                      }}
+                    >
+                      <Download className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+                      <span>
+                        <span className="font-semibold">Payroll CSV</span>
+                        <span className="mt-0.5 block text-xs font-normal text-emerald-800/80">
+                          {payrollCsvPending ? "Building…" : "Gusto-style · pay period"}
+                        </span>
+                      </span>
+                    </button>
+                  </div>
+                </details>
+              ) : (
+                <button
+                  type="button"
+                  disabled={rowsForExport.length === 0}
+                  onClick={onExportCsv}
+                  className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Download your hours for this period as a spreadsheet"
+                >
+                  <Download className="h-4 w-4 shrink-0" aria-hidden />
+                  Download my hours
+                </button>
+              )}
 
               {canLockPayPeriods && payPeriodLock ? (
                 <button
                   type="button"
                   onClick={onToggleLock}
                   disabled={lockPending}
-                  className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded px-3 text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${
+                  // Ghost-style by default — looks serious, doesn't compete with
+                  // Export. Solid red on hover/focus to communicate the
+                  // irreversible-feeling commit. Unlock variant uses an amber
+                  // ghost so a locked period reads "warning, but you can
+                  // recover".
+                  className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-md border px-3 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                     isPeriodLocked
-                      ? "border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
-                      : "border border-rose-300 bg-rose-600 text-white hover:bg-rose-700"
+                      ? "border-amber-300 bg-transparent text-amber-700 hover:border-amber-400 hover:bg-amber-50 hover:text-amber-900"
+                      : "border-rose-300 bg-transparent text-rose-700 hover:border-rose-600 hover:bg-rose-600 hover:text-white focus:border-rose-600 focus:bg-rose-600 focus:text-white focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                   }`}
                   title={
                     isPeriodLocked
-                      ? "Unlock this pay period — punches inside will become editable again."
-                      : "Lock this pay period — Owner only. Punches inside become read-only at the database level."
+                      ? "Unlock this pay period — time logs inside will become editable again."
+                      : "Lock this pay period — Owner only. Time logs inside become read-only at the database level."
                   }
                 >
                   {isPeriodLocked ? (
@@ -709,12 +907,18 @@ export function TimeSheetsPanel({
                 </button>
               ) : null}
 
-              {canArchive ? (
+              {/*
+               * "Add sample data" — seeds 24 fake clock-ins for this/last week
+               * so a fresh demo has rows to look at. It's preview-only, so we
+               * gate it behind dev mode AND manager permission; production /
+               * QA installs never see it.
+               */}
+              {canArchive && process.env.NODE_ENV === "development" ? (
                 <button
                   type="button"
                   disabled={seedPending}
                   className="h-10 shrink-0 rounded bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
-                  title="Insert sample clock-ins for this and last week (preview only)"
+                  title="Dev only — insert sample clock-ins for this and last week"
                   onClick={() => {
                     setErr(null);
                     setSeedPending(true);
@@ -735,7 +939,7 @@ export function TimeSheetsPanel({
             </div>
           </div>
 
-          {filtersOpen ? (
+          {canArchive && filtersOpen ? (
             <div className="flex flex-col gap-3 rounded-2xl bg-slate-100/90 px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center">
               <span className="text-sm font-bold text-slate-800">Filter</span>
               <div className="relative min-w-[7.25rem]">
@@ -803,7 +1007,7 @@ export function TimeSheetsPanel({
           ) : null}
         </div>
 
-        {filteredEmployees.length > 0 ? (
+        {canArchive && filteredEmployees.length > 0 && payrollStripHasHours ? (
           <div className="border-b border-slate-100 px-4 py-3 sm:px-5">
             <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
@@ -852,17 +1056,18 @@ export function TimeSheetsPanel({
                   </p>
                 </div>
               </div>
-              {payableSummary.employeesOnFallbackRate > 0 ? (
+              {payrollStripHasDemo ? (
                 <div
                   role="alert"
                   className="flex items-start gap-2 rounded-lg border-2 border-amber-400 bg-amber-100 px-3 py-2 text-xs font-bold text-amber-900 shadow-sm"
                 >
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
                   <div className="leading-snug">
-                    <span className="block uppercase tracking-wide">⚠️ Demo rate in use</span>
+                    <span className="block uppercase tracking-wide">⚠️ Hourly rate missing</span>
                     <span className="mt-0.5 block font-semibold">
                       {payableSummary.employeesOnFallbackRate} of {payableSummary.employeeCount}{" "}
-                      employees have no wage on file. Update Profile → Hourly rate before exporting.
+                      employees have no wage on file. Their pay stays blank until you fill
+                      Profile → Hourly rate or enter it manually on the export.
                     </span>
                   </div>
                 </div>
@@ -871,45 +1076,90 @@ export function TimeSheetsPanel({
           </div>
         ) : null}
 
+        {canArchive && filteredEmployees.length > 0 && !payrollStripHasHours && payrollStripHasDemo ? (
+          <div className="border-b border-slate-100 px-4 py-3 sm:px-5">
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-xl border-2 border-amber-400 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950 shadow-sm"
+            >
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+              <div className="leading-snug">
+                <span className="block text-xs font-bold uppercase tracking-wide text-amber-900">
+                  Hourly rate missing
+                </span>
+                <span className="mt-1 block font-medium text-amber-950">
+                  {payableSummary.employeesOnFallbackRate} of {payableSummary.employeeCount} employees
+                  have no hourly rate on file, so their pay column is blank. Set wages under{" "}
+                  <span className="font-semibold">Users → profile → Hourly rate</span>, or enter the
+                  rate manually on the payroll export.
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {filteredEmployees.length === 0 ? (
           <div className="px-5 py-10 text-center text-sm text-slate-500">
-            No team members match this period or search. Try a different date range or clear the search.
+            {canArchive
+              ? "No team members match this period or search. Try a different date range or clear the search."
+              : "No time logs for you in this period. Try a different week or use Today to clock in."}
           </div>
         ) : (
           <div className="overflow-x-auto">
             <div style={{ minWidth: Math.max(400, 260 + days.length * 52) }}>
               <div
-                className="grid border-b border-slate-200 bg-slate-50/80"
+                className="grid border-b border-slate-200 bg-slate-100"
                 style={{ gridTemplateColumns: gridTemplate }}
               >
-                <div className="sticky left-0 z-[1] border-r border-slate-200 bg-slate-50/95 p-2 backdrop-blur-sm sm:p-3">
+                <div className="sticky left-0 z-[1] border-r border-slate-200 bg-slate-100 p-2 backdrop-blur-sm sm:p-3">
                   <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                    Employee
+                    {canArchive ? "Employee" : "You"}
                   </div>
                 </div>
                 {days.map((d, di) => {
                   const isWeekend = d.getDay() === 0 || d.getDay() === 6;
                   const hk = dayKeys[di];
                   const holiday = hk ? holidayByDayKey.get(hk) ?? null : null;
+                  const isToday = di === todayIndex;
+                  // "today" wins visually over weekend / holiday tints so the
+                  // user can spot the live column immediately. The blue rail
+                  // continues into the body rows below.
+                  const colBg = isToday
+                    ? "bg-blue-50/70 border-l-2 border-l-blue-500"
+                    : holiday
+                      ? "bg-amber-50/70"
+                      : isWeekend
+                        ? "bg-slate-100/80"
+                        : "";
                   return (
                     <div
                       key={di}
-                      className={`border-r border-slate-200 p-1.5 text-center last:border-r-0 sm:p-2 ${
-                        holiday ? "bg-amber-50/70" : isWeekend ? "bg-slate-100/80" : ""
-                      }`}
+                      className={`border-r border-slate-200 p-1.5 text-center last:border-r-0 sm:p-2 ${colBg}`}
                       title={
-                        holiday
-                          ? `${holiday.name}${holiday.isPaid ? ` (paid${holiday.paidHours ? ` ${holiday.paidHours}h` : ""})` : ""}`
-                          : undefined
+                        isToday
+                          ? "Today"
+                          : holiday
+                            ? `${holiday.name}${holiday.isPaid ? ` (paid${holiday.paidHours ? ` ${holiday.paidHours}h` : ""})` : ""}`
+                            : undefined
                       }
                     >
-                      <div className="text-[10px] font-semibold leading-tight text-slate-600 sm:text-[11px]">
-                        {d.toLocaleDateString(undefined, { weekday: "short" })}
+                      <div
+                        className={`text-[10px] font-semibold leading-tight sm:text-[11px] ${
+                          isToday ? "text-blue-700" : "text-slate-600"
+                        }`}
+                      >
+                        {isToday
+                          ? "Today"
+                          : d.toLocaleDateString(undefined, { weekday: "short" })}
                       </div>
-                      <div className="mt-0.5 text-[10px] font-semibold tabular-nums text-slate-900 sm:text-xs">
+                      <div
+                        className={`mt-0.5 text-[10px] font-semibold tabular-nums sm:text-xs ${
+                          isToday ? "text-blue-900" : "text-slate-900"
+                        }`}
+                      >
                         {d.getDate()}
                       </div>
-                      {holiday ? (
+                      {!isToday && holiday ? (
                         <div className="mt-0.5 truncate text-[9px] font-semibold text-amber-700 sm:text-[10px]">
                           {holiday.name}
                         </div>
@@ -924,6 +1174,22 @@ export function TimeSheetsPanel({
                 const totalPeriod = mins.reduce((a, b) => a + b, 0);
                 const canOpenAnyTimecard = e.rows.length > 0;
                 const payable = payableByEmployeeId.get(e.employeeId) ?? null;
+                /** Currently clocked in — the row has at least one punch with no clock-out yet. */
+                const isCurrentlyClockedIn = e.rows.some((r) => !r.clockOutAt);
+                /** Hide the Reg/OT/Payable/$ chip row when there's nothing yet — the
+                 *  empty row stays calm and the org-level demo banner already covers
+                 *  "wages missing" up top. We bring chips back the moment a row has
+                 *  real worked time, OT, or wage data we'd want to preview. */
+                const rowHasPayrollSignal = Boolean(
+                  payable &&
+                    (payable.totalPayableHours > 0.005 ||
+                      payable.regularHours > 0.005 ||
+                      payable.overtimeHours > 0.005 ||
+                      // estimatedGrossPay is now nullable (no rate ⇒ null);
+                      // treat null as "no $ signal" instead of throwing.
+                      (payable.estimatedGrossPay !== null &&
+                        Math.abs(payable.estimatedGrossPay) > 0.005)),
+                );
                 return (
                   <div
                     key={e.employeeId}
@@ -944,7 +1210,19 @@ export function TimeSheetsPanel({
                           : "Open timecard"
                       }
                     >
-                      <div className="truncate text-sm font-semibold text-slate-900">{e.name}</div>
+                      <div className="flex items-center gap-2">
+                        {isCurrentlyClockedIn ? (
+                          <span
+                            className="relative flex h-2 w-2 shrink-0"
+                            aria-label="Currently clocked in"
+                            title="Clocked in now"
+                          >
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                          </span>
+                        ) : null}
+                        <span className="truncate text-sm font-semibold text-slate-900">{e.name}</span>
+                      </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                         <span className="rounded-md bg-slate-50 px-2 py-0.5 font-medium text-slate-700">
                           {e.role || "—"}
@@ -954,7 +1232,7 @@ export function TimeSheetsPanel({
                           {totalPeriod ? `${formatHoursMinutes(totalPeriod)} this period` : "—"}
                         </span>
                       </div>
-                      {payable ? (
+                      {canArchive && payable && rowHasPayrollSignal ? (
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
                           <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 font-semibold tabular-nums text-slate-700">
                             <span className="text-slate-500">Reg</span>
@@ -983,22 +1261,27 @@ export function TimeSheetsPanel({
                                 ? "bg-amber-100 text-amber-900 ring-1 ring-amber-400"
                                 : "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
                             }`}
+                            // No rate on file → render "—" with a nudge,
+                            // not a fake dollar amount. The amber chip color
+                            // + the demo banner above already signal the gap.
                             title={
-                              payable.overtimeHours > 0
-                                ? `Reg ${formatGrossPayLabel(payable.estimatedRegularPay)} · OT ${formatGrossPayLabel(payable.estimatedOvertimePay)} (1.5× of ${formatGrossPayLabel(payable.hourlyRate)}/hr)`
-                                : `@ ${formatGrossPayLabel(payable.hourlyRate)}/hr × ${payable.totalPayableHours.toFixed(2)}h`
+                              payable.hourlyRate === null
+                                ? "No hourly rate set — fill it in on the export or update the employee profile."
+                                : payable.overtimeHours > 0
+                                  ? `Reg ${formatGrossPayLabel(payable.estimatedRegularPay)} · OT ${formatGrossPayLabel(payable.estimatedOvertimePay)} (1.5× of ${formatGrossPayLabel(payable.hourlyRate)}/hr)`
+                                  : `@ ${formatGrossPayLabel(payable.hourlyRate)}/hr × ${payable.totalPayableHours.toFixed(2)}h`
                             }
                           >
                             {formatGrossPayLabel(payable.estimatedGrossPay)}
                           </span>
-                          {payable.isUsingFallbackRate ? (
+                          {payable.isUsingFallbackRate && !suppressPerRowDemoBadge ? (
                             <span
                               className="inline-flex items-center gap-1 rounded-md bg-amber-400 px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-amber-950 shadow-sm"
                               role="alert"
-                              aria-label="Demo rate in use — update employee profile"
+                              aria-label="No hourly rate on file — update employee profile"
                             >
                               <AlertTriangle className="h-3 w-3" aria-hidden />
-                              Demo rate — update in profile
+                              No rate — set in profile
                             </span>
                           ) : null}
                         </div>
@@ -1013,10 +1296,27 @@ export function TimeSheetsPanel({
                       const holiday = dk ? holidayByDayKey.get(dk) ?? null : null;
                       const isHolidayPayCell = has && !anchor && Boolean(holiday?.isPaid);
                       const canOpenCell = Boolean(anchor) || canOpenAnyTimecard;
+                      // Heatmap tint — soft emerald wash on worked cells,
+                      // soft amber on auto-credited holiday cells. Empty
+                      // cells stay neutral so the eye glides past them.
+                      const isTodayCol = di === todayIndex;
+                      // The "today" rail wins so the column stays visible
+                      // even on rows that are currently empty.
+                      const cellBg = isTodayCol
+                        ? has
+                          ? isHolidayPayCell
+                            ? "bg-blue-50/60 border-l-2 border-l-blue-500"
+                            : "bg-blue-50/60 border-l-2 border-l-blue-500"
+                          : "bg-blue-50/40 border-l-2 border-l-blue-500"
+                        : has
+                          ? isHolidayPayCell
+                            ? "bg-amber-50/60"
+                            : "bg-emerald-50/60"
+                          : "";
                       return (
                         <div
                           key={di}
-                          className="flex min-h-[52px] items-center justify-center border-r border-slate-100 p-1 last:border-r-0 sm:min-h-[56px]"
+                          className={`flex min-h-[52px] items-center justify-center border-r border-slate-100 p-1 last:border-r-0 sm:min-h-[56px] ${cellBg}`}
                         >
                           {has ? (
                             canOpenCell ? (
@@ -1068,7 +1368,8 @@ export function TimeSheetsPanel({
 
       {!canArchive ? (
         <p className="text-xs text-slate-500">
-          Sample data and edits require time clock management permission.
+          Pay estimates and payroll export are only visible to managers. You can download your own hours with
+          &quot;Download my hours&quot; above.
         </p>
       ) : null}
 

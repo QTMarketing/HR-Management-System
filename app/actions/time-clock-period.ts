@@ -1,6 +1,7 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
+import { TIME_CLOCKS_TAG, timeClockTag } from "@/lib/cache/tags";
 import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import {
@@ -59,8 +60,17 @@ export async function saveTimeClockTimesheetPeriod(params: {
 
   if (error) return { ok: false, error: error.message };
 
+  // Path-based revalidation refreshes RSCs that already rendered. The
+  // tag-based invalidation is forward-compat: any current or future
+  // `unstable_cache` reader keyed by `timeClockTag(id)` is invalidated
+  // atomically — including mobile clients hitting cached API routes.
   revalidatePath("/time-clock");
   revalidatePath(`/time-clock/${id}`);
+  // updateTag is the Server-Action-native invalidation primitive in Next 16+
+  // (immediate expiration; marks the action as revalidated). Any current or
+  // future `unstable_cache` reader keyed by `timeClockTag(id)` drops at
+  // once — including mobile clients hitting cached API routes.
+  updateTag(timeClockTag(id));
   return { ok: true };
 }
 
@@ -98,6 +108,10 @@ export async function bulkApplyTimeClockTimesheetPeriod(params: {
   revalidatePath("/time-clock");
   for (const id of ids) {
     revalidatePath(`/time-clock/${id}`);
+    updateTag(timeClockTag(id));
   }
+  // A bulk apply touches enough rows that we want any "list all clocks"
+  // cache to drop too — cheap insurance against a stale dropdown.
+  updateTag(TIME_CLOCKS_TAG);
   return { ok: true };
 }

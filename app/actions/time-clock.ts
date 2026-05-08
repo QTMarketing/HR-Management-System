@@ -1,7 +1,8 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { resolveActorEmployeeId } from "@/lib/audit/security-audit";
+import { timeClockTag } from "@/lib/cache/tags";
 import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -14,10 +15,52 @@ import {
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * `true` when a Supabase RPC error is "function not in schema cache" —
+ * which usually means migration 073 hasn't been applied yet against the
+ * connected database. Detected via the PostgREST error code (`PGRST202`)
+ * and a substring fallback for older clients that don't surface the code.
+ *
+ * Used to fall back to the pre-073 non-atomic write path so QA stays
+ * unblocked when code ships ahead of the migration. Once the function
+ * exists, this branch is dead and every punch goes through the atomic RPC.
+ */
+function isMissingRpcError(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false;
+  if (err.code === "PGRST202") return true;
+  const msg = err.message ?? "";
+  return /Could not find the function/i.test(msg) || /schema cache/i.test(msg);
+}
+
 const ERR_NO_EMPLOYEE_LINK =
   "Your login isn’t linked to an employee profile. Ask HR to add your work email under Users.";
 const ERR_SELF_ONLY_IN = "You can only clock in for yourself.";
 const ERR_SELF_ONLY_OUT = "You can only clock out your own open shift.";
+
+/**
+ * QA emails whose punches bypass the geofence radius check.
+ *
+ * Defaults include `emily@quicktrackinc.com` so cross-country QA works out of
+ * the box. Production deployments can extend or override this list via the
+ * `GEOFENCE_BYPASS_EMAILS` env var (comma- or semicolon-separated).
+ *
+ * Comparison is case-insensitive and trims whitespace; an exact email match
+ * is required (no domain wildcards) so this can't be used to silently grant
+ * a whole company.
+ */
+const QA_BYPASS_EMAILS: ReadonlySet<string> = (() => {
+  const defaults = ["emily@quicktrackinc.com"];
+  const fromEnv = (process.env.GEOFENCE_BYPASS_EMAILS ?? "")
+    .split(/[,;\s]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0 && s.includes("@"));
+  return new Set([...defaults.map((s) => s.toLowerCase()), ...fromEnv]);
+})();
+
+function isQaBypassEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return QA_BYPASS_EMAILS.has(email.trim().toLowerCase());
+}
 
 export type ClockInInput = {
   employeeId: string;
@@ -82,7 +125,7 @@ export async function clockIn(input: ClockInInput): Promise<ActionResult> {
 
   const { data: emp, error: empErr } = await supabase
     .from("employees")
-    .select("id, full_name, location_id, status, role")
+    .select("id, full_name, email, location_id, status, role")
     .eq("id", employeeId)
     .maybeSingle();
 
@@ -101,6 +144,23 @@ export async function clockIn(input: ClockInInput): Promise<ActionResult> {
     roleLabel.trim().toLowerCase().replace(/\s+/g, "_") === "owner" ||
     roleLabel.trim().toLowerCase().replace(/\s+/g, "_") === "org_owner" ||
     roleLabel.trim().toLowerCase().replace(/\s+/g, "_") === "organization_owner";
+
+  // QA bypass for the geofence radius check. Triggers when:
+  //   - the punching employee is an Owner (they audit/manage stores from any
+  //     location anyway, and the home-store check above is already skipped
+  //     for them — keeping geofence parity), OR
+  //   - the email is in the QA bypass list (see QA_BYPASS_EMAILS), OR
+  //   - we're running in local development (process.env.NODE_ENV ===
+  //     "development"). Production builds are NEVER bypassed unless the user
+  //     is an Owner or in the QA email allow-list.
+  // Important: this only relaxes the *radius* check + the "GPS required
+  // because a fence is configured" constraint. It does NOT skip
+  // `require_location_for_punch` or location-tracking modes, which are
+  // independent features.
+  const empEmail = (emp as { email?: string | null }).email ?? null;
+  const isDev = process.env.NODE_ENV === "development";
+  const isBypassEmail = isQaBypassEmail(empEmail);
+  const bypassGeofence = isOwner || isDev || isBypassEmail;
 
   if (!isOwner) {
     const homeOk = emp.location_id === locationId;
@@ -137,11 +197,27 @@ export async function clockIn(input: ClockInInput): Promise<ActionResult> {
     geofence_radius_meters: number | null;
   };
 
-  const fenceActive =
+  const fenceConfigured =
     lr.geofence_center_lat != null &&
     lr.geofence_center_lng != null &&
     lr.geofence_radius_meters != null &&
     lr.geofence_radius_meters > 0;
+  const fenceActive = fenceConfigured && !bypassGeofence;
+
+  if (fenceConfigured && bypassGeofence) {
+    console.warn(
+      "[time-clock] geofence bypassed for clock-in",
+      JSON.stringify({
+        employee_id: employeeId,
+        location_id: locationId,
+        reason: isOwner
+          ? "owner_role"
+          : isBypassEmail
+            ? "qa_bypass_email"
+            : "dev_environment",
+      }),
+    );
+  }
 
   if (fenceActive) {
     const lat = input.clockInLat;
@@ -241,46 +317,87 @@ export async function clockIn(input: ClockInInput): Promise<ActionResult> {
     return { ok: false, error: "Already clocked in — clock out first." };
   }
 
-  const insertPayload: Record<string, unknown> = {
-    employee_id: employeeId,
-    location_id: locationId,
-    time_clock_id: timeClockId,
-    clock_in_at: new Date().toISOString(),
-    status: "open",
-    punch_source: punchSource,
-  };
-  if (jobCodeId) insertPayload.job_code_id = jobCodeId;
-  if (locationCodeId) insertPayload.location_code_id = locationCodeId;
+  // Atomic write: the RPC inserts the `time_entries` row AND the
+  // `activity_events` audit entry in one transaction. If either fails,
+  // both roll back, so the audit feed can never be out of sync with the
+  // punches. Validation above (RBAC, geofence, smart-group, idempotency)
+  // still happens here; the RPC is the write boundary only.
+  const hasGps =
+    input.clockInLat != null &&
+    input.clockInLng != null &&
+    !Number.isNaN(input.clockInLat) &&
+    !Number.isNaN(input.clockInLng);
+  const { error: rpcErr } = await supabase.rpc("clock_in_with_audit", {
+    p_employee_id: employeeId,
+    p_location_id: locationId,
+    p_time_clock_id: timeClockId,
+    p_punch_source: punchSource,
+    p_client_request_id: clientRequestId,
+    p_clock_in_lat: hasGps ? input.clockInLat : null,
+    p_clock_in_lng: hasGps ? input.clockInLng : null,
+    p_job_code_id: jobCodeId,
+    p_location_code_id: locationCodeId,
+    p_employee_label: emp.full_name ?? "Employee",
+  });
 
-  if (clientRequestId) {
-    insertPayload.client_request_id = clientRequestId;
-  }
-  if (input.clockInLat != null && input.clockInLng != null && !Number.isNaN(input.clockInLat) && !Number.isNaN(input.clockInLng)) {
-    insertPayload.clock_in_lat = input.clockInLat;
-    insertPayload.clock_in_lng = input.clockInLng;
-  }
-
-  const { error: insErr } = await supabase.from("time_entries").insert(insertPayload);
-
-  if (insErr) {
-    if (insErr.code === "23505" && clientRequestId) {
+  if (rpcErr) {
+    // Replayed `client_request_id` lands as a unique-violation 23505. We
+    // already short-circuited the obvious idempotent case above (line ~97),
+    // but a tight race can still squeeze through to the insert. Treat as
+    // success — the original punch is on file.
+    if (rpcErr.code === "23505" && clientRequestId) {
       return { ok: true };
     }
-    return { ok: false, error: insErr.message };
+    // Migration 073 not applied yet → fall back to the legacy two-step
+    // write. Loses atomicity (audit insert can lag the punch), but keeps
+    // QA unblocked. Apply the migration ASAP to restore the safety net.
+    if (isMissingRpcError(rpcErr)) {
+      const insertPayload: Record<string, unknown> = {
+        employee_id: employeeId,
+        location_id: locationId,
+        time_clock_id: timeClockId,
+        clock_in_at: new Date().toISOString(),
+        status: "open",
+        punch_source: punchSource,
+      };
+      if (jobCodeId) insertPayload.job_code_id = jobCodeId;
+      if (locationCodeId) insertPayload.location_code_id = locationCodeId;
+      if (clientRequestId) insertPayload.client_request_id = clientRequestId;
+      if (hasGps) {
+        insertPayload.clock_in_lat = input.clockInLat;
+        insertPayload.clock_in_lng = input.clockInLng;
+      }
+      const { error: insErr } = await supabase
+        .from("time_entries")
+        .insert(insertPayload);
+      if (insErr) {
+        if (insErr.code === "23505" && clientRequestId) {
+          return { ok: true };
+        }
+        return { ok: false, error: insErr.message };
+      }
+      await supabase.from("activity_events").insert({
+        employee_label: emp.full_name ?? "Employee",
+        action: "Clock in",
+        status: "ok",
+        location_id: locationId,
+        occurred_at: new Date().toISOString(),
+      });
+      console.warn(
+        "[time-clock] clock_in_with_audit RPC missing — used legacy fallback. Apply supabase/migrations/073_clock_in_out_atomic.sql.",
+      );
+    } else {
+      return { ok: false, error: rpcErr.message };
+    }
   }
-
-  await supabase.from("activity_events").insert({
-    employee_label: emp.full_name,
-    action: "Clock in",
-    status: "ok",
-    location_id: locationId,
-    occurred_at: new Date().toISOString(),
-  });
 
   revalidatePath("/");
   revalidatePath("/activity");
   revalidatePath("/time-clock");
   revalidatePath(`/time-clock/${timeClockId}`);
+  // Tag-based fan-out so any cached read of this clock's state (mobile
+  // widgets, future API routes) drops immediately on punch.
+  updateTag(timeClockTag(timeClockId));
   return { ok: true };
 }
 
@@ -347,7 +464,7 @@ export async function clockOut(input: ClockOutInput): Promise<ActionResult> {
   // Enforce location capture / geofence rules server-side for clock-out.
   const tcId = (row as { time_clock_id?: string | null }).time_clock_id ?? null;
   if (tcId) {
-    const [{ data: loc }, { data: clock }] = await Promise.all([
+    const [{ data: loc }, { data: clock }, { data: actorRow }] = await Promise.all([
       supabase
         .from("locations")
         .select("id, geofence_center_lat, geofence_center_lng, geofence_radius_meters")
@@ -358,6 +475,14 @@ export async function clockOut(input: ClockOutInput): Promise<ActionResult> {
         .select("id, location_tracking_mode, require_location_for_punch")
         .eq("id", tcId)
         .maybeSingle(),
+      // Need role + email for the QA bypass; we already restricted clock-out
+      // to the punch owner above (`actorEmployeeId === punchEmployeeId`), so
+      // this is the right person to inspect.
+      supabase
+        .from("employees")
+        .select("role, email")
+        .eq("id", actorEmployeeId)
+        .maybeSingle(),
     ]);
 
     const lr = loc as
@@ -367,12 +492,44 @@ export async function clockOut(input: ClockOutInput): Promise<ActionResult> {
           geofence_radius_meters: number | null;
         }
       | null;
-    const fenceActive =
+    const fenceConfigured =
       Boolean(lr) &&
       lr!.geofence_center_lat != null &&
       lr!.geofence_center_lng != null &&
       lr!.geofence_radius_meters != null &&
       (lr!.geofence_radius_meters ?? 0) > 0;
+
+    // Mirror clock-in: Owner role, QA bypass email, OR local dev relaxes the
+    // radius + the "GPS required because a fence is configured" constraint.
+    // Other GPS requirements (require_location_for_punch, location tracking)
+    // still apply.
+    const actor = actorRow as { role?: string | null; email?: string | null } | null;
+    const roleKey = String(actor?.role ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "_");
+    const isOwner =
+      roleKey === "owner" || roleKey === "org_owner" || roleKey === "organization_owner";
+    const isDev = process.env.NODE_ENV === "development";
+    const isBypassEmail = isQaBypassEmail(actor?.email ?? null);
+    const bypassGeofence = isOwner || isDev || isBypassEmail;
+    const fenceActive = fenceConfigured && !bypassGeofence;
+
+    if (fenceConfigured && bypassGeofence) {
+      console.warn(
+        "[time-clock] geofence bypassed for clock-out",
+        JSON.stringify({
+          time_entry_id: entryId,
+          employee_id: actorEmployeeId,
+          location_id: locationId,
+          reason: isOwner
+            ? "owner_role"
+            : isBypassEmail
+              ? "qa_bypass_email"
+              : "dev_environment",
+        }),
+      );
+    }
 
     const c = clock as
       | { location_tracking_mode?: string | null; require_location_for_punch?: boolean | null }
@@ -409,46 +566,70 @@ export async function clockOut(input: ClockOutInput): Promise<ActionResult> {
     .eq("id", row.employee_id)
     .maybeSingle();
 
-  const clockOutIso = new Date().toISOString();
-  const updatePayload: Record<string, unknown> = {
-    clock_out_at: clockOutIso,
-    status: "closed",
-  };
-  if (
+  // Atomic clock-out: the RPC closes the punch, ends any open break, and
+  // writes the audit row in a single transaction. Idempotent — if the
+  // entry is already closed (mobile double-click), the function returns
+  // false and we report success so the UI doesn't show a spurious error.
+  const hasGps =
     input.clockOutLat != null &&
     input.clockOutLng != null &&
     !Number.isNaN(input.clockOutLat) &&
-    !Number.isNaN(input.clockOutLng)
-  ) {
-    updatePayload.clock_out_lat = input.clockOutLat;
-    updatePayload.clock_out_lng = input.clockOutLng;
-  }
-
-  const { error: upErr } = await supabase.from("time_entries").update(updatePayload).eq("id", entryId);
-
-  if (upErr) {
-    return { ok: false, error: upErr.message };
-  }
-
-  await supabase
-    .from("time_entry_breaks")
-    .update({ ended_at: clockOutIso })
-    .eq("time_entry_id", entryId)
-    .is("ended_at", null);
-
-  const name = emp?.full_name ?? "Employee";
-
-  await supabase.from("activity_events").insert({
-    employee_label: name,
-    action: "Clock out",
-    status: "ok",
-    location_id: locationId,
-    occurred_at: new Date().toISOString(),
+    !Number.isNaN(input.clockOutLng);
+  const { error: rpcErr } = await supabase.rpc("clock_out_with_audit", {
+    p_entry_id: entryId,
+    p_location_id: locationId,
+    p_clock_out_lat: hasGps ? input.clockOutLat : null,
+    p_clock_out_lng: hasGps ? input.clockOutLng : null,
+    p_employee_label: emp?.full_name ?? "Employee",
   });
+
+  if (rpcErr) {
+    // Migration 073 not applied yet → fall back to the legacy three-step
+    // write so QA isn't blocked. Loses atomicity until the migration is
+    // applied; the warning below makes that obvious in the dev console.
+    if (isMissingRpcError(rpcErr)) {
+      const clockOutIso = new Date().toISOString();
+      const updatePayload: Record<string, unknown> = {
+        clock_out_at: clockOutIso,
+        status: "closed",
+      };
+      if (hasGps) {
+        updatePayload.clock_out_lat = input.clockOutLat;
+        updatePayload.clock_out_lng = input.clockOutLng;
+      }
+      const { error: upErr } = await supabase
+        .from("time_entries")
+        .update(updatePayload)
+        .eq("id", entryId);
+      if (upErr) return { ok: false, error: upErr.message };
+
+      await supabase
+        .from("time_entry_breaks")
+        .update({ ended_at: clockOutIso })
+        .eq("time_entry_id", entryId)
+        .is("ended_at", null);
+
+      await supabase.from("activity_events").insert({
+        employee_label: emp?.full_name ?? "Employee",
+        action: "Clock out",
+        status: "ok",
+        location_id: locationId,
+        occurred_at: clockOutIso,
+      });
+      console.warn(
+        "[time-clock] clock_out_with_audit RPC missing — used legacy fallback. Apply supabase/migrations/073_clock_in_out_atomic.sql.",
+      );
+    } else {
+      return { ok: false, error: rpcErr.message };
+    }
+  }
 
   revalidatePath("/");
   revalidatePath("/activity");
   revalidatePath("/time-clock");
-  if (tcId) revalidatePath(`/time-clock/${tcId}`);
+  if (tcId) {
+    revalidatePath(`/time-clock/${tcId}`);
+    updateTag(timeClockTag(tcId));
+  }
   return { ok: true };
 }

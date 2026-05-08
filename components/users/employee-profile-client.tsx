@@ -1,6 +1,24 @@
 "use client";
 
-import { ArrowLeft } from "lucide-react";
+import {
+  ArrowLeft,
+  Briefcase,
+  Calendar,
+  CalendarDays,
+  Clock,
+  Eye,
+  EyeOff,
+  Gift,
+  Hash,
+  IdCard,
+  KeyRound,
+  Mail,
+  MapPin,
+  Phone,
+  Smartphone,
+  UserRound,
+  Users as UsersIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
@@ -207,12 +225,38 @@ export function EmployeeProfileClient({
 
   const inputCls =
     "mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500";
-  const labelCls = "text-xs font-semibold uppercase tracking-wide text-slate-500";
+  const labelCls =
+    "flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500";
 
   const sectionCard =
     "rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm";
 
   const groupCount = groupNames.length;
+
+  // -- Hero helpers ---------------------------------------------------------
+  const fullName =
+    [first_name, last_name].filter((s) => s && s.trim().length > 0).join(" ").trim() ||
+    initial.email ||
+    "—";
+  const initials = (() => {
+    const a = (first_name || "").trim();
+    const b = (last_name || "").trim();
+    const fa = a ? a[0] : "";
+    const fb = b ? b[0] : "";
+    const combined = `${fa}${fb}`.toUpperCase();
+    if (combined) return combined;
+    const e = (initial.email || "").trim();
+    return e ? e[0].toUpperCase() : "?";
+  })();
+  const storeName = useMemo(() => {
+    if (!location_id) return null;
+    const found = locations.find((l) => l.id === location_id);
+    return found ? found.name : null;
+  }, [locations, location_id]);
+
+  // [Kiosk Code] hidden by default — small lock-and-reveal so an admin
+  // pairing a phone doesn't shoulder-surf a code in plain sight.
+  const [showKioskCode, setShowKioskCode] = useState(false);
 
   const fmtShortDate = (iso: string | null | undefined) => {
     if (!iso) return "—";
@@ -262,14 +306,60 @@ export function EmployeeProfileClient({
         </Link>
       </div>
 
-      <div className="flex flex-col gap-2 border-b border-slate-200 pb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-          {first_name || "—"} {last_name || "—"}
-        </h1>
-        <p className="text-sm text-slate-500">
-          View and update profile details. Company fields use your store list and Store Managers as
-          direct reports.
-        </p>
+      {/*
+       * Hero strip — replaces the old plain title row. Big avatar (initials)
+       * so the page reads like "this is a person" instead of a settings form.
+       * Store + position chips give one-glance org context. Stays compact on
+       * mobile; the chips wrap below the name.
+       */}
+      <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-orange-50 via-white to-amber-50 p-5 shadow-sm sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+          <div
+            className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 to-orange-700 text-2xl font-bold text-white shadow-md ring-4 ring-white sm:h-20 sm:w-20 sm:text-3xl"
+            aria-hidden
+          >
+            {initials}
+          </div>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+              {fullName}
+            </h1>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {storeName ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-800 shadow-sm ring-1 ring-slate-200">
+                  <MapPin className="h-3.5 w-3.5 text-orange-600" aria-hidden />
+                  {storeName}
+                </span>
+              ) : null}
+              {role ? (
+                /*
+                 * Role badge — louder than the store chip on purpose. The role
+                 * (Manager / Cashier / etc.) is the single most important
+                 * signal when a manager opens this page mid-shift.
+                 */
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1 text-xs font-bold uppercase tracking-wide text-white shadow-sm">
+                  <Briefcase className="h-3.5 w-3.5" aria-hidden />
+                  {role}
+                </span>
+              ) : null}
+              {orgOwnerLocal ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900 ring-1 ring-amber-200">
+                  Company owner
+                </span>
+              ) : null}
+              {isArchivedProfile ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-300">
+                  Archived
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-3 text-sm text-slate-600">
+              {canEdit
+                ? "Update contact details, employment data, and access settings."
+                : "View profile details. Edits require user-management permission."}
+            </p>
+          </div>
+        </div>
       </div>
 
       {isArchivedProfile ? (
@@ -338,13 +428,18 @@ export function EmployeeProfileClient({
           id="employee-profile-form"
         >
           <div className={sectionCard}>
-            <h2 className="text-sm font-semibold text-slate-900">Personal Details</h2>
+            <div className="flex items-center gap-2">
+              <Phone className="h-4 w-4 text-orange-600" aria-hidden />
+              <h2 className="text-sm font-semibold text-slate-900">Contact</h2>
+            </div>
             <p className="mt-0.5 text-xs text-slate-500">
-              First name, last name, phone, and email.
+              How {first_name?.trim() || "this person"} is reached. Updating email here also
+              updates their login.
             </p>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <div className="sm:col-span-1">
                 <label className={labelCls} htmlFor="first_name">
+                  <UserRound className="h-3.5 w-3.5" aria-hidden />
                   First name
                 </label>
                 <input
@@ -358,6 +453,7 @@ export function EmployeeProfileClient({
               </div>
               <div className="sm:col-span-1">
                 <label className={labelCls} htmlFor="last_name">
+                  <UserRound className="h-3.5 w-3.5" aria-hidden />
                   Last name
                 </label>
                 <input
@@ -371,6 +467,7 @@ export function EmployeeProfileClient({
               </div>
               <div className="sm:col-span-2">
                 <label className={labelCls} htmlFor="mobile_phone">
+                  <Phone className="h-3.5 w-3.5" aria-hidden />
                   Mobile phone
                 </label>
                 <input
@@ -385,6 +482,7 @@ export function EmployeeProfileClient({
               </div>
               <div className="sm:col-span-2">
                 <label className={labelCls} htmlFor="email">
+                  <Mail className="h-3.5 w-3.5" aria-hidden />
                   Email
                 </label>
                 <input
@@ -401,13 +499,17 @@ export function EmployeeProfileClient({
           </div>
 
           <div className={sectionCard}>
-            <h2 className="text-sm font-semibold text-slate-900">Company Related Info</h2>
+            <div className="flex items-center gap-2">
+              <Briefcase className="h-4 w-4 text-orange-600" aria-hidden />
+              <h2 className="text-sm font-semibold text-slate-900">Work</h2>
+            </div>
             <p className="mt-0.5 text-xs text-slate-500">
-              Position (job role), store assignment, reporting line, and HR identifiers.
+              Title, store, reporting line, and HR identifiers.
             </p>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <div className="sm:col-span-1">
                 <label className={labelCls} htmlFor="employment_start_date">
+                  <Calendar className="h-3.5 w-3.5" aria-hidden />
                   Employment start date
                 </label>
                 <input
@@ -430,6 +532,7 @@ export function EmployeeProfileClient({
               </div>
               <div className="sm:col-span-1">
                 <label className={labelCls} htmlFor="birth_date">
+                  <Gift className="h-3.5 w-3.5" aria-hidden />
                   Birthday
                 </label>
                 <input
@@ -443,7 +546,8 @@ export function EmployeeProfileClient({
               </div>
               <div className="sm:col-span-1">
                 <label className={labelCls} htmlFor="employment_type">
-                  Employment Type
+                  <Clock className="h-3.5 w-3.5" aria-hidden />
+                  Employment type
                 </label>
                 <select
                   id="employment_type"
@@ -461,6 +565,7 @@ export function EmployeeProfileClient({
               </div>
               <div className="sm:col-span-1">
                 <label className={labelCls} htmlFor="standard_hours_per_week">
+                  <Clock className="h-3.5 w-3.5" aria-hidden />
                   Standard hours / week
                 </label>
                 <input
@@ -475,6 +580,7 @@ export function EmployeeProfileClient({
               </div>
               <div className="sm:col-span-1">
                 <label className={labelCls} htmlFor="role">
+                  <Briefcase className="h-3.5 w-3.5" aria-hidden />
                   Position
                 </label>
                 <select
@@ -499,6 +605,7 @@ export function EmployeeProfileClient({
               </div>
               <div className="sm:col-span-1">
                 <label className={labelCls} htmlFor="location_id">
+                  <MapPin className="h-3.5 w-3.5" aria-hidden />
                   Store
                 </label>
                 <select
@@ -527,6 +634,7 @@ export function EmployeeProfileClient({
               </div>
               <div className="sm:col-span-2">
                 <label className={labelCls} htmlFor="direct_manager_id">
+                  <UsersIcon className="h-3.5 w-3.5" aria-hidden />
                   Direct manager
                 </label>
                 <select
@@ -555,6 +663,7 @@ export function EmployeeProfileClient({
               </div>
               <div className="sm:col-span-2">
                 <label className={labelCls} htmlFor="employee_code">
+                  <IdCard className="h-3.5 w-3.5" aria-hidden />
                   Employee ID
                 </label>
                 <input
@@ -680,7 +789,10 @@ export function EmployeeProfileClient({
         <aside className="space-y-4 lg:col-span-1 xl:col-span-1">
           {ptoPanel ? (
             <div className={sectionCard}>
-              <h2 className="text-sm font-semibold text-slate-900">PTO</h2>
+              <div className="flex items-center gap-2">
+                <CalendarDays className="h-4 w-4 text-orange-600" aria-hidden />
+                <h2 className="text-sm font-semibold text-slate-900">PTO</h2>
+              </div>
               <p className="mt-0.5 text-xs text-slate-500">
                 Balances and recent PTO activity (ledger).
               </p>
@@ -796,7 +908,10 @@ export function EmployeeProfileClient({
           ) : null}
 
           <div className={sectionCard}>
-            <h2 className="text-sm font-semibold text-slate-900">Groups ({groupCount})</h2>
+            <div className="flex items-center gap-2">
+              <UsersIcon className="h-4 w-4 text-orange-600" aria-hidden />
+              <h2 className="text-sm font-semibold text-slate-900">Groups ({groupCount})</h2>
+            </div>
             {groupNames.length ? (
               <ul className="mt-3 list-inside list-disc space-y-1 text-sm text-slate-700">
                 {groupNames.map((n) => (
@@ -808,88 +923,141 @@ export function EmployeeProfileClient({
             )}
           </div>
 
+          {/*
+           * Security — single card for everything access-related: kiosk PIN
+           * (revealable), recent login activity, and the immutable account
+           * identifiers. Replaces the old "System settings / Usage info /
+           * Account" trio so a manager can answer "who logs in here, when,
+           * and with what code?" in one glance.
+           */}
           <div className={sectionCard}>
-            <h2 className="text-sm font-semibold text-slate-900">Usage info</h2>
-            <dl className="mt-3 space-y-3 text-sm">
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Total number of sessions
-                </dt>
-                <dd className="mt-0.5 font-mono text-slate-800">—</dd>
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4 text-orange-600" aria-hidden />
+              <h2 className="text-sm font-semibold text-slate-900">Security</h2>
+            </div>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Kiosk PIN, login activity, and account identifiers. The kiosk code is hidden by
+              default — treat it like a password.
+            </p>
+
+            {/*
+             * Kiosk code reveal — defaults hidden so an admin reviewing a profile
+             * doesn't accidentally leak a code to whoever's looking at the screen.
+             * The button toggles between dots (••••) and the literal value, and
+             * we keep the field tappable on mobile.
+             */}
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <KeyRound className="h-3.5 w-3.5" aria-hidden />
+                  Kiosk code
+                </span>
+                {initial.kiosk_code ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowKioskCode((v) => !v)}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-orange-500/30"
+                    aria-pressed={showKioskCode}
+                    aria-label={showKioskCode ? "Hide kiosk code" : "Show kiosk code"}
+                  >
+                    {showKioskCode ? (
+                      <>
+                        <EyeOff className="h-3.5 w-3.5" aria-hidden /> Hide
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="h-3.5 w-3.5" aria-hidden /> Show
+                      </>
+                    )}
+                  </button>
+                ) : null}
               </div>
-              <div className="border-t border-slate-100 pt-3">
-                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Days in the system
+              <p className="mt-1.5 select-all font-mono text-base font-bold tracking-widest text-slate-900">
+                {initial.kiosk_code
+                  ? showKioskCode
+                    ? initial.kiosk_code
+                    : "•".repeat(Math.max(4, initial.kiosk_code.length))
+                  : "—"}
+              </p>
+            </div>
+
+            <dl className="mt-4 space-y-3 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <dt className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+                  <CalendarDays className="h-3.5 w-3.5" aria-hidden />
+                  Last login
                 </dt>
-                <dd className="mt-0.5 font-mono text-slate-800">
+                <dd className="text-right text-slate-800">{fmtDisplayDateTime(lastLogin)}</dd>
+              </div>
+              <div className="flex items-start justify-between gap-3 border-t border-slate-100 pt-3">
+                <dt className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+                  <CalendarDays className="h-3.5 w-3.5" aria-hidden />
+                  Days in system
+                </dt>
+                <dd className="font-mono text-slate-800">
                   {daysInSystem !== null ? String(daysInSystem) : "—"}
                 </dd>
               </div>
-              <div className="border-t border-slate-100 pt-3">
-                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Last logged-in
+              <div className="flex items-start justify-between gap-3 border-t border-slate-100 pt-3">
+                <dt className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+                  <UserRound className="h-3.5 w-3.5" aria-hidden />
+                  User ID
                 </dt>
-                <dd className="mt-0.5 text-slate-800">{fmtDisplayDateTime(lastLogin)}</dd>
+                <dd className="truncate font-mono text-xs text-slate-700">{appUserIdDisplay}</dd>
               </div>
-            </dl>
-          </div>
-
-          <div className={sectionCard}>
-            <h2 className="text-sm font-semibold text-slate-900">More info</h2>
-            <dl className="mt-3 space-y-3 text-sm">
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Mobile device
-                </dt>
-                <dd className="mt-0.5 font-mono text-slate-600">—</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Mobile device ID
-                </dt>
-                <dd className="mt-0.5 font-mono text-slate-600">—</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  OS version
-                </dt>
-                <dd className="mt-0.5 font-mono text-slate-600">—</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  App version
-                </dt>
-                <dd className="mt-0.5 font-mono text-slate-600">—</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Kiosk code
-                </dt>
-                <dd className="mt-0.5 font-mono text-slate-800">{initial.kiosk_code || "—"}</dd>
-              </div>
-            </dl>
-            <p className="mt-3 text-xs text-slate-400">
-              Device fields are placeholders until mobile telemetry is connected.
-            </p>
-          </div>
-
-          <div className={sectionCard}>
-            <h2 className="text-sm font-semibold text-slate-900">Account</h2>
-            <dl className="mt-3 space-y-3 text-sm">
-              <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Connecteam User ID
-                </dt>
-                <dd className="mt-0.5 font-mono text-slate-800">{appUserIdDisplay}</dd>
-              </div>
-              <div className="border-t border-slate-100 pt-3">
-                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              <div className="flex items-start justify-between gap-3 border-t border-slate-100 pt-3">
+                <dt className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+                  <UserRound className="h-3.5 w-3.5" aria-hidden />
                   Added via
                 </dt>
-                <dd className="mt-0.5 text-slate-800">{addedViaLabel}</dd>
+                <dd className="text-slate-800">{addedViaLabel}</dd>
               </div>
             </dl>
+
+            {/*
+             * Device telemetry — quietly tucked at the bottom in a 2×2 muted
+             * grid since these are placeholders today. They cost almost no
+             * vertical space but the slot is ready when the mobile app starts
+             * reporting real values.
+             */}
+            <div className="mt-4 border-t border-slate-100 pt-3">
+              <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <Smartphone className="h-3 w-3" aria-hidden />
+                Device telemetry
+              </p>
+              <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-lg bg-slate-50 px-2.5 py-1.5">
+                  <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                    Mobile device
+                  </dt>
+                  <dd className="mt-0.5 truncate font-mono text-slate-600">—</dd>
+                </div>
+                <div className="rounded-lg bg-slate-50 px-2.5 py-1.5">
+                  <dt className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                    <Hash className="h-2.5 w-2.5" aria-hidden />
+                    Device ID
+                  </dt>
+                  <dd className="mt-0.5 truncate font-mono text-slate-600">—</dd>
+                </div>
+                <div className="rounded-lg bg-slate-50 px-2.5 py-1.5">
+                  <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                    OS version
+                  </dt>
+                  <dd className="mt-0.5 truncate font-mono text-slate-600">—</dd>
+                </div>
+                <div className="rounded-lg bg-slate-50 px-2.5 py-1.5">
+                  <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                    App version
+                  </dt>
+                  <dd className="mt-0.5 truncate font-mono text-slate-600">—</dd>
+                </div>
+              </dl>
+              <p className="mt-2 text-[11px] text-slate-400">
+                Device fields are placeholders until mobile telemetry is connected.
+              </p>
+            </div>
           </div>
+
         </aside>
       </div>
     </div>

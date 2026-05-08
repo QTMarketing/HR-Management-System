@@ -221,15 +221,6 @@ export function SmartGroupsClient({
           <Link href="/schedule" className="font-medium text-orange-700 hover:text-orange-900">
             Schedule
           </Link>
-          . Mirrors{" "}
-          <Link
-            href="https://app.connecteam.com/#/index/groups/groups"
-            className="font-medium text-orange-700 hover:text-orange-900"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Connecteam Groups
-          </Link>
           .
         </p>
       </div>

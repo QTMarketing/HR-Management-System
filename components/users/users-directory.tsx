@@ -321,16 +321,7 @@ export function UsersDirectory({
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Users</h1>
         <p className="mt-1 text-sm text-slate-500">
           Directory scoped to <span className="font-medium text-slate-700">{locationLabel}</span>.
-          Structure mirrors{" "}
-          <Link
-            href="https://app.connecteam.com/#/index/users/users?activeTab=0"
-            className="font-medium text-orange-700 hover:text-orange-900"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Connecteam Users
-          </Link>{" "}
-          — tabs, toolbar, and column sets per audience.
+          Tabs, toolbar, and column sets are tailored to each audience.
         </p>
       </div>
 
@@ -482,7 +473,7 @@ export function UsersDirectory({
                   setAddUsersModalKey((k) => k + 1);
                   setAddUsersOpen(true);
                 }}
-                title="Add multiple users (Connecteam-style bulk form)."
+                  title="Add multiple users in bulk."
               >
                 Add users
               </button>
