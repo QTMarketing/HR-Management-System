@@ -148,3 +148,24 @@ export async function getGlobalPayrollPolicy(
   if (error || !data) return null;
   return normalizePayrollPolicyRow(data as RawRow);
 }
+
+/**
+ * Read the per-location override row, if one exists. Returns `null` (NOT
+ * the global row) when no override has been saved — callers decide whether
+ * to fall back. Used by the PTO Admin "Payroll & OT Rules" form when the
+ * admin selects a specific store.
+ */
+export async function getLocationPayrollPolicyRow(
+  supabase: SupabaseClient,
+  locationId: string,
+): Promise<PayrollPolicyRow | null> {
+  const id = locationId?.trim();
+  if (!id) return null;
+  const { data, error } = await supabase
+    .from("payroll_policies")
+    .select("id, location_id, weekly_ot_threshold, daily_ot_threshold, ot_multiplier, created_at, updated_at")
+    .eq("location_id", id)
+    .maybeSingle();
+  if (error || !data) return null;
+  return normalizePayrollPolicyRow(data as RawRow);
+}

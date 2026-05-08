@@ -18,8 +18,10 @@ import {
   Filter,
   Pencil,
   Search,
+  Store,
   Trash2,
   Users,
+  X,
 } from "lucide-react";
 import {
   archiveTimeClock,
@@ -30,6 +32,8 @@ import {
   updateTimeClockName,
   type ActionResult,
 } from "@/app/actions/time-clock-admin";
+import { setSelectedLocationId } from "@/app/actions/location";
+import { ALL_LOCATIONS_ID } from "@/lib/dashboard/resolve-location";
 import { PRIMARY_ORANGE_CTA } from "@/lib/ui/primary-orange-cta";
 
 export type HubClock = {
@@ -429,6 +433,10 @@ export function TimeClockHub({
         </p>
       ) : null}
 
+      {!scopeAll ? (
+        <ScopedToStoreBanner locationName={locationName} disabled={pending || busy} />
+      ) : null}
+
       <div className="border-b border-slate-200">
         <nav className="flex gap-8" aria-label="Clock list sections">
           <button
@@ -676,6 +684,64 @@ export function TimeClockHub({
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * "You are scoped to a single store" banner with a one-click reset.
+ *
+ * Why this exists: store scope is held in a global cookie (`hr_location_id`)
+ * via `setSelectedLocationId`, which every dashboard page honors. That makes
+ * the scope feel "sticky" when users come back to /time-clock from a
+ * specific clock — they see only that store's clocks but no obvious way out.
+ *
+ * Resetting on route change would silently change scope for *every* page
+ * (Schedule, Time Off, Users, etc.), which would be a worse bug than the one
+ * we're fixing. So instead we surface a high-visibility chip *here* on the
+ * Time Clock index, and let the user decide.
+ */
+function ScopedToStoreBanner({
+  locationName,
+  disabled,
+}: {
+  locationName: string;
+  disabled: boolean;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const handleReset = () => {
+    if (disabled || pending) return;
+    startTransition(async () => {
+      await setSelectedLocationId(ALL_LOCATIONS_ID);
+      router.refresh();
+    });
+  };
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex flex-col gap-2 rounded-xl border border-orange-200 bg-orange-50/60 px-4 py-3 text-sm text-orange-950 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div className="flex min-w-0 items-start gap-2.5">
+        <Store className="mt-0.5 h-4 w-4 shrink-0 text-orange-600" aria-hidden />
+        <p className="min-w-0">
+          Showing clocks for{" "}
+          <span className="font-semibold">{locationName}</span> only.{" "}
+          <span className="text-orange-900/80">
+            Switch to all stores to see every location.
+          </span>
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={handleReset}
+        disabled={disabled || pending}
+        className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-full border border-orange-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-orange-900 shadow-sm transition hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto"
+      >
+        <X className="h-3.5 w-3.5" aria-hidden />
+        {pending ? "Switching…" : "View all stores"}
+      </button>
     </div>
   );
 }

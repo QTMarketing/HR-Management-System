@@ -1,5 +1,7 @@
 import { EllipsisTd } from "@/components/ui/ellipsis-td";
+import { SecurityAuditExportButton } from "@/components/security-audit/audit-export-button";
 import { SECURITY_AUDIT_ACTIONS } from "@/lib/audit/security-audit";
+import type { SecurityAuditCsvRow } from "@/lib/csv/security-audit-csv";
 import { requirePermission } from "@/lib/rbac/guard";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -29,6 +31,99 @@ function fmtWhen(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+/**
+ * Compose the human-readable "Target Entity" string for an audit event.
+ * Used by both the on-screen table and the CSV export so the two stay in lockstep.
+ */
+function buildAuditDetail(
+  r: {
+    action: string;
+    target_employee_id: string | null;
+    location_id: string | null;
+    metadata: Record<string, unknown> | null;
+  },
+  nameById: Map<string, string>,
+  locNameById: Map<string, string>,
+): string {
+  const meta = r.metadata ?? {};
+  if (r.action === SECURITY_AUDIT_ACTIONS.ADMIN_ACCESS_UPDATED) {
+    const t = r.target_employee_id
+      ? nameById.get(r.target_employee_id) ?? r.target_employee_id
+      : "—";
+    return `${t}: ${String(meta.before_summary ?? "—")} → ${String(meta.after_summary ?? "—")}`;
+  }
+  if (r.action === SECURITY_AUDIT_ACTIONS.EMPLOYEE_PROMOTED_STORE_MANAGER) {
+    const t = r.target_employee_id
+      ? nameById.get(r.target_employee_id) ?? r.target_employee_id
+      : "—";
+    return `${t} (${String(meta.previous_role ?? "?")} → Store Manager)`;
+  }
+  if (r.action === SECURITY_AUDIT_ACTIONS.LOCATION_STORE_LEAD_CHANGED) {
+    const ln =
+      (typeof meta.location_name === "string" && meta.location_name) ||
+      (r.location_id ? locNameById.get(r.location_id) : "") ||
+      "Store";
+    const prevId = meta.previous_manager_employee_id as string | null | undefined;
+    const nextId = meta.new_manager_employee_id as string | null | undefined;
+    const prev = prevId == null ? "none" : nameById.get(prevId) ?? prevId.slice(0, 8) + "…";
+    const next = nextId == null ? "none" : nameById.get(nextId) ?? nextId.slice(0, 8) + "…";
+    return `${ln}: ${prev} → ${next}`;
+  }
+  if (r.action === SECURITY_AUDIT_ACTIONS.ORGANIZATION_OWNER_CHANGED) {
+    const t = r.target_employee_id
+      ? nameById.get(r.target_employee_id) ?? r.target_employee_id
+      : "—";
+    const granted = Boolean(meta.organization_owner);
+    return `${t}: ${granted ? "granted" : "removed"} (${String(meta.previous_role ?? "?")} → ${String(meta.new_role ?? "?")})`;
+  }
+  if (r.action === SECURITY_AUDIT_ACTIONS.EMPLOYEE_ARCHIVED) {
+    const t = r.target_employee_id
+      ? nameById.get(r.target_employee_id) ?? r.target_employee_id
+      : "—";
+    return `${t} (${String(meta.previous_status ?? "?")} → archived; ${String(meta.full_name ?? "")})`;
+  }
+  if (r.action === SECURITY_AUDIT_ACTIONS.TIME_ENTRY_ARCHIVED) {
+    const emp = r.target_employee_id
+      ? nameById.get(r.target_employee_id) ?? r.target_employee_id
+      : "—";
+    const loc = (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
+    return `Entry ${String(meta.time_entry_id ?? "").slice(0, 8)}… · ${emp} · ${loc}`;
+  }
+  if (
+    r.action === SECURITY_AUDIT_ACTIONS.TIME_ENTRY_APPROVED ||
+    r.action === SECURITY_AUDIT_ACTIONS.TIME_ENTRY_UNAPPROVED ||
+    r.action === SECURITY_AUDIT_ACTIONS.TIME_ENTRY_ADJUSTED
+  ) {
+    const emp = r.target_employee_id
+      ? nameById.get(r.target_employee_id) ?? r.target_employee_id
+      : "—";
+    const loc = (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
+    return `Entry ${String(meta.time_entry_id ?? "").slice(0, 8)}… · ${emp} · ${loc}`;
+  }
+  if (
+    r.action === SECURITY_AUDIT_ACTIONS.TIME_OFF_RECORDED ||
+    r.action === SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_SUBMITTED
+  ) {
+    const emp = r.target_employee_id
+      ? nameById.get(r.target_employee_id) ?? r.target_employee_id
+      : "—";
+    const loc = (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
+    const typ = typeof meta.time_off_type === "string" ? meta.time_off_type : "—";
+    return `${typ} · ${emp} · ${loc} · ${String(meta.time_off_record_id ?? "").slice(0, 8)}…`;
+  }
+  if (
+    r.action === SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_APPROVED ||
+    r.action === SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_DENIED
+  ) {
+    const emp = r.target_employee_id
+      ? nameById.get(r.target_employee_id) ?? r.target_employee_id
+      : "—";
+    const loc = (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
+    return `${emp} · ${loc} · ${String(meta.time_off_record_id ?? "").slice(0, 8)}…`;
+  }
+  return JSON.stringify(meta);
 }
 
 export default async function SecurityAuditPage() {
@@ -93,13 +188,52 @@ export default async function SecurityAuditPage() {
     }
   }
 
+  // Pre-flatten rows for the CSV export. Same name / location maps as the
+  // table, so the export and the on-screen view never drift.
+  const csvRows: SecurityAuditCsvRow[] = (rows ?? []).map((raw) => {
+    const r = raw as {
+      created_at: string;
+      action: string;
+      actor_employee_id: string | null;
+      target_employee_id: string | null;
+      location_id: string | null;
+      metadata: Record<string, unknown> | null;
+    };
+    const meta = r.metadata ?? {};
+    const actorName =
+      (r.actor_employee_id && nameById.get(r.actor_employee_id)) ||
+      (r.actor_employee_id ? r.actor_employee_id.slice(0, 8) + "…" : "");
+    // IP capture isn't wired into `insertSecurityAudit` yet; pull from
+    // `metadata.ip_address` so the column lights up the moment that's added.
+    const ipAddress = typeof meta.ip_address === "string" ? meta.ip_address : "";
+    return {
+      createdAt: r.created_at,
+      actorName,
+      actionType: ACTION_LABEL[r.action] ?? r.action,
+      targetEntity: buildAuditDetail(
+        {
+          action: r.action,
+          target_employee_id: r.target_employee_id,
+          location_id: r.location_id,
+          metadata: r.metadata,
+        },
+        nameById,
+        locNameById,
+      ),
+      ipAddress,
+    };
+  });
+
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">Security audit</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          History of company-owner actions: access changes, promotions, and store lead assignments.
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-900">Security audit</h1>
+          <p className="mt-1 text-sm text-slate-600">
+            History of company-owner actions: access changes, promotions, and store lead assignments.
+          </p>
+        </div>
+        <SecurityAuditExportButton rows={csvRows} />
       </div>
 
       {error ? (
@@ -135,97 +269,10 @@ export default async function SecurityAuditPage() {
                   location_id: string | null;
                   metadata: Record<string, unknown> | null;
                 };
-                const meta = r.metadata ?? {};
                 const actor =
                   (r.actor_employee_id && nameById.get(r.actor_employee_id)) ||
                   (r.actor_employee_id ? r.actor_employee_id.slice(0, 8) + "…" : "—");
-                let detail = "";
-                if (r.action === SECURITY_AUDIT_ACTIONS.ADMIN_ACCESS_UPDATED) {
-                  const t = r.target_employee_id
-                    ? nameById.get(r.target_employee_id) ?? r.target_employee_id
-                    : "—";
-                  detail = `${t}: ${String(meta.before_summary ?? "—")} → ${String(meta.after_summary ?? "—")}`;
-                } else if (r.action === SECURITY_AUDIT_ACTIONS.EMPLOYEE_PROMOTED_STORE_MANAGER) {
-                  const t = r.target_employee_id
-                    ? nameById.get(r.target_employee_id) ?? r.target_employee_id
-                    : "—";
-                  detail = `${t} (${String(meta.previous_role ?? "?")} → Store Manager)`;
-                } else if (r.action === SECURITY_AUDIT_ACTIONS.LOCATION_STORE_LEAD_CHANGED) {
-                  const ln =
-                    (typeof meta.location_name === "string" && meta.location_name) ||
-                    (r.location_id ? locNameById.get(r.location_id) : "") ||
-                    "Store";
-                  const prevId = meta.previous_manager_employee_id as string | null | undefined;
-                  const nextId = meta.new_manager_employee_id as string | null | undefined;
-                  const prev =
-                    prevId == null ? "none" : nameById.get(prevId) ?? prevId.slice(0, 8) + "…";
-                  const next =
-                    nextId == null ? "none" : nameById.get(nextId) ?? nextId.slice(0, 8) + "…";
-                  detail = `${ln}: ${prev} → ${next}`;
-                } else if (r.action === SECURITY_AUDIT_ACTIONS.ORGANIZATION_OWNER_CHANGED) {
-                  const t = r.target_employee_id
-                    ? nameById.get(r.target_employee_id) ?? r.target_employee_id
-                    : "—";
-                  const granted = Boolean(meta.organization_owner);
-                  detail = `${t}: ${granted ? "granted" : "removed"} (${String(meta.previous_role ?? "?")} → ${String(meta.new_role ?? "?")})`;
-                } else if (r.action === SECURITY_AUDIT_ACTIONS.EMPLOYEE_ARCHIVED) {
-                  const t = r.target_employee_id
-                    ? nameById.get(r.target_employee_id) ?? r.target_employee_id
-                    : "—";
-                  detail = `${t} (${String(meta.previous_status ?? "?")} → archived; ${String(meta.full_name ?? "")})`;
-                } else if (r.action === SECURITY_AUDIT_ACTIONS.TIME_ENTRY_ARCHIVED) {
-                  const emp = r.target_employee_id
-                    ? nameById.get(r.target_employee_id) ?? r.target_employee_id
-                    : "—";
-                  const loc =
-                    (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
-                  detail = `Entry ${String(meta.time_entry_id ?? "").slice(0, 8)}… · ${emp} · ${loc}`;
-                } else if (
-                  r.action === SECURITY_AUDIT_ACTIONS.TIME_ENTRY_APPROVED ||
-                  r.action === SECURITY_AUDIT_ACTIONS.TIME_ENTRY_UNAPPROVED
-                ) {
-                  const emp = r.target_employee_id
-                    ? nameById.get(r.target_employee_id) ?? r.target_employee_id
-                    : "—";
-                  const loc =
-                    (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
-                  detail = `Entry ${String(meta.time_entry_id ?? "").slice(0, 8)}… · ${emp} · ${loc}`;
-                } else if (r.action === SECURITY_AUDIT_ACTIONS.TIME_ENTRY_ADJUSTED) {
-                  const emp = r.target_employee_id
-                    ? nameById.get(r.target_employee_id) ?? r.target_employee_id
-                    : "—";
-                  const loc =
-                    (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
-                  detail = `Entry ${String(meta.time_entry_id ?? "").slice(0, 8)}… · ${emp} · ${loc}`;
-                } else if (r.action === SECURITY_AUDIT_ACTIONS.TIME_OFF_RECORDED) {
-                  const emp = r.target_employee_id
-                    ? nameById.get(r.target_employee_id) ?? r.target_employee_id
-                    : "—";
-                  const loc =
-                    (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
-                  const typ = typeof meta.time_off_type === "string" ? meta.time_off_type : "—";
-                  detail = `${typ} · ${emp} · ${loc} · ${String(meta.time_off_record_id ?? "").slice(0, 8)}…`;
-                } else if (r.action === SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_SUBMITTED) {
-                  const emp = r.target_employee_id
-                    ? nameById.get(r.target_employee_id) ?? r.target_employee_id
-                    : "—";
-                  const loc =
-                    (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
-                  const typ = typeof meta.time_off_type === "string" ? meta.time_off_type : "—";
-                  detail = `${typ} · ${emp} · ${loc} · ${String(meta.time_off_record_id ?? "").slice(0, 8)}…`;
-                } else if (
-                  r.action === SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_APPROVED ||
-                  r.action === SECURITY_AUDIT_ACTIONS.TIME_OFF_REQUEST_DENIED
-                ) {
-                  const emp = r.target_employee_id
-                    ? nameById.get(r.target_employee_id) ?? r.target_employee_id
-                    : "—";
-                  const loc =
-                    (r.location_id && locNameById.get(r.location_id)) || r.location_id || "—";
-                  detail = `${emp} · ${loc} · ${String(meta.time_off_record_id ?? "").slice(0, 8)}…`;
-                } else {
-                  detail = JSON.stringify(meta);
-                }
+                const detail = buildAuditDetail(r, nameById, locNameById);
                 return (
                   <tr
                     key={r.id}

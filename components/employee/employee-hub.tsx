@@ -4,6 +4,8 @@ import { CalendarClock, CalendarPlus, Palmtree, Thermometer } from "lucide-react
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { getPtoBalancesForEmployee, type GetPtoBalancesResult } from "@/app/actions/pto-balances";
+import { PtoLedgerView } from "@/components/employee/pto-ledger-view";
+import type { PtoLedgerEntry } from "@/lib/pto/ledger-types";
 import { EmployeeTimeOffRequestModal } from "@/components/time-clock/employee-time-off-request-modal";
 import { TimeClockSelfServe } from "@/components/time-clock/time-clock-self-serve";
 import type {
@@ -21,6 +23,10 @@ type Props = {
   employeeId: string;
   hub: LoadEmployeeHubDataResult;
   initialPto: GetPtoBalancesResult;
+  /** Pre-loaded ledger entries (newest first). Empty array when none / on error. */
+  initialLedger: PtoLedgerEntry[];
+  /** Server-side error from the ledger load, if any. */
+  initialLedgerError?: string | null;
 };
 
 function fmtHours(n: number): string {
@@ -48,7 +54,13 @@ function fmtShiftRange(startIso: string, endIso: string): string {
   return `${s.toLocaleString(undefined, { ...dateOpts, ...timeOpts })} → ${e.toLocaleString(undefined, { ...dateOpts, ...timeOpts })}`;
 }
 
-export function EmployeeHub({ employeeId, hub, initialPto }: Props) {
+export function EmployeeHub({
+  employeeId,
+  hub,
+  initialPto,
+  initialLedger,
+  initialLedgerError = null,
+}: Props) {
   const router = useRouter();
   const [pto, setPto] = useState<GetPtoBalancesResult>(initialPto);
   const [timeOffOpen, setTimeOffOpen] = useState(false);
@@ -213,6 +225,13 @@ export function EmployeeHub({ employeeId, hub, initialPto }: Props) {
           </div>
         </section>
       </div>
+
+      {/* Section 4 — PTO history / accrual ledger */}
+      <PtoLedgerView
+        employeeId={employeeId}
+        initialEntries={initialLedger}
+        initialError={initialLedgerError}
+      />
 
       {hub.timeOffLocationId ? (
         <EmployeeTimeOffRequestModal

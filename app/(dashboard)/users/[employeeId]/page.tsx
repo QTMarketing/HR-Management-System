@@ -34,6 +34,8 @@ const PROFILE_SELECT = [
   "last_login",
   "added_by",
   "employee_code",
+  "archived_at",
+  "rehired_at",
 ].join(",");
 
 type ProfileRow = {
@@ -57,6 +59,8 @@ type ProfileRow = {
   last_login: string | null;
   added_by: string | null;
   employee_code: string | null;
+  archived_at: string | null;
+  rehired_at: string | null;
 };
 
 /** Compact numeric id for display (Connecteam-style), derived from UUID. */
@@ -116,7 +120,10 @@ export default async function EmployeeProfilePage({
   const isOrgOwner = normalizeRoleLabel(rec.role ?? "") === "owner";
   const employeeStatus = String(rec.status ?? "active");
   const isArchivedProfile = employeeStatus === "archived";
-  const canArchiveUser = canEdit && !isArchivedProfile;
+  // Lifecycle gate: anyone with USERS_MANAGE can archive (when active) or
+  // restore (when archived). The button itself flips based on `isArchivedProfile`,
+  // and the archive section is hidden inline when already archived.
+  const canArchiveUser = canEdit;
   const canEditForm = canEdit && !isArchivedProfile;
   if (!scopeAll && locationId !== selectedLocationId) {
     notFound();
@@ -238,6 +245,8 @@ export default async function EmployeeProfilePage({
       addedViaLabel={addedViaLabel}
       lastLogin={rec.last_login ?? null}
       ptoPanel={ptoPanel}
+      archivedAt={rec.archived_at ?? null}
+      rehiredAt={rec.rehired_at ?? null}
     />
   );
 }

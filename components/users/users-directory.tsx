@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, MoreHorizontal, Search, SlidersHorizontal, Upload } from "lucide-react";
+import { ChevronDown, Download, MoreHorizontal, Search, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
@@ -25,6 +25,11 @@ import { EllipsisTd } from "@/components/ui/ellipsis-td";
 import { normalizeRoleLabel } from "@/lib/rbac/matrix";
 import { promoteEmployeeToAdmin } from "@/app/actions/users-directory";
 import { setEmployeeOrgOwner } from "@/app/actions/org-owner-role";
+import {
+  buildUsersDirectoryCsv,
+  downloadUsersDirectoryCsv,
+  usersDirectoryCsvFilename,
+} from "@/lib/csv/users-directory-csv";
 
 function fmtDate(s: string | null | undefined): string {
   if (!s) return "—";
@@ -402,12 +407,22 @@ export function UsersDirectory({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-50"
-              disabled
-              title="Export"
-              aria-label="Export"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={filtered.length === 0}
+              title={
+                filtered.length === 0
+                  ? "Nothing to export — no users match the current filters."
+                  : `Export ${filtered.length} ${filtered.length === 1 ? "user" : "users"} to CSV`
+              }
+              aria-label="Export users to CSV"
+              onClick={() => {
+                const csv = buildUsersDirectoryCsv(filtered);
+                const filename = usersDirectoryCsvFilename(tab);
+                downloadUsersDirectoryCsv(csv, filename);
+              }}
             >
-              <Upload className="h-4 w-4" />
+              <Download className="h-4 w-4" aria-hidden />
+              Export CSV
             </button>
             {tab === "admins" && (canPromoteToAdmin || canBulkAddFromAdminsTab) ? (
               <div className="relative" ref={adminAddMenuRef}>

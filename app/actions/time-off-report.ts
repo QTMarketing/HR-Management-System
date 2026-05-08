@@ -55,9 +55,11 @@ export async function getTimeOffLedgerExportRows(params: {
   const ytdEndExclusive = new Date(year + 1, 0, 1, 0, 0, 0, 0).toISOString();
 
   // Employees in scope.
+  // employment_start_date / rehired_at fuel the UI-only "Active Since" column;
+  // they're carried on each row but excluded from the CSV writer.
   let empQuery = supabase
     .from("employees")
-    .select("id, full_name, first_name, last_name, location_id")
+    .select("id, full_name, first_name, last_name, location_id, employment_start_date, rehired_at")
     .eq("status", "active");
   if (!scopeAll) empQuery = empQuery.eq("location_id", locationId);
   const { data: empRows, error: empErr } = await empQuery;
@@ -69,6 +71,8 @@ export async function getTimeOffLedgerExportRows(params: {
     first_name: string | null;
     last_name: string | null;
     location_id: string | null;
+    employment_start_date: string | null;
+    rehired_at: string | null;
   }[];
   const employeeIds = employees.map((e) => e.id);
 
@@ -140,6 +144,8 @@ export async function getTimeOffLedgerExportRows(params: {
         locationId: e.location_id ?? undefined,
         storeLocation: locName,
         employeeName,
+        employmentStartDate: e.employment_start_date ?? null,
+        rehiredAt: e.rehired_at ?? null,
         totalVacationHrs: remV + usedV,
         totalSickHrs: remS + usedS,
         usedVacationHrs: usedV,

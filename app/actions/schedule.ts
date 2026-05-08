@@ -8,6 +8,7 @@ import {
   resolveSelectedLocationId,
   type LocationRow,
 } from "@/lib/dashboard/resolve-location";
+import { renderHREmail, sendHREmail } from "@/lib/mail";
 import { DEMO_LOCATIONS } from "@/lib/mock/dashboard-demo";
 import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
@@ -665,7 +666,8 @@ export async function publishDraftShiftsForWeek(
     if (employeeIds.size > 0) {
       const weekLabel = formatWeekOfLabel(weekMonday);
       const link = weekParam ? `/schedule/board?week=${encodeURIComponent(weekParam)}` : "/schedule/board";
-      const rows = [...employeeIds].map((employee_id) => ({
+      const idsList = [...employeeIds];
+      const rows = idsList.map((employee_id) => ({
         employee_id,
         title: "New Schedule Published",
         message: `Your shifts for the week of ${weekLabel} are now available.`,
@@ -676,6 +678,41 @@ export async function publishDraftShiftsForWeek(
       const { error: notifyErr } = await supabase.from("notifications").insert(rows);
       if (notifyErr) {
         console.error("[schedule.publish] failed to insert notifications", notifyErr.message);
+      }
+
+      // Best-effort email fan-out — failures here also must not roll back.
+      try {
+        const { data: empRows } = await supabase
+          .from("employees")
+          .select("id, email, full_name")
+          .in("id", idsList);
+        const recipients =
+          (empRows ?? []) as { id: string; email: string | null; full_name: string | null }[];
+        const baseUrl =
+          process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://app.example.com";
+        const ctaUrl = `${baseUrl.replace(/\/$/, "")}${link}`;
+        await Promise.all(
+          recipients
+            .filter((e) => !!e.email && e.email.includes("@"))
+            .map((e) =>
+              sendHREmail({
+                to: e.email!,
+                subject: `New schedule published — week of ${weekLabel}`,
+                html: renderHREmail({
+                  preheader: `Your shifts for the week of ${weekLabel} are ready.`,
+                  title: "Your new schedule is ready",
+                  bodyHtml: `
+                    <p>Hi ${e.full_name ? e.full_name.split(" ")[0] : "there"},</p>
+                    <p>The schedule for the <strong>week of ${weekLabel}</strong> has just been published. Your shifts are now visible in your portal.</p>`,
+                  ctaLabel: "View my schedule",
+                  ctaUrl,
+                  footnote: "You're receiving this because you have shifts assigned for that week.",
+                }),
+              }),
+            ),
+        );
+      } catch (mailErr) {
+        console.error("[schedule.publish] email fan-out failed:", mailErr);
       }
     }
   }

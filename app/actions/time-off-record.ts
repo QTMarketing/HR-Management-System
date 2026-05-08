@@ -6,10 +6,35 @@ import {
   insertSecurityAudit,
   resolveActorEmployeeId,
 } from "@/lib/audit/security-audit";
+import { renderHREmail, sendHREmail } from "@/lib/mail";
 import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { TIME_OFF_TYPES } from "@/lib/time-clock/time-off-types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+
+/** Format an ISO timestamp for the body of the time-off email receipts. */
+function fmtRange(startIso: string | undefined, endIso: string | undefined, allDay: boolean): string {
+  if (!startIso || !endIso) return "";
+  const s = new Date(startIso);
+  const e = new Date(endIso);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return "";
+  const dateOpts: Intl.DateTimeFormatOptions = {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  };
+  const timeOpts: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit" };
+  if (allDay) {
+    const sameDay =
+      s.getFullYear() === e.getFullYear() &&
+      s.getMonth() === e.getMonth() &&
+      s.getDate() === e.getDate();
+    if (sameDay) return s.toLocaleDateString(undefined, dateOpts) + " (all day)";
+    return `${s.toLocaleDateString(undefined, dateOpts)} → ${e.toLocaleDateString(undefined, dateOpts)} (all day)`;
+  }
+  return `${s.toLocaleString(undefined, { ...dateOpts, ...timeOpts })} → ${e.toLocaleString(undefined, { ...dateOpts, ...timeOpts })}`;
+}
 
 export type CreateTimeOffRecordResult = { ok: true; id: string } | { ok: false; error: string };
 
@@ -343,6 +368,38 @@ export async function approveTimeOffRequest(
     metadata: { time_off_record_id: id },
   });
 
+  // Best-effort email receipt — never blocks the approval from succeeding.
+  try {
+    const { data: empRow } = await supabase
+      .from("employees")
+      .select("email, full_name")
+      .eq("id", r.employee_id)
+      .maybeSingle();
+    const emp = empRow as { email?: string | null; full_name?: string | null } | null;
+    if (emp?.email) {
+      const range = fmtRange(r.start_at, r.end_at, Boolean(r.all_day));
+      const typeLabel = r.time_off_type ?? "Time off";
+      const html = renderHREmail({
+        preheader: `Your ${typeLabel} request was approved.`,
+        title: "Time off approved",
+        bodyHtml: `
+          <p>Hi ${emp.full_name ? emp.full_name.split(" ")[0] : "there"},</p>
+          <p>Your <strong>${typeLabel}</strong> request${range ? ` for <strong>${range}</strong>` : ""} has been <strong style="color:#15803d">approved</strong>.</p>
+          <p>It’s now reflected on your schedule and PTO balances.</p>`,
+        ctaLabel: "Open my portal",
+        ctaUrl: process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://app.example.com/",
+        footnote: "You're receiving this because your manager just reviewed your request.",
+      });
+      await sendHREmail({
+        to: emp.email,
+        subject: `Time off approved — ${typeLabel}`,
+        html,
+      });
+    }
+  } catch (mailErr) {
+    console.error("[time-off.approve] email receipt failed:", mailErr);
+  }
+
   revalidatePath("/time-clock");
 
   return { ok: true };
@@ -373,12 +430,22 @@ export async function denyTimeOffRequest(
 
   const { data: rec, error: fetchErr } = await supabase
     .from("time_off_records")
-    .select("id, employee_id, location_id, status")
+    .select("id, employee_id, location_id, status, time_off_type, all_day, start_at, end_at")
     .eq("id", id)
     .maybeSingle();
 
   if (fetchErr) return { ok: false, error: fetchErr.message };
-  const r = rec as { employee_id: string; location_id: string; status: string } | null;
+  const r = rec as
+    | {
+        employee_id: string;
+        location_id: string;
+        status: string;
+        time_off_type?: string;
+        all_day?: boolean;
+        start_at?: string;
+        end_at?: string;
+      }
+    | null;
   if (!r) return { ok: false, error: "Request not found." };
   if (r.location_id !== locId) {
     return { ok: false, error: "Request does not belong to this store." };
@@ -407,6 +474,39 @@ export async function denyTimeOffRequest(
     locationId: locId,
     metadata: { time_off_record_id: id },
   });
+
+  // Best-effort email receipt.
+  try {
+    const { data: empRow } = await supabase
+      .from("employees")
+      .select("email, full_name")
+      .eq("id", r.employee_id)
+      .maybeSingle();
+    const emp = empRow as { email?: string | null; full_name?: string | null } | null;
+    if (emp?.email) {
+      const range = fmtRange(r.start_at, r.end_at, Boolean(r.all_day));
+      const typeLabel = r.time_off_type ?? "Time off";
+      const safeNote = note.length > 0 ? note : "";
+      const html = renderHREmail({
+        preheader: `Update on your ${typeLabel} request.`,
+        title: "Time off request — not approved",
+        bodyHtml: `
+          <p>Hi ${emp.full_name ? emp.full_name.split(" ")[0] : "there"},</p>
+          <p>Your <strong>${typeLabel}</strong> request${range ? ` for <strong>${range}</strong>` : ""} was <strong style="color:#b91c1c">not approved</strong>.</p>
+          ${safeNote ? `<p style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px;color:#7f1d1d"><strong>Manager note:</strong><br/>${safeNote.replace(/\n/g, "<br/>")}</p>` : ""}
+          <p>If you think this is a mistake, please reach out to your manager directly.</p>`,
+        ctaLabel: "Open my portal",
+        ctaUrl: process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://app.example.com/",
+      });
+      await sendHREmail({
+        to: emp.email,
+        subject: `Time off update — ${typeLabel}`,
+        html,
+      });
+    }
+  } catch (mailErr) {
+    console.error("[time-off.deny] email receipt failed:", mailErr);
+  }
 
   revalidatePath("/time-clock");
 

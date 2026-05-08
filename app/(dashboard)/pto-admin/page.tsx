@@ -4,7 +4,10 @@ import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PtoRolloverCard } from "@/components/pto/pto-rollover-card";
 import { PtoMonthlyCashoutCard } from "@/components/pto/pto-monthly-cashout-card";
-import { PayrollRulesCard } from "@/components/pto/payroll-rules-card";
+import {
+  PayrollRulesCard,
+  type PayrollRulesLocationOption,
+} from "@/components/pto/payroll-rules-card";
 import { getGlobalPayrollPolicy } from "@/lib/payroll/policy";
 import { DEFAULT_PAYROLL_POLICY } from "@/lib/payroll/payable-hours";
 
@@ -21,8 +24,8 @@ export default async function PtoAdminPage() {
     redirect("/forbidden");
   }
 
-  // Track C: load the global OT policy. Defensive defaults so this page still
-  // renders cleanly even if migration 070 hasn't been applied yet.
+  // Track C: load the global OT policy + the list of stores so the
+  // PayrollRulesCard can offer per-location overrides.
   let globalPolicy: {
     weeklyOtThreshold: number;
     dailyOtThreshold: number | null;
@@ -34,18 +37,33 @@ export default async function PtoAdminPage() {
     otMultiplier: DEFAULT_PAYROLL_POLICY.otMultiplier,
     updatedAt: null,
   };
+  let locations: PayrollRulesLocationOption[] = [];
+
   try {
-    const row = await getGlobalPayrollPolicy(supabase);
-    if (row) {
+    const [policyRow, locationsRes] = await Promise.all([
+      getGlobalPayrollPolicy(supabase),
+      supabase
+        .from("locations")
+        .select("id, name")
+        .neq("status", "archived")
+        .order("name", { ascending: true }),
+    ]);
+    if (policyRow) {
       globalPolicy = {
-        weeklyOtThreshold: row.weekly_ot_threshold,
-        dailyOtThreshold: row.daily_ot_threshold,
-        otMultiplier: row.ot_multiplier,
-        updatedAt: row.updated_at ?? null,
+        weeklyOtThreshold: policyRow.weekly_ot_threshold,
+        dailyOtThreshold: policyRow.daily_ot_threshold,
+        otMultiplier: policyRow.ot_multiplier,
+        updatedAt: policyRow.updated_at ?? null,
       };
     }
+    if (!locationsRes.error && locationsRes.data) {
+      locations = (locationsRes.data as { id: string; name: string }[]).map((l) => ({
+        id: l.id,
+        name: l.name,
+      }));
+    }
   } catch {
-    // keep defaults
+    // keep defaults / empty list
   }
 
   return (
@@ -60,6 +78,7 @@ export default async function PtoAdminPage() {
       <PayrollRulesCard
         initial={globalPolicy}
         canEdit={!rbac.enabled || hasPermission(rbac, PERMISSIONS.ORG_OWNER)}
+        locations={locations}
       />
       <PtoRolloverCard />
       <PtoMonthlyCashoutCard />

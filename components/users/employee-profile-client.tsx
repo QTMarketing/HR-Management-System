@@ -8,7 +8,7 @@ import {
   type EmployeeProfilePayload,
   updateEmployeeProfile,
 } from "@/app/actions/employee-profile";
-import { archiveEmployee } from "@/app/actions/archive-employee";
+import { archiveEmployee, restoreEmployee } from "@/app/actions/archive-employee";
 import { setEmployeeOrgOwner } from "@/app/actions/org-owner-role";
 import { PRIMARY_ORANGE_CTA } from "@/lib/ui/primary-orange-cta";
 import { POSITION_ROLE_OPTIONS } from "@/lib/users/position-options";
@@ -97,6 +97,14 @@ type Props = {
   daysInSystem: number | null;
   addedViaLabel: string;
   lastLogin: string | null;
+  /** Set when the row is currently archived. Used by the Restore confirm copy. */
+  archivedAt?: string | null;
+  /**
+   * Set when an employee was previously archived and later restored ("boomerang").
+   * Surfaces under the employment start date so HR can tell tenure apart from
+   * the latest return-to-work date. Stays null for everyone who was never archived.
+   */
+  rehiredAt?: string | null;
 };
 
 export function EmployeeProfileClient({
@@ -114,6 +122,8 @@ export function EmployeeProfileClient({
   daysInSystem,
   addedViaLabel,
   lastLogin,
+  archivedAt = null,
+  rehiredAt = null,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -263,11 +273,50 @@ export function EmployeeProfileClient({
       </div>
 
       {isArchivedProfile ? (
-        <p className="rounded-lg border border-slate-300 bg-slate-100 px-4 py-3 text-sm text-slate-800">
-          This user is <strong className="font-semibold">archived</strong>. The record is kept for
-          payroll and audit; it no longer appears in active lists and can’t clock in. Edits are
-          disabled — restore by changing status in the database if needed.
-        </p>
+        <div className="flex flex-col gap-3 rounded-lg border border-slate-300 bg-slate-100 px-4 py-3 text-sm text-slate-800 sm:flex-row sm:items-center sm:justify-between">
+          <p className="min-w-0">
+            This user is <strong className="font-semibold">archived</strong>
+            {archivedAt ? (
+              <>
+                {" "}
+                <span className="text-slate-600">({fmtDisplayDateTime(archivedAt)})</span>
+              </>
+            ) : null}
+            . The record is kept for payroll and audit; it no longer appears in active lists and
+            can&apos;t clock in. Edits are disabled while archived.
+          </p>
+          {canArchiveUser ? (
+            <button
+              type="button"
+              disabled={pending}
+              className={`${PRIMARY_ORANGE_CTA} shrink-0 px-3.5 py-2 text-xs disabled:opacity-50`}
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    `Restore ${first_name} ${last_name}? They'll move back to active users and be stamped as a rehire (their original employment start date is preserved).`,
+                  )
+                ) {
+                  return;
+                }
+                setMessage(null);
+                startTransition(async () => {
+                  const r = await restoreEmployee(initial.id);
+                  if (!r.ok) {
+                    setMessage({ kind: "err", text: r.error });
+                    return;
+                  }
+                  setMessage({
+                    kind: "ok",
+                    text: `Welcome back — ${first_name} ${last_name} is active again.`,
+                  });
+                  router.refresh();
+                });
+              }}
+            >
+              {pending ? "Restoring…" : "Restore user (rehire)"}
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       {message ? (
@@ -369,6 +418,15 @@ export function EmployeeProfileClient({
                   onChange={(e) => setEmploymentStart(e.target.value)}
                   disabled={!canEdit || pending}
                 />
+                {rehiredAt ? (
+                  <p
+                    className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200/80"
+                    title="This employee was archived and later restored. The original start date above is preserved."
+                  >
+                    <span aria-hidden>↩</span>
+                    Rehired: {fmtDisplayDateTime(rehiredAt)}
+                  </p>
+                ) : null}
               </div>
               <div className="sm:col-span-1">
                 <label className={labelCls} htmlFor="birth_date">
@@ -511,7 +569,7 @@ export function EmployeeProfileClient({
             </div>
           </div>
 
-          {canArchiveUser ? (
+          {canArchiveUser && !isArchivedProfile ? (
             <div className={sectionCard}>
               <h2 className="text-sm font-semibold text-slate-900">Archive user</h2>
               <p className="mt-0.5 text-xs text-slate-500">

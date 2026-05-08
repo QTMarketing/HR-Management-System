@@ -1,9 +1,22 @@
 "use server";
 
 /**
- * Track C — server actions for the global payroll policy (PTO Admin → Payroll
- * & OT Rules card). Owner-only. Writes go through Supabase + RLS so the same
- * gate applies even if the action is invoked outside the app.
+ * Track C — server actions for the payroll policy table.
+ *
+ * Two scopes share one table (`payroll_policies`):
+ *   - `location_id IS NULL` → the global default (org-wide).
+ *   - `location_id = <uuid>` → store-specific override.
+ *
+ * The `lib/payroll/payable-hours.ts` calculator and the unified payroll CSV
+ * already resolve "specific row wins, otherwise global". This module exposes:
+ *   - `updatePayrollPolicy({ locationId, ... })` — internal generic upsert.
+ *   - `updateGlobalPayrollPolicy({...})` — legacy wrapper for the global row
+ *     (kept stable so existing imports don't break).
+ *   - `saveLocationPayrollPolicy(locationId, policyData)` — admin form save.
+ *   - `getLocationPayrollPolicy(locationId)` — admin form load (falls back
+ *     to the global row if no override yet, with a `source` discriminator).
+ *
+ * Owner-only writes via RLS + RBAC. Reads are open to authenticated users.
  */
 
 import { revalidatePath } from "next/cache";
@@ -17,21 +30,26 @@ import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   getGlobalPayrollPolicy,
+  getLocationPayrollPolicyRow,
   type PayrollPolicyRow,
 } from "@/lib/payroll/policy";
 
-export type UpdateGlobalPayrollPolicyInput = {
+export type PayrollPolicyInput = {
   weeklyOtThreshold: number;
   /** `null` clears any daily-OT rule; `0` is rejected as invalid. */
   dailyOtThreshold: number | null;
   otMultiplier: number;
 };
 
-export type UpdateGlobalPayrollPolicyResult =
+export type UpdatePayrollPolicyResult =
   | { ok: true; row: PayrollPolicyRow }
   | { ok: false; error: string };
 
-function validate(input: UpdateGlobalPayrollPolicyInput): string | null {
+/** Backwards-compatible alias kept for callers that already imported it. */
+export type UpdateGlobalPayrollPolicyInput = PayrollPolicyInput;
+export type UpdateGlobalPayrollPolicyResult = UpdatePayrollPolicyResult;
+
+function validate(input: PayrollPolicyInput): string | null {
   if (
     typeof input.weeklyOtThreshold !== "number" ||
     !Number.isFinite(input.weeklyOtThreshold) ||
@@ -67,13 +85,26 @@ function validate(input: UpdateGlobalPayrollPolicyInput): string | null {
   return null;
 }
 
+function rowFromDbResponse(u: PayrollPolicyRow): PayrollPolicyRow {
+  return {
+    id: u.id,
+    location_id: u.location_id,
+    weekly_ot_threshold: Number(u.weekly_ot_threshold),
+    daily_ot_threshold:
+      u.daily_ot_threshold === null ? null : Number(u.daily_ot_threshold),
+    ot_multiplier: Number(u.ot_multiplier),
+    created_at: u.created_at,
+    updated_at: u.updated_at,
+  };
+}
+
 /**
- * Update (or upsert) the **global** payroll policy. Store-specific overrides
- * live in the same table but aren't editable from this UI yet.
+ * Upsert a payroll policy for either the global scope (`locationId === null`)
+ * or a specific store. Owner-only.
  */
-export async function updateGlobalPayrollPolicy(
-  input: UpdateGlobalPayrollPolicyInput,
-): Promise<UpdateGlobalPayrollPolicyResult> {
+export async function updatePayrollPolicy(
+  input: PayrollPolicyInput & { locationId: string | null },
+): Promise<UpdatePayrollPolicyResult> {
   const err = validate(input);
   if (err) return { ok: false, error: err };
 
@@ -86,11 +117,26 @@ export async function updateGlobalPayrollPolicy(
     return { ok: false, error: "Only Organization Owners can edit payroll rules." };
   }
 
-  const before = await getGlobalPayrollPolicy(supabase);
+  const locationId = input.locationId ? input.locationId.trim() : null;
 
-  // Migration 070 seeds a global row, but be defensive in case it hasn't run
-  // (or someone deleted it manually) — we'll insert one then.
+  // If a location was passed, sanity-check it exists. Doing this *before*
+  // the upsert gives a much clearer error than a generic FK violation.
+  if (locationId) {
+    const { data: locRow, error: locErr } = await supabase
+      .from("locations")
+      .select("id")
+      .eq("id", locationId)
+      .maybeSingle();
+    if (locErr) return { ok: false, error: locErr.message };
+    if (!locRow) return { ok: false, error: "Selected location not found." };
+  }
+
+  const before = locationId
+    ? await getLocationPayrollPolicyRow(supabase, locationId)
+    : await getGlobalPayrollPolicy(supabase);
+
   let row: PayrollPolicyRow | null = null;
+
   if (before) {
     const { data: updated, error: upErr } = await supabase
       .from("payroll_policies")
@@ -104,22 +150,12 @@ export async function updateGlobalPayrollPolicy(
       .maybeSingle();
     if (upErr) return { ok: false, error: upErr.message };
     if (!updated) return { ok: false, error: "Could not update payroll policy." };
-    const u = updated as PayrollPolicyRow;
-    row = {
-      id: u.id,
-      location_id: u.location_id,
-      weekly_ot_threshold: Number(u.weekly_ot_threshold),
-      daily_ot_threshold:
-        u.daily_ot_threshold === null ? null : Number(u.daily_ot_threshold),
-      ot_multiplier: Number(u.ot_multiplier),
-      created_at: u.created_at,
-      updated_at: u.updated_at,
-    };
+    row = rowFromDbResponse(updated as PayrollPolicyRow);
   } else {
     const { data: inserted, error: insErr } = await supabase
       .from("payroll_policies")
       .insert({
-        location_id: null,
+        location_id: locationId,
         weekly_ot_threshold: input.weeklyOtThreshold,
         daily_ot_threshold: input.dailyOtThreshold,
         ot_multiplier: input.otMultiplier,
@@ -128,26 +164,18 @@ export async function updateGlobalPayrollPolicy(
       .maybeSingle();
     if (insErr) return { ok: false, error: insErr.message };
     if (!inserted) return { ok: false, error: "Could not create payroll policy." };
-    const u = inserted as PayrollPolicyRow;
-    row = {
-      id: u.id,
-      location_id: u.location_id,
-      weekly_ot_threshold: Number(u.weekly_ot_threshold),
-      daily_ot_threshold:
-        u.daily_ot_threshold === null ? null : Number(u.daily_ot_threshold),
-      ot_multiplier: Number(u.ot_multiplier),
-      created_at: u.created_at,
-      updated_at: u.updated_at,
-    };
+    row = rowFromDbResponse(inserted as PayrollPolicyRow);
   }
 
   const actorId = await resolveActorEmployeeId(supabase);
   await insertSecurityAudit(supabase, {
     actorEmployeeId: actorId,
     action: SECURITY_AUDIT_ACTIONS.PAYROLL_POLICY_UPDATED,
+    locationId: locationId ?? null,
     metadata: {
       payroll_policy_id: row.id,
-      scope: "global",
+      scope: locationId ? "location" : "global",
+      location_id: locationId ?? null,
       before: before
         ? {
             weekly_ot_threshold: before.weekly_ot_threshold,
@@ -163,9 +191,55 @@ export async function updateGlobalPayrollPolicy(
     },
   });
 
-  // OT math affects the timesheet panel + payroll CSV, so blow those caches.
   revalidatePath("/pto-admin");
   revalidatePath("/time-clock");
 
   return { ok: true, row };
+}
+
+/** Backwards-compatible: update the global (`location_id IS NULL`) row. */
+export async function updateGlobalPayrollPolicy(
+  input: PayrollPolicyInput,
+): Promise<UpdatePayrollPolicyResult> {
+  return updatePayrollPolicy({ ...input, locationId: null });
+}
+
+/** Save a per-location payroll policy override (owner-only). */
+export async function saveLocationPayrollPolicy(
+  locationId: string,
+  policyData: PayrollPolicyInput,
+): Promise<UpdatePayrollPolicyResult> {
+  const id = locationId?.trim();
+  if (!id) return { ok: false, error: "Missing location id." };
+  return updatePayrollPolicy({ ...policyData, locationId: id });
+}
+
+export type LocationPolicyResult =
+  | {
+      ok: true;
+      /** "location" = explicit override exists; "global" = falling back. */
+      source: "location" | "global" | "fallback";
+      row: PayrollPolicyRow | null;
+    }
+  | { ok: false; error: string };
+
+/**
+ * Load the policy for a specific location. If no override exists, falls back
+ * to the global row so the admin form has sensible starting values when the
+ * user picks a fresh location.
+ */
+export async function getLocationPayrollPolicy(
+  locationId: string,
+): Promise<LocationPolicyResult> {
+  const id = locationId?.trim();
+  if (!id) return { ok: false, error: "Missing location id." };
+
+  const supabase = await createSupabaseServerClient();
+  const specific = await getLocationPayrollPolicyRow(supabase, id);
+  if (specific) return { ok: true, source: "location", row: specific };
+
+  const global = await getGlobalPayrollPolicy(supabase);
+  if (global) return { ok: true, source: "global", row: global };
+
+  return { ok: true, source: "fallback", row: null };
 }

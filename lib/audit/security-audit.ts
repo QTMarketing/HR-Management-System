@@ -6,6 +6,7 @@ export const SECURITY_AUDIT_ACTIONS = {
   LOCATION_STORE_LEAD_CHANGED: "location_store_lead_changed",
   ORGANIZATION_OWNER_CHANGED: "organization_owner_changed",
   EMPLOYEE_ARCHIVED: "employee_archived",
+  EMPLOYEE_RESTORED: "employee_restored",
   TIME_ENTRY_ARCHIVED: "time_entry_archived",
   TIME_ENTRY_APPROVED: "time_entry_approved",
   TIME_ENTRY_UNAPPROVED: "time_entry_unapproved",
@@ -17,6 +18,7 @@ export const SECURITY_AUDIT_ACTIONS = {
   PAY_PERIOD_LOCKED: "pay_period_locked",
   PAY_PERIOD_UNLOCKED: "pay_period_unlocked",
   PAYROLL_POLICY_UPDATED: "payroll_policy_updated",
+  PTO_BALANCE_ADJUSTED: "pto_balance_adjusted",
 } as const;
 
 export type SecurityAuditAction =

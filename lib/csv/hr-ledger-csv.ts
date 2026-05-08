@@ -5,6 +5,19 @@ export type HrTimeOffLedgerCsvRow = {
   locationId?: string;
   storeLocation: string;
   employeeName: string;
+  /**
+   * Optional. UI-only. Original employment start date (date string from
+   * employees.employment_start_date). Surfaces in the "Active Since" column.
+   * Intentionally NOT included in the CSV header order so payroll export shape
+   * stays stable.
+   */
+  employmentStartDate?: string | null;
+  /**
+   * Optional. UI-only. Set when the employee was archived and later restored
+   * (boomerang). When present, the table prefers this over `employmentStartDate`
+   * and decorates the cell with a "Rehired" badge. Same CSV-stability note.
+   */
+  rehiredAt?: string | null;
   totalVacationHrs: number;
   totalSickHrs: number;
   usedVacationHrs: number;

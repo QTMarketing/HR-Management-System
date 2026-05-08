@@ -6,6 +6,7 @@ import { LaborSummaryCard } from "@/components/dashboard/labor-summary-card";
 import { RecentStaffUpdates } from "@/components/dashboard/recent-staff-updates";
 import type { StaffUpdateRow } from "@/components/dashboard/recent-staff-updates.types";
 import { getPtoBalancesForEmployee } from "@/app/actions/pto-balances";
+import { getPtoLedger } from "@/app/actions/pto-ledger";
 import { EmployeeHub } from "@/components/employee/employee-hub";
 import { displayNameFromUser } from "@/lib/auth/display-name";
 import { aggregateLocationMetrics } from "@/lib/dashboard/aggregate-dashboard";
@@ -110,12 +111,21 @@ export default async function DashboardPage() {
   }
 
   const employeeId = rbac.employeeId!;
-  const [hub, initialPto] = await Promise.all([
+  const [hub, initialPto, initialLedger] = await Promise.all([
     loadEmployeeHubData(supabase, employeeId),
     getPtoBalancesForEmployee(employeeId),
+    getPtoLedger(employeeId),
   ]);
 
-  return <EmployeeHub employeeId={employeeId} hub={hub} initialPto={initialPto} />;
+  return (
+    <EmployeeHub
+      employeeId={employeeId}
+      hub={hub}
+      initialPto={initialPto}
+      initialLedger={initialLedger.ok ? initialLedger.data : []}
+      initialLedgerError={initialLedger.ok ? null : initialLedger.error}
+    />
+  );
 }
 
 async function ManagerKpiDashboard() {

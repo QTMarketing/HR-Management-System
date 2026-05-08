@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Download,
   Plane,
+  RotateCw,
   Search,
   Stethoscope,
   X,
@@ -46,6 +47,27 @@ function downloadTextFile(filename: string, contents: string) {
 function fmtHrs(n: number): string {
   if (!Number.isFinite(n)) return "0";
   return n.toFixed(2).replace(/\.00$/, "");
+}
+
+/**
+ * "Active Since" formatter. Accepts both date-only strings
+ * (`employment_start_date`, e.g. "2023-04-12") and full ISO timestamps
+ * (`rehired_at`, e.g. "2026-05-08T13:42:00Z"). Returns "—" when missing /
+ * unparseable so the column never renders raw nulls.
+ */
+function fmtActiveSince(value: string | null | undefined): string {
+  if (!value) return "—";
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  // Anchor date-only strings at noon local to avoid the "Apr 11" vs "Apr 12"
+  // off-by-one that hits when you parse "YYYY-MM-DD" as midnight UTC and then
+  // format in a western timezone.
+  const d = isDateOnly ? new Date(`${value}T12:00:00`) : new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function safeFilenamePart(s: string): string {
@@ -279,10 +301,11 @@ function LedgerTable({
           <table className="w-full table-auto border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                <th className="w-[28%] whitespace-nowrap py-2 pl-5 pr-3">Employee</th>
+                <th className="w-[26%] whitespace-nowrap py-2 pl-5 pr-3">Employee</th>
                 {scopeAll ? (
-                  <th className="w-[14%] whitespace-nowrap py-2 pr-3">Store</th>
+                  <th className="w-[12%] whitespace-nowrap py-2 pr-3">Store</th>
                 ) : null}
+                <th className="w-[14%] whitespace-nowrap py-2 pr-3">Active Since</th>
                 {showVacation ? (
                   <th
                     className="whitespace-nowrap border-l border-slate-200 py-2 pl-3 pr-3 text-center"
@@ -307,6 +330,7 @@ function LedgerTable({
               <tr className="border-b border-slate-200 bg-slate-50/60 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 <th className="py-1.5 pl-5 pr-3" />
                 {scopeAll ? <th className="py-1.5 pr-3" /> : null}
+                <th className="py-1.5 pr-3" />
                 {showVacation ? (
                   <>
                     <th className="border-l border-slate-200 py-1.5 pl-3 pr-2 text-right">Total</th>
@@ -344,6 +368,12 @@ function LedgerTable({
                     {scopeAll ? (
                       <td className="py-1.5 pr-3 text-slate-600">{r.storeLocation}</td>
                     ) : null}
+                    <td className="py-1.5 pr-3 text-slate-700">
+                      <ActiveSinceCell
+                        employmentStartDate={r.employmentStartDate ?? null}
+                        rehiredAt={r.rehiredAt ?? null}
+                      />
+                    </td>
                     {showVacation ? (
                       <>
                         <td className="border-l border-slate-100 py-1.5 pl-3 pr-2 text-right tabular-nums">
@@ -379,4 +409,40 @@ function LedgerTable({
       )}
     </section>
   );
+}
+
+/**
+ * Renders the "Active Since" cell. Prefers `rehiredAt` (boomerang employees)
+ * and decorates the date with a small "Rehired" pill so HR can see at a glance
+ * that the displayed date is a return-to-work, not the original tenure start.
+ * Falls back to `employmentStartDate`. Shows "—" when both are missing.
+ */
+function ActiveSinceCell({
+  employmentStartDate,
+  rehiredAt,
+}: {
+  employmentStartDate: string | null;
+  rehiredAt: string | null;
+}) {
+  if (rehiredAt) {
+    const original = fmtActiveSince(employmentStartDate);
+    const titleText =
+      original === "—"
+        ? "Rehired — this employee was previously archived and restored."
+        : `Rehired — original start date was ${original}.`;
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        <span className="tabular-nums">{fmtActiveSince(rehiredAt)}</span>
+        <span
+          className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900 ring-1 ring-amber-200/80"
+          title={titleText}
+          aria-label={titleText}
+        >
+          <RotateCw className="h-3 w-3" aria-hidden />
+          Rehired
+        </span>
+      </span>
+    );
+  }
+  return <span className="tabular-nums">{fmtActiveSince(employmentStartDate)}</span>;
 }
