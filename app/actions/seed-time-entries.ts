@@ -54,6 +54,17 @@ export async function seedSampleTimesheetPunches(
   timeClockId: string,
   locationId: string,
 ): Promise<SeedTimeEntriesResult> {
+  // Hard environment gate: this action seeds fake time entries and must never
+  // run against a production database. The matching client button in
+  // components/time-clock/time-sheets-panel.tsx is also gated on NODE_ENV; this
+  // is the second layer of defense for the server.
+  if (process.env.NODE_ENV !== "development") {
+    return {
+      ok: false,
+      error: "Sample data seeding is only available in development.",
+    };
+  }
+
   const g = await gateManageTime();
   if (g) return g;
 
