@@ -344,6 +344,9 @@ async function ManagerKpiDashboard() {
           presentTrendText={m.active_now_trend_text}
           scopeLabel={locationName}
           hasMetrics
+          locationId={locationId}
+          scopeAll={scopeAll}
+          useDemoFallback={usedDemoFallback}
         />
       ) : (
         <DashboardKpiStrip
@@ -357,6 +360,9 @@ async function ManagerKpiDashboard() {
           presentTrendText={null}
           scopeLabel={locationName}
           hasMetrics={false}
+          locationId={locationId}
+          scopeAll={scopeAll}
+          useDemoFallback={usedDemoFallback}
         />
       )}
 
