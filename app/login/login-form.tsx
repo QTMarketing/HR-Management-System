@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { safeNextPath } from "@/lib/auth/safe-next-path";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -21,7 +21,6 @@ const DEV_LOGIN_EMAIL = "dev@retailhr.local";
 const DEV_LOGIN_PASSWORD = "DevPassword123!";
 
 export function LoginForm({ initialError, nextPath }: Props) {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const isDev = process.env.NODE_ENV === "development";
   const [email, setEmail] = useState(() => (isDev ? DEV_LOGIN_EMAIL : ""));
@@ -31,6 +30,7 @@ export function LoginForm({ initialError, nextPath }: Props) {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
     setError("");
     const supabase = createSupabaseBrowserClient();
@@ -38,16 +38,23 @@ export function LoginForm({ initialError, nextPath }: Props) {
       email,
       password,
     });
-    setLoading(false);
     if (err) {
+      setLoading(false);
       setError(err.message);
       return;
     }
-    const dest = safeNextPath(
-      nextPath ?? searchParams.get("next"),
-    );
-    router.refresh();
-    router.push(dest);
+    /**
+     * Hard navigation, not router.push(). Two reasons:
+     * 1. router.refresh() + router.push() from the /login route raced with
+     *    the middleware's `/login → /` redirect (the auth cookie was set
+     *    by signInWithPassword), which is why a second click was needed
+     *    to actually transition.
+     * 2. We want the dashboard shell to mount with a fresh RSC tree under
+     *    the new auth identity — a hard nav guarantees one clean middleware
+     *    pass with the cookie present, no stale client cache.
+     */
+    const dest = safeNextPath(nextPath ?? searchParams.get("next"));
+    window.location.assign(dest);
   }
 
   return (

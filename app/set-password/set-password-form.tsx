@@ -1,12 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export function SetPasswordForm() {
-  const router = useRouter();
   const [ready, setReady] = useState(false);
   const [noSession, setNoSession] = useState(false);
   const [password, setPassword] = useState("");
@@ -56,6 +54,7 @@ export function SetPasswordForm() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
     if (password.length < 8) {
       setError("Use at least 8 characters.");
       return;
@@ -68,13 +67,14 @@ export function SetPasswordForm() {
     setError("");
     const supabase = createSupabaseBrowserClient();
     const { error: err } = await supabase.auth.updateUser({ password });
-    setLoading(false);
     if (err) {
+      setLoading(false);
       setError(err.message);
       return;
     }
-    router.refresh();
-    router.push("/");
+    // Hard navigation: same reason as login — gives middleware one clean
+    // pass with the freshly-authenticated cookie and a fresh dashboard shell.
+    window.location.assign("/");
   }
 
   if (!ready) {
