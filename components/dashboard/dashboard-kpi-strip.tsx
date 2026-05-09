@@ -14,9 +14,16 @@ import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { getDashboardDrillDown } from "@/app/actions/dashboard-drill-down";
-import type { DashboardDrillKind, DashboardDrillRow } from "@/lib/dashboard/drill-down-types";
+import type {
+  DashboardDrillKind,
+  DashboardDrillRow,
+} from "@/lib/dashboard/drill-down-types";
 import { Sheet } from "@/components/ui/sheet";
 import { TotalAttendanceChart } from "@/components/dashboard/total-attendance-chart";
+import {
+  AttendanceHubSheet,
+  type AttendanceHubTabId,
+} from "@/components/dashboard/attendance-hub-sheet";
 import {
   type DashboardKpiVariant,
   dashboardKpiVariants,
@@ -160,8 +167,17 @@ export function DashboardKpiStrip({
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [pending, startTransition] = useTransition();
+  const [hubOpen, setHubOpen] = useState(false);
+  const [hubInitialTab, setHubInitialTab] =
+    useState<AttendanceHubTabId>("scheduled");
 
   const copy = kind ? SHEET_COPY[kind] : null;
+
+  function openHub(tab: AttendanceHubTabId) {
+    if (!hasMetrics) return;
+    setHubInitialTab(tab);
+    setHubOpen(true);
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -226,8 +242,8 @@ export function DashboardKpiStrip({
             label="Clocked in now"
             value={hasMetrics ? String(clockedInNow) : "—"}
             sub="On the clock"
-            onClick={() => void openKind("clocked_in_now")}
-            disabled={false}
+            onClick={() => openHub("present")}
+            disabled={!hasMetrics}
           />
           <KpiTile
             variant="rose"
@@ -235,8 +251,8 @@ export function DashboardKpiStrip({
             label="Late clock-ins"
             value={hasMetrics ? String(lateClockIns) : "—"}
             sub="Today"
-            onClick={() => void openKind("late_clock_ins")}
-            disabled={false}
+            onClick={() => openHub("scheduled")}
+            disabled={!hasMetrics}
           />
           <KpiTile
             variant="sky"
@@ -266,10 +282,13 @@ export function DashboardKpiStrip({
             present={present}
             onLeave={onLeave}
             presentTrendText={presentTrendText ?? null}
+            onClick={hasMetrics ? () => openHub("scheduled") : undefined}
+            onFooterClick={hasMetrics ? (tab) => openHub(tab) : undefined}
           />
         </div>
       </div>
 
+      {/* Sheet block follows. */}
       {sheetOpen && copy && kind ? (
         <Sheet
           open={sheetOpen}
@@ -374,6 +393,16 @@ export function DashboardKpiStrip({
           )}
         </Sheet>
       ) : null}
+
+      <AttendanceHubSheet
+        open={hubOpen}
+        onOpenChange={setHubOpen}
+        locationId={locationId}
+        scopeAll={scopeAll}
+        useDemoFallback={useDemoFallback}
+        scopeLabel={scopeLabel}
+        initialTab={hubInitialTab}
+      />
     </section>
   );
 }
