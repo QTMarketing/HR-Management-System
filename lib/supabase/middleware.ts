@@ -5,9 +5,16 @@ import { safeNextPath } from "@/lib/auth/safe-next-path";
 /**
  * Refreshes the Supabase session cookie.
  * When `NEXT_PUBLIC_AUTH_ENABLED=true`, unauthenticated users are redirected to `/login`
- * (except public routes). Signed-in users hitting `/login` are sent to `next` or `/`.
+ * (except public routes: login, auth callback, set-password, forgot-password). Signed-in users
+ * hitting `/login` are sent to `next` or `/`.
  */
 export async function updateSession(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  const signupPaths = new Set(["/signup", "/sign-up", "/register"]);
+  if (signupPaths.has(pathname)) {
+    return NextResponse.redirect(new URL("/login", request.url));
+  }
+
   let supabaseResponse = NextResponse.next({
     request,
   });
@@ -44,9 +51,11 @@ export async function updateSession(request: NextRequest) {
     return supabaseResponse;
   }
 
-  const pathname = request.nextUrl.pathname;
   const isPublic =
-    pathname === "/login" || pathname.startsWith("/auth/callback");
+    pathname === "/login" ||
+    pathname.startsWith("/auth/callback") ||
+    pathname === "/set-password" ||
+    pathname === "/forgot-password";
 
   if (!user && !isPublic) {
     const loginUrl = request.nextUrl.clone();

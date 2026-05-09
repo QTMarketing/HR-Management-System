@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   useCallback,
   useEffect,
@@ -304,6 +305,20 @@ export function AddUsersBulkModal({
       if (!result.ok) {
         setSubmitError(result.error);
         return;
+      }
+      if (result.inviteWarnings?.length) {
+        toast.warning(
+          `Created ${result.created} user(s), but some invite emails failed or were skipped.`,
+          { duration: 8_000 },
+        );
+        for (const line of result.inviteWarnings.slice(0, 5)) {
+          toast.message(line);
+        }
+        if (result.inviteWarnings.length > 5) {
+          toast.message(`…and ${result.inviteWarnings.length - 5} more`);
+        }
+      } else {
+        toast.success(`Created ${result.created} user(s). Invite emails were sent.`);
       }
       router.refresh();
       onOpenChange(false);

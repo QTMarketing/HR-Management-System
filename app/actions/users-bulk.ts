@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { sendEmployeeInviteEmails } from "@/lib/auth/employee-invites";
 import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { normalizeRoleLabel } from "@/lib/rbac/matrix";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
@@ -20,7 +21,7 @@ export type BulkEmployeeRow = {
 };
 
 export type BulkCreateResult =
-  | { ok: true; created: number }
+  | { ok: true; created: number; inviteWarnings?: string[] }
   | { ok: false; error: string };
 
 async function assertCanManageUsers(): Promise<BulkCreateResult | null> {
@@ -177,6 +178,13 @@ export async function bulkCreateEmployees(
     if (ejtErr) return { ok: false, error: ejtErr.message };
   }
 
+  const inviteEmails = rows.map((r) => r.email.trim());
+  const inviteWarnings = await sendEmployeeInviteEmails(inviteEmails);
+
   revalidatePath("/users");
-  return { ok: true, created: inserts.length };
+  return {
+    ok: true,
+    created: inserts.length,
+    ...(inviteWarnings.length > 0 ? { inviteWarnings } : {}),
+  };
 }

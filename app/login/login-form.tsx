@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { safeNextPath } from "@/lib/auth/safe-next-path";
@@ -131,6 +132,14 @@ export function LoginForm({ initialError, nextPath }: Props) {
             className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/25"
           />
         </div>
+        <p className="text-right">
+          <Link
+            href="/forgot-password"
+            className="text-xs font-semibold text-orange-700 underline-offset-2 hover:underline"
+          >
+            Forgot password?
+          </Link>
+        </p>
       </div>
 
       <button
