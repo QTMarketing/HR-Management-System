@@ -448,9 +448,45 @@ export async function clockOut(input: ClockOutInput): Promise<ActionResult> {
   if ((row as { archived_at?: string | null }).archived_at) {
     return { ok: false, error: "This time entry is archived." };
   }
+  // Cross-location open punches: an employee may have been reassigned (or
+  // their old store archived) after they clocked in. We allow them to close
+  // their own stranded punch from the current portal as long as the entry's
+  // original location is now archived. Closing a punch at *another active*
+  // store still requires being on-site there.
+  let isSelfHeal = false;
   if (row.location_id !== locationId) {
-    return { ok: false, error: "Entry does not belong to this location." };
+    const { data: priorLoc } = await supabase
+      .from("locations")
+      .select("status")
+      .eq("id", row.location_id)
+      .maybeSingle();
+    const priorStatus = String((priorLoc as { status?: string } | null)?.status ?? "");
+    const priorArchived = priorStatus === "archived";
+    if (!priorArchived) {
+      return { ok: false, error: "Entry does not belong to this location." };
+    }
+    isSelfHeal = true;
+    console.warn(
+      "[time-clock] closing stranded open punch from archived location",
+      JSON.stringify({
+        time_entry_id: entryId,
+        entry_location_id: row.location_id,
+        portal_location_id: locationId,
+      }),
+    );
   }
+  // For the activity audit + geofence + cache invalidation we use the
+  // *portal's* current location, not the entry's archived one. Reasons:
+  //   1) RLS on `activity_events` requires the caller to be authorized for
+  //      the location they write — Sam can't write at the archived
+  //      Downtown Flagship anymore, so passing it RLS-rejects the audit
+  //      insert and the whole RPC bails.
+  //   2) The geofence at the archived store is moot — the user isn't
+  //      physically there.
+  // The `time_entries` row itself still updates correctly because the RPC
+  // closes by `id`, not by location_id, so payroll keeps the original
+  // store on the punch.
+  const effectiveLocationId = isSelfHeal ? locationId : String(row.location_id);
   if (row.clock_out_at) {
     // Idempotency / double-click: treat as success.
     return { ok: true };
@@ -468,7 +504,7 @@ export async function clockOut(input: ClockOutInput): Promise<ActionResult> {
       supabase
         .from("locations")
         .select("id, geofence_center_lat, geofence_center_lng, geofence_radius_meters")
-        .eq("id", locationId)
+        .eq("id", effectiveLocationId)
         .maybeSingle(),
       supabase
         .from("time_clocks")
@@ -521,7 +557,7 @@ export async function clockOut(input: ClockOutInput): Promise<ActionResult> {
         JSON.stringify({
           time_entry_id: entryId,
           employee_id: actorEmployeeId,
-          location_id: locationId,
+          location_id: effectiveLocationId,
           reason: isOwner
             ? "owner_role"
             : isBypassEmail
@@ -577,7 +613,7 @@ export async function clockOut(input: ClockOutInput): Promise<ActionResult> {
     !Number.isNaN(input.clockOutLng);
   const { error: rpcErr } = await supabase.rpc("clock_out_with_audit", {
     p_entry_id: entryId,
-    p_location_id: locationId,
+    p_location_id: effectiveLocationId,
     p_clock_out_lat: hasGps ? input.clockOutLat : null,
     p_clock_out_lng: hasGps ? input.clockOutLng : null,
     p_employee_label: emp?.full_name ?? "Employee",
@@ -613,7 +649,7 @@ export async function clockOut(input: ClockOutInput): Promise<ActionResult> {
         employee_label: emp?.full_name ?? "Employee",
         action: "Clock out",
         status: "ok",
-        location_id: locationId,
+        location_id: effectiveLocationId,
         occurred_at: clockOutIso,
       });
       console.warn(

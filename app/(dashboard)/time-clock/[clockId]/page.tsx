@@ -24,6 +24,7 @@ import type { EnrichedPunchRow, TimeClockTodayMetrics } from "@/lib/time-clock/t
 import { DEMO_LOCATIONS } from "@/lib/mock/dashboard-demo";
 import { TimeSheetsPanel } from "@/components/time-clock/time-sheets-panel";
 import { requirePermission } from "@/lib/rbac/guard";
+import { getChainPayrollDefaults } from "@/app/actions/chain-payroll-defaults";
 import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -64,6 +65,9 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
     !rbac.enabled || hasPermission(rbac, PERMISSIONS.TIME_CLOCK_MANAGE);
   /** Track B: owner-only lock controls. */
   const canLockPayPeriods = !rbac.enabled || hasPermission(rbac, PERMISSIONS.ORG_OWNER);
+  /** Region (chain) payroll defaults are Owner-edited only. */
+  const canEditChainPayrollDefaults =
+    !rbac.enabled || hasPermission(rbac, PERMISSIONS.ORG_OWNER);
   // Smart group assignments are not shown in Settings (for now).
 
   const { data: locRows } = await supabase
@@ -122,6 +126,14 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
     tc.timesheet_period_config as unknown,
     defaultKind,
   );
+
+  // Region payroll defaults — drives the General-tab card that lets Owners
+  // configure East/West week start / pay frequency / anchor date at the
+  // chain level (propagates to every clock in that chain on save).
+  const chainPayrollDefaultsRes = await getChainPayrollDefaults();
+  const chainPayrollDefaults = chainPayrollDefaultsRes.ok
+    ? chainPayrollDefaultsRes.defaults
+    : [];
 
   const locationTrackingMode =
     (tc.location_tracking_mode as string | null | undefined) ?? "off";
@@ -576,6 +588,8 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
   let viewerOpenEntryClockInAt: string | null = null;
   /** Phase 2: open break row for viewer’s open punch, if any. */
   let viewerOpenBreakId: string | null = null;
+  /** Self-heal: open punch lives at a different / archived store. */
+  let viewerOpenEntryForeignLocationName: string | null = null;
   let viewerHomeLocationId: string | null = null;
   let viewerHomeLocationName: string | null = null;
   let viewerHomeClockId: string | null = null;
@@ -608,17 +622,23 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
         viewerHomeClockId = (homeClock as { id?: string } | null)?.id ?? null;
       }
       if (viewerAtLocation) {
+        // Find the viewer's open punch globally (not scoped to this clock).
+        // Catches stranded punches left behind after a store reassignment or
+        // a clock archive, so the UI can offer "tap Out to self-heal".
         const { data: openRow } = await supabase
           .from("time_entries")
-          .select("id, clock_in_at")
+          .select("id, clock_in_at, time_clock_id, location_id")
           .eq("employee_id", ve.id)
-          .eq("time_clock_id", clockId)
           .is("clock_out_at", null)
           .is("archived_at", null)
           .maybeSingle();
         viewerOpenEntryId = (openRow as { id: string } | null)?.id ?? null;
         viewerOpenEntryClockInAt =
           (openRow as { clock_in_at?: string } | null)?.clock_in_at ?? null;
+        const openEntryLocationId =
+          (openRow as { location_id?: string | null } | null)?.location_id ?? null;
+        const openEntryTimeClockId =
+          (openRow as { time_clock_id?: string | null } | null)?.time_clock_id ?? null;
         if (viewerOpenEntryId) {
           const { data: openBreak, error: openBreakErr } = await supabase
             .from("time_entry_breaks")
@@ -628,6 +648,18 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
             .maybeSingle();
           if (!openBreakErr && openBreak) {
             viewerOpenBreakId = (openBreak as { id: string }).id;
+          }
+          const isForeign =
+            (openEntryLocationId && openEntryLocationId !== effectiveLocationId) ||
+            (openEntryTimeClockId && openEntryTimeClockId !== clockId);
+          if (isForeign && openEntryLocationId) {
+            const { data: foreignLoc } = await supabase
+              .from("locations")
+              .select("name")
+              .eq("id", openEntryLocationId)
+              .maybeSingle();
+            viewerOpenEntryForeignLocationName =
+              (foreignLoc as { name?: string | null } | null)?.name ?? "another store";
           }
         }
       }
@@ -710,6 +742,7 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
               viewerOpenEntryId={viewerOpenEntryId}
               viewerOpenEntryClockInAt={viewerOpenEntryClockInAt ?? null}
               viewerOpenBreakId={viewerOpenBreakId ?? null}
+              viewerOpenEntryForeignLocationName={viewerOpenEntryForeignLocationName}
               todayMetrics={todayMetrics}
               latestRows={entries}
               employeeTimecardPool={employeeTimecardPool}
@@ -773,6 +806,8 @@ export default async function TimeClockDetailPage({ params, searchParams }: Page
               Number.isFinite(autoClockOutAfterHours) ? autoClockOutAfterHours : 16
             }
             initialAllowManagerEdits={allowManagerEdits}
+            chainPayrollDefaults={chainPayrollDefaults}
+            canEditChainPayrollDefaults={canEditChainPayrollDefaults}
           />
         }
         canManage={canArchiveTimeEntries}

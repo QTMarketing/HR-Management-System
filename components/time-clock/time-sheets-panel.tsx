@@ -276,9 +276,69 @@ export function TimeSheetsPanel({
 
   const timecardRows = useMemo(() => {
     if (!timecardAnchorRow) return [];
-    const fromPool = modalPoolRows.filter((r) => r.employeeId === timecardAnchorRow.employeeId);
-    return fromPool.length > 0 ? fromPool : [timecardAnchorRow];
+    // No fallback to the stale anchor here: when period nav swaps the pool to a
+    // window where this employee has no rows, returning [] lets the modal close
+    // cleanly rather than showing the old row out of context.
+    return modalPoolRows.filter((r) => r.employeeId === timecardAnchorRow.employeeId);
   }, [modalPoolRows, timecardAnchorRow]);
+
+  /**
+   * Ordered, de-duplicated list of employee IDs present in the current period's pool.
+   * Drives Prev/Next user navigation inside the timecard modal. Order is the order
+   * in which each employee first appears in `modalPoolRows` so it stays stable
+   * across re-renders.
+   */
+  const orderedEmployeeIds = useMemo(() => {
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const r of modalPoolRows) {
+      if (!seen.has(r.employeeId)) {
+        seen.add(r.employeeId);
+        ordered.push(r.employeeId);
+      }
+    }
+    return ordered;
+  }, [modalPoolRows]);
+
+  const timecardUserNav = useMemo(() => {
+    if (!timecardAnchorRow || orderedEmployeeIds.length === 0) {
+      return { idx: -1, prevId: null as string | null, nextId: null as string | null };
+    }
+    const idx = orderedEmployeeIds.indexOf(timecardAnchorRow.employeeId);
+    return {
+      idx,
+      prevId: idx > 0 ? orderedEmployeeIds[idx - 1] : null,
+      nextId: idx >= 0 && idx < orderedEmployeeIds.length - 1 ? orderedEmployeeIds[idx + 1] : null,
+    };
+  }, [orderedEmployeeIds, timecardAnchorRow]);
+
+  function selectEmployeeInPool(employeeId: string | null) {
+    if (!employeeId) return;
+    const anchor = modalPoolRows.find((r) => r.employeeId === employeeId);
+    if (anchor) setTimecardAnchorRow(anchor);
+  }
+
+  function navigatePeriodPrev() {
+    if (rangeFromYmd && rangeToYmd) {
+      const n = shiftCustomRangeYmd(rangeFromYmd, rangeToYmd, -1);
+      if (n) pushTimesheetsQuery({ rangeFrom: n.from, rangeTo: n.to });
+      return;
+    }
+    const start = new Date(periodStartIso);
+    const newStart = shiftPeriodAnchor(start, periodKind, periodConfig, -1);
+    pushTimesheetsQuery({ anchor: newStart, clearCustomRange: true });
+  }
+
+  function navigatePeriodNext() {
+    if (rangeFromYmd && rangeToYmd) {
+      const n = shiftCustomRangeYmd(rangeFromYmd, rangeToYmd, 1);
+      if (n) pushTimesheetsQuery({ rangeFrom: n.from, rangeTo: n.to });
+      return;
+    }
+    const start = new Date(periodStartIso);
+    const newStart = shiftPeriodAnchor(start, periodKind, periodConfig, 1);
+    pushTimesheetsQuery({ anchor: newStart, clearCustomRange: true });
+  }
 
   function onApproveEntry(entryId: string) {
     setApprovalErr(null);
@@ -757,30 +817,8 @@ export function TimeSheetsPanel({
                 onClearCustomRange={() =>
                   pushTimesheetsQuery({ anchor: new Date(), clearCustomRange: true })
                 }
-                onNavigatePrev={() => {
-                  if (rangeFromYmd && rangeToYmd) {
-                    const n = shiftCustomRangeYmd(rangeFromYmd, rangeToYmd, -1);
-                    if (n) {
-                      pushTimesheetsQuery({ rangeFrom: n.from, rangeTo: n.to });
-                    }
-                    return;
-                  }
-                  const start = new Date(periodStartIso);
-                  const newStart = shiftPeriodAnchor(start, periodKind, periodConfig, -1);
-                  pushTimesheetsQuery({ anchor: newStart, clearCustomRange: true });
-                }}
-                onNavigateNext={() => {
-                  if (rangeFromYmd && rangeToYmd) {
-                    const n = shiftCustomRangeYmd(rangeFromYmd, rangeToYmd, 1);
-                    if (n) {
-                      pushTimesheetsQuery({ rangeFrom: n.from, rangeTo: n.to });
-                    }
-                    return;
-                  }
-                  const start = new Date(periodStartIso);
-                  const newStart = shiftPeriodAnchor(start, periodKind, periodConfig, 1);
-                  pushTimesheetsQuery({ anchor: newStart, clearCustomRange: true });
-                }}
+                onNavigatePrev={navigatePeriodPrev}
+                onNavigateNext={navigatePeriodNext}
                 onJumpToToday={() =>
                   pushTimesheetsQuery({ anchor: new Date(), clearCustomRange: true })
                 }
@@ -1388,6 +1426,21 @@ export function TimeSheetsPanel({
         locationId={locationId}
         timeOffRecords={timeOffRecords}
         onPunchAdjusted={() => router.refresh()}
+        onPrevPeriod={navigatePeriodPrev}
+        onNextPeriod={navigatePeriodNext}
+        onPickPeriodRange={(from, to) => {
+          const ymd = (d: Date) =>
+            `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+              d.getDate(),
+            ).padStart(2, "0")}`;
+          pushTimesheetsQuery({ rangeFrom: ymd(from), rangeTo: ymd(to) });
+        }}
+        canNavigatePeriod
+        periodLabelOverride={rangeLabel}
+        onPrevUser={() => selectEmployeeInPool(timecardUserNav.prevId)}
+        onNextUser={() => selectEmployeeInPool(timecardUserNav.nextId)}
+        hasPrevUser={timecardUserNav.prevId != null}
+        hasNextUser={timecardUserNav.nextId != null}
       />
     </div>
   );

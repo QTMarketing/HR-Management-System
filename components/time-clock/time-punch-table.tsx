@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { getEmployeePunchesInRange } from "@/app/actions/employee-punches-on-date";
 import { getPtoBalancesForEmployee } from "@/app/actions/pto-balances";
 import { EmployeeTimecardModal } from "@/components/time-clock/employee-timecard-modal";
 import type { StoreEmployeeOption } from "@/components/time-clock/time-off-request-sidebar";
@@ -88,6 +89,20 @@ export function TimePunchTable({
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [timecardAnchorRow, setTimecardAnchorRow] = useState<EnrichedPunchRow | null>(null);
+  /**
+   * When the manager uses the modal's calendar to jump to a historical range,
+   * we replace the modal's row set with that range's punches in-place. `null`
+   * means "show live/today rows" (the default behavior).
+   */
+  const [historicalView, setHistoricalView] = useState<{
+    employeeId: string;
+    fromYmd: string;
+    toYmd: string;
+    rangeLabel: string;
+    rows: EnrichedPunchRow[];
+  } | null>(null);
+  const [historicalErr, setHistoricalErr] = useState<string | null>(null);
+  const [, startHistoricalFetch] = useTransition();
   const [ptoBalances, setPtoBalances] = useState<{
     vacationHours: number;
     sickHours: number;
@@ -109,10 +124,108 @@ export function TimePunchTable({
 
   const timecardRows = useMemo(() => {
     if (!timecardAnchorRow) return [];
+    // If a historical date was picked for this employee, render those rows
+    // instead of the live "today" pool.
+    if (
+      historicalView &&
+      historicalView.employeeId === timecardAnchorRow.employeeId
+    ) {
+      return historicalView.rows;
+    }
     const pool = employeeTimecardPool ?? rows;
     const fromPool = pool.filter((r) => r.employeeId === timecardAnchorRow.employeeId);
     return fromPool.length > 0 ? fromPool : [timecardAnchorRow];
-  }, [timecardAnchorRow, employeeTimecardPool, rows]);
+  }, [timecardAnchorRow, employeeTimecardPool, rows, historicalView]);
+
+  /**
+   * Ordered, de-duplicated employee IDs in the current display pool. Drives
+   * Prev/Next user navigation inside the timecard modal so a manager can sweep
+   * the whole roster without closing it.
+   */
+  const orderedEmployeeIds = useMemo(() => {
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    const pool = employeeTimecardPool ?? rows;
+    for (const r of pool) {
+      if (!seen.has(r.employeeId)) {
+        seen.add(r.employeeId);
+        ordered.push(r.employeeId);
+      }
+    }
+    return ordered;
+  }, [employeeTimecardPool, rows]);
+
+  const timecardUserNav = useMemo(() => {
+    if (!timecardAnchorRow || orderedEmployeeIds.length === 0) {
+      return { prevId: null as string | null, nextId: null as string | null };
+    }
+    const idx = orderedEmployeeIds.indexOf(timecardAnchorRow.employeeId);
+    return {
+      prevId: idx > 0 ? orderedEmployeeIds[idx - 1] : null,
+      nextId: idx >= 0 && idx < orderedEmployeeIds.length - 1 ? orderedEmployeeIds[idx + 1] : null,
+    };
+  }, [orderedEmployeeIds, timecardAnchorRow]);
+
+  function selectEmployeeInPool(employeeId: string | null) {
+    if (!employeeId) return;
+    const pool = employeeTimecardPool ?? rows;
+    const anchor = pool.find((r) => r.employeeId === employeeId);
+    if (anchor) {
+      // Switching employees clears any historical view from the previous
+      // employee — otherwise the new modal would render stale rows.
+      setHistoricalView(null);
+      setHistoricalErr(null);
+      setTimecardAnchorRow(anchor);
+    }
+  }
+
+  /**
+   * Calendar "jump to range" on the live/today surface fetches that range's
+   * punches for the open employee and renders them in the same modal — no
+   * navigation, no tab switch. Selecting "Today" (a single-day range that
+   * matches today's date) clears the historical view and restores live data.
+   */
+  const onPickPeriodRange = useCallback(
+    (from: Date, to: Date) => {
+      const empId = timecardAnchorRow?.employeeId;
+      if (!empId) return;
+      const ymd = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+          d.getDate(),
+        ).padStart(2, "0")}`;
+      const fromYmd = ymd(from);
+      const toYmd = ymd(to);
+      const todayYmd = ymd(new Date());
+
+      // Single-day range that equals today → drop history; show live rows.
+      if (fromYmd === todayYmd && toYmd === todayYmd) {
+        setHistoricalView(null);
+        setHistoricalErr(null);
+        return;
+      }
+
+      setHistoricalErr(null);
+      startHistoricalFetch(async () => {
+        const res = await getEmployeePunchesInRange({
+          employeeId: empId,
+          fromYmd,
+          toYmd,
+        });
+        if (!res.ok) {
+          setHistoricalErr(res.error);
+          return;
+        }
+        setHistoricalView({
+          employeeId: empId,
+          fromYmd,
+          toYmd,
+          rangeLabel: res.rangeLabel,
+          rows: res.rows,
+        });
+      });
+    },
+    [timecardAnchorRow?.employeeId],
+  );
 
   useEffect(() => {
     const empId = timecardAnchorRow?.employeeId ?? null;
@@ -250,7 +363,11 @@ export function TimePunchTable({
       <EmployeeTimecardModal
         key={timecardAnchorRow?.employeeId ?? "closed"}
         open={timecardAnchorRow != null}
-        onClose={() => setTimecardAnchorRow(null)}
+        onClose={() => {
+          setTimecardAnchorRow(null);
+          setHistoricalView(null);
+          setHistoricalErr(null);
+        }}
         rows={timecardRows}
         timeClockId={timeClockId ?? null}
         ptoBalances={ptoBalances}
@@ -267,6 +384,23 @@ export function TimePunchTable({
         pendingTimeOffRequests={pendingTimeOffRequests}
         viewerEmployeeId={viewerEmployeeId}
         onPunchAdjusted={() => router.refresh()}
+        onPrevUser={() => selectEmployeeInPool(timecardUserNav.prevId)}
+        onNextUser={() => selectEmployeeInPool(timecardUserNav.nextId)}
+        hasPrevUser={timecardUserNav.prevId != null}
+        hasNextUser={timecardUserNav.nextId != null}
+        onPickPeriodRange={onPickPeriodRange}
+        periodLabelOverride={
+          historicalView && historicalView.employeeId === timecardAnchorRow?.employeeId
+            ? historicalView.rangeLabel
+            : undefined
+        }
+        historicalNotice={
+          historicalErr
+            ? historicalErr
+            : historicalView && historicalView.employeeId === timecardAnchorRow?.employeeId
+              ? `Viewing history for ${historicalView.rangeLabel}`
+              : null
+        }
       />
     </div>
   );

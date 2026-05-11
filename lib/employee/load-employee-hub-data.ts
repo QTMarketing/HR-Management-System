@@ -14,6 +14,13 @@ export type EmployeeHubSelfServeProps = {
   viewerOpenEntryId: string | null;
   viewerOpenEntryClockInAt?: string | null;
   viewerOpenBreakId?: string | null;
+  /**
+   * When the open punch belongs to a *different* store than the one the
+   * portal is currently rendering for (or to an archived store), we surface
+   * that here so the UI can show "Stranded open punch — close it to clock
+   * in here" and let the user clear it without an admin.
+   */
+  viewerOpenEntryForeignLocationName?: string | null;
   geofenceActive: boolean;
   locationTrackingMode: "off" | "clock_in_out" | "breadcrumbs" | string;
   requireLocationForPunch: boolean;
@@ -180,12 +187,18 @@ export async function loadEmployeeHubData(
   let viewerOpenEntryId: string | null = null;
   let viewerOpenEntryClockInAt: string | null = null;
   let viewerOpenBreakId: string | null = null;
+  let viewerOpenEntryForeignLocationName: string | null = null;
 
+  // An employee can only have ONE open punch at a time (enforced by the
+  // `clockIn` action). We look it up globally — not scoped to this clock —
+  // so that a stranded punch left over from a store reassignment or a
+  // location rename still surfaces in the UI. The clock-out path uses the
+  // entry's actual location/clock from the row, so closing it works even
+  // when the punch was created against a now-archived store.
   const { data: openRow } = await supabase
     .from("time_entries")
-    .select("id, clock_in_at")
+    .select("id, clock_in_at, time_clock_id, location_id")
     .eq("employee_id", employeeId)
-    .eq("time_clock_id", clockId)
     .is("clock_out_at", null)
     .is("archived_at", null)
     .maybeSingle();
@@ -193,6 +206,10 @@ export async function loadEmployeeHubData(
   if (openRow) {
     viewerOpenEntryId = (openRow as { id: string }).id;
     viewerOpenEntryClockInAt = (openRow as { clock_in_at?: string }).clock_in_at ?? null;
+    const openEntryLocationId =
+      (openRow as { location_id?: string | null }).location_id ?? null;
+    const openEntryTimeClockId =
+      (openRow as { time_clock_id?: string | null }).time_clock_id ?? null;
     const { data: openBreak } = await supabase
       .from("time_entry_breaks")
       .select("id")
@@ -201,6 +218,21 @@ export async function loadEmployeeHubData(
       .maybeSingle();
     if (openBreak) {
       viewerOpenBreakId = (openBreak as { id: string }).id;
+    }
+    // If the open entry isn't from this clock/location, look up the foreign
+    // store name so the UI can flag the situation. Empty when the open
+    // punch is from the current store (the common, healthy case).
+    const isForeign =
+      (openEntryLocationId && openEntryLocationId !== locationId) ||
+      (openEntryTimeClockId && openEntryTimeClockId !== clockId);
+    if (isForeign && openEntryLocationId) {
+      const { data: foreignLoc } = await supabase
+        .from("locations")
+        .select("name")
+        .eq("id", openEntryLocationId)
+        .maybeSingle();
+      viewerOpenEntryForeignLocationName =
+        (foreignLoc as { name?: string | null } | null)?.name ?? "another store";
     }
   }
 
@@ -216,6 +248,7 @@ export async function loadEmployeeHubData(
     viewerOpenEntryId,
     viewerOpenEntryClockInAt,
     viewerOpenBreakId,
+    viewerOpenEntryForeignLocationName,
     geofenceActive,
     locationTrackingMode,
     requireLocationForPunch,

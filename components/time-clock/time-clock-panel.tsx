@@ -38,6 +38,8 @@ type Props = {
   viewerOpenEntryClockInAt?: string | null;
   /** Phase 2: viewer has an unpaid/paid break in progress on the open punch. */
   viewerOpenBreakId?: string | null;
+  /** Self-heal: viewer's open punch is at a different / archived store. */
+  viewerOpenEntryForeignLocationName?: string | null;
   geofenceActive?: boolean;
   locationTrackingMode?: "off" | "clock_in_out" | "breadcrumbs" | string;
   requireLocationForPunch?: boolean;
@@ -68,6 +70,7 @@ export function TimeClockPanel({
   viewerOpenEntryId = null,
   viewerOpenEntryClockInAt = null,
   viewerOpenBreakId = null,
+  viewerOpenEntryForeignLocationName = null,
   geofenceActive = false,
   locationTrackingMode = "off",
   requireLocationForPunch = false,
@@ -122,6 +125,7 @@ export function TimeClockPanel({
         viewerOpenEntryId={viewerOpenEntryId}
         viewerOpenEntryClockInAt={viewerOpenEntryClockInAt}
         viewerOpenBreakId={viewerOpenBreakId}
+        viewerOpenEntryForeignLocationName={viewerOpenEntryForeignLocationName}
         geofenceActive={geofenceActive}
         locationTrackingMode={locationTrackingMode}
         requireLocationForPunch={requireLocationForPunch}

@@ -11,9 +11,15 @@ import {
   MapPin,
   Search,
   Settings2,
+  Sunrise,
+  Sunset,
   Timer,
   Wallet,
 } from "lucide-react";
+import {
+  saveRegionWeekStart,
+  type ChainPayrollDefault,
+} from "@/app/actions/chain-payroll-defaults";
 import { bulkApplyTimeClockTimesheetPeriod, saveTimeClockTimesheetPeriod } from "@/app/actions/time-clock-period";
 import { saveTimeClockTrackingAndCategorization } from "@/app/actions/time-clock-setup";
 import { saveTimeClockBreakSettings } from "@/app/actions/time-clock-break-settings";
@@ -57,6 +63,10 @@ type Props = {
   initialAutoClockOutEnabled: boolean;
   initialAutoClockOutAfterHours: number;
   initialAllowManagerEdits: boolean;
+  /** Region (chain) payroll defaults — one row per chain (East / West / …). */
+  chainPayrollDefaults?: ChainPayrollDefault[];
+  /** True when the viewer has org.owner permission (only Owners may edit). */
+  canEditChainPayrollDefaults?: boolean;
 };
 
 export function TimeClockSettingsForm({
@@ -85,6 +95,8 @@ export function TimeClockSettingsForm({
   initialAutoClockOutEnabled,
   initialAutoClockOutAfterHours,
   initialAllowManagerEdits,
+  chainPayrollDefaults = [],
+  canEditChainPayrollDefaults = false,
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -166,6 +178,56 @@ export function TimeClockSettingsForm({
   );
   const [allowManagerEdits, setAllowManagerEdits] = useState(Boolean(initialAllowManagerEdits));
   const [generalErr, setGeneralErr] = useState<string | null>(null);
+
+  /**
+   * Region Week-starts-on (East / West / …). One small draft per chain so
+   * editing East doesn't reset West. Save propagates to every clock in that
+   * chain (preserving each clock's pay frequency / anchor date as-is).
+   */
+  type RegionDraft = {
+    wso: number;
+    busy: boolean;
+    err: string | null;
+    okMsg: string | null;
+  };
+  const initialRegionDrafts = useMemo(() => {
+    const map = new Map<string, RegionDraft>();
+    for (const c of chainPayrollDefaults) {
+      map.set(c.chainId, { wso: c.weekStartsOn, busy: false, err: null, okMsg: null });
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [regionDrafts, setRegionDrafts] =
+    useState<Map<string, RegionDraft>>(initialRegionDrafts);
+  function updateRegionDraft(chainId: string, patch: Partial<RegionDraft>) {
+    setRegionDrafts((prev) => {
+      const next = new Map(prev);
+      const cur = next.get(chainId) ?? { wso: 1, busy: false, err: null, okMsg: null };
+      next.set(chainId, { ...cur, ...patch });
+      return next;
+    });
+  }
+  function saveRegionDraft(chainId: string) {
+    const draft = regionDrafts.get(chainId);
+    if (!draft) return;
+    updateRegionDraft(chainId, { busy: true, err: null, okMsg: null });
+    startTransition(async () => {
+      const r = await saveRegionWeekStart({
+        chainId,
+        weekStartsOn: draft.wso,
+      });
+      if (!r.ok) {
+        updateRegionDraft(chainId, { busy: false, err: r.error });
+        return;
+      }
+      updateRegionDraft(chainId, {
+        busy: false,
+        okMsg: `Applied to ${r.appliedClocks} clock${r.appliedClocks === 1 ? "" : "s"}.`,
+      });
+      router.refresh();
+    });
+  }
 
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkErr, setBulkErr] = useState<string | null>(null);
@@ -735,6 +797,166 @@ export function TimeClockSettingsForm({
                         </div>
                       </div>
                     </div>
+
+                    {chainPayrollDefaults.length > 0 ? (
+                      <section className="mt-10 border-t border-slate-100 pt-8">
+                        <div className="flex flex-wrap items-end justify-between gap-3">
+                          <div>
+                            <h4 className="text-base font-semibold tracking-tight text-slate-900">
+                              Region week start
+                            </h4>
+                            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">
+                              Set the workweek start day for an entire region.
+                              Saving applies it to every store in that region.
+                            </p>
+                          </div>
+                          {!canEditChainPayrollDefaults ? (
+                            <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200/80">
+                              Owners only
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+                          {chainPayrollDefaults.map((c) => {
+                            const draft =
+                              regionDrafts.get(c.chainId) ?? {
+                                wso: c.weekStartsOn,
+                                busy: false,
+                                err: null,
+                                okMsg: null,
+                              };
+                            const editable = canEditChainPayrollDefaults;
+                            // Visually distinguish East (sunrise / amber) from
+                            // West (sunset / sky-blue). Anything else falls
+                            // back to a neutral slate palette.
+                            const slug = c.chainSlug.toLowerCase();
+                            const isEast = slug.includes("east");
+                            const isWest = slug.includes("west");
+                            const palette = isEast
+                              ? {
+                                  border: "border-amber-200",
+                                  bg: "bg-amber-50/60",
+                                  badgeBg: "bg-amber-100",
+                                  badgeText: "text-amber-900",
+                                  badgeRing: "ring-amber-200",
+                                  Icon: Sunrise,
+                                  label: "East region",
+                                  scope: "All East stores",
+                                }
+                              : isWest
+                                ? {
+                                    border: "border-sky-200",
+                                    bg: "bg-sky-50/60",
+                                    badgeBg: "bg-sky-100",
+                                    badgeText: "text-sky-900",
+                                    badgeRing: "ring-sky-200",
+                                    Icon: Sunset,
+                                    label: "West region",
+                                    scope: "All West stores",
+                                  }
+                                : {
+                                    border: "border-slate-200",
+                                    bg: "bg-white",
+                                    badgeBg: "bg-slate-100",
+                                    badgeText: "text-slate-700",
+                                    badgeRing: "ring-slate-200",
+                                    Icon: Compass,
+                                    label: "Region",
+                                    scope: c.chainName,
+                                  };
+                            const Icon = palette.Icon;
+                            return (
+                              <div
+                                key={c.chainId}
+                                className={`rounded-xl border ${palette.border} ${palette.bg} p-5 shadow-sm`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <span
+                                      className={`inline-flex items-center gap-1.5 rounded-full ${palette.badgeBg} px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${palette.badgeText} ring-1 ${palette.badgeRing}`}
+                                    >
+                                      <Icon className="h-3 w-3" aria-hidden />
+                                      {palette.label}
+                                    </span>
+                                    <p className="mt-2 text-sm font-semibold text-slate-900">
+                                      {palette.scope}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <label className="mt-4 block">
+                                  <span className="text-xs font-semibold text-slate-700">
+                                    Week starts on
+                                  </span>
+                                  <div className="relative mt-1.5">
+                                    <select
+                                      value={String(draft.wso)}
+                                      onChange={(e) =>
+                                        updateRegionDraft(c.chainId, {
+                                          wso: Number(e.target.value),
+                                          okMsg: null,
+                                        })
+                                      }
+                                      disabled={!editable || draft.busy}
+                                      className="h-10 w-full cursor-pointer appearance-none rounded-md border border-slate-200 bg-white px-3 pr-10 text-sm text-slate-900 shadow-sm outline-none transition focus:border-orange-300 focus:ring-2 focus:ring-orange-500/15 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
+                                    >
+                                      <option value="0">Sunday</option>
+                                      <option value="1">Monday</option>
+                                      <option value="2">Tuesday</option>
+                                      <option value="3">Wednesday</option>
+                                      <option value="4">Thursday</option>
+                                      <option value="5">Friday</option>
+                                      <option value="6">Saturday</option>
+                                    </select>
+                                    <ChevronDown
+                                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+                                      aria-hidden
+                                    />
+                                  </div>
+                                </label>
+
+                                {draft.err ? (
+                                  <p
+                                    className="mt-3 text-xs text-red-700"
+                                    role="alert"
+                                  >
+                                    {draft.err}
+                                  </p>
+                                ) : null}
+                                {draft.okMsg ? (
+                                  <p className="mt-3 text-xs font-semibold text-emerald-700">
+                                    {draft.okMsg}
+                                  </p>
+                                ) : null}
+
+                                <div className="mt-4 flex items-center justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={() => saveRegionDraft(c.chainId)}
+                                    disabled={
+                                      !editable ||
+                                      draft.busy ||
+                                      draft.wso === c.weekStartsOn
+                                    }
+                                    className={`${PRIMARY_ORANGE_CTA} h-9 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60`}
+                                    title={
+                                      !editable
+                                        ? "Only Owners can edit region defaults"
+                                        : draft.wso === c.weekStartsOn
+                                          ? "No change to apply"
+                                          : `Apply to all ${palette.label} stores`
+                                    }
+                                  >
+                                    {draft.busy ? "Applying…" : "Save"}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    ) : null}
 
                     {generalErr ? (
                       <p className="mt-4 text-sm text-red-700" role="alert">

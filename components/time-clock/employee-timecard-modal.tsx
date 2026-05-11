@@ -7,9 +7,22 @@
  * weekly column, vertical “Shift attachments” rail, notes columns.
  */
 
-import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Download } from "lucide-react";
+import {
+  ArrowDown01,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp01,
+  CalendarDays,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Filter,
+} from "lucide-react";
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { DayPicker } from "react-day-picker";
+import "react-day-picker/style.css";
 import { adjustTimeEntry } from "@/app/actions/time-entry-adjust";
 import { createManagerShiftEntry } from "@/app/actions/time-entry-manual";
 import { approveTimeOffRequest, denyTimeOffRequest, requestEmployeeTimeOff } from "@/app/actions/time-off-record";
@@ -87,19 +100,6 @@ function formatDayHeader(iso: string): string {
   }
 }
 
-function fmtShortDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  } catch {
-    return "—";
-  }
-}
-
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -139,6 +139,40 @@ type Props = {
   timeOffRecords?: TimeOffRecordForUi[];
   /** Pending employee-submitted time off requests (manager scope; used for inline approvals). */
   pendingTimeOffRequests?: PendingTimeOffRequestRow[];
+  /**
+   * Optional period navigation. When all four are provided, the chevrons next
+   * to the period label become active and step the parent's pay-period state.
+   * Used by Timesheets (panel-level pay-period anchor).
+   */
+  onPrevPeriod?: () => void;
+  onNextPeriod?: () => void;
+  /** Defaults to true; pass false to disable both arrows even when handlers exist. */
+  canNavigatePeriod?: boolean;
+  /** Overrides the computed period label when the parent owns the range. */
+  periodLabelOverride?: string;
+  /**
+   * Optional "jump to date range" handler. When provided, the period label
+   * becomes a button that opens a compact calendar popover with quick presets
+   * and range selection. Picking a range calls this with `[from, to]` so the
+   * parent can either snap its pay period (Timesheets) or refetch rows in
+   * place (Punches modal). `from` and `to` are normalized so `from <= to`.
+   */
+  onPickPeriodRange?: (from: Date, to: Date) => void;
+  /**
+   * Optional roster navigation. When `onPrevUser` / `onNextUser` are wired, the
+   * top strip shows "← Previous user" / "Next user →" buttons that swap the
+   * timecard's anchor employee without closing the modal.
+   */
+  onPrevUser?: () => void;
+  onNextUser?: () => void;
+  hasPrevUser?: boolean;
+  hasNextUser?: boolean;
+  /**
+   * Optional non-blocking notice shown under the header (e.g. "Viewing
+   * history for May 11, 2026" or a fetch error). Surfacing this inside the
+   * modal keeps the user oriented when historical data is swapped in.
+   */
+  historicalNotice?: string | null;
 };
 
 type WeekBlock = {
@@ -165,8 +199,26 @@ export function EmployeeTimecardModal({
   onPunchAdjusted,
   timeOffRecords = [],
   pendingTimeOffRequests = [],
+  onPrevPeriod,
+  onNextPeriod,
+  canNavigatePeriod = true,
+  periodLabelOverride,
+  onPickPeriodRange,
+  onPrevUser,
+  onNextUser,
+  hasPrevUser = false,
+  hasNextUser = false,
+  historicalNotice = null,
 }: Props) {
   const [stableNowMs] = useState(() => Date.now());
+  // Display filters & sort — applied to the table rows only, totals stay truthful
+  // for the full pay period regardless of the filter.
+  const [typeFilter, setTypeFilter] = useState<"all" | "shift" | "timeoff">("all");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const filterMenuRef = useRef<HTMLDivElement>(null);
+  const [periodPickerOpen, setPeriodPickerOpen] = useState(false);
+  const periodPickerRef = useRef<HTMLDivElement>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [timeOffOpen, setTimeOffOpen] = useState(false);
   const [timeOffDefaultDayYmd, setTimeOffDefaultDayYmd] = useState<string | null>(null);
@@ -228,6 +280,28 @@ export function EmployeeTimecardModal({
   }, [addMenuOpen]);
 
   useEffect(() => {
+    if (!filterMenuOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (filterMenuRef.current && !filterMenuRef.current.contains(e.target as Node)) {
+        setFilterMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [filterMenuOpen]);
+
+  useEffect(() => {
+    if (!periodPickerOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (periodPickerRef.current && !periodPickerRef.current.contains(e.target as Node)) {
+        setPeriodPickerOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [periodPickerOpen]);
+
+  useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
@@ -263,16 +337,31 @@ export function EmployeeTimecardModal({
       }
     }
 
+    // Filtered, sorted view of the rows used for the table render. Totals above
+    // intentionally use the unfiltered set so the strip stays truthful even when
+    // a manager hides "Shift" or "Time off" rows to focus on a slice.
+    const isTimeOff = (r: EnrichedPunchRow) =>
+      r.hasRealTimeEntry === false && r.ptoLabel !== "—";
+    const displayRows = sorted.filter((r) => {
+      if (typeFilter === "all") return true;
+      if (typeFilter === "shift") return !isTimeOff(r);
+      return isTimeOff(r);
+    });
+
     const byWeek = new Map<number, EnrichedPunchRow[]>();
-    for (const row of sorted) {
+    for (const row of displayRows) {
       const mon = startOfWeekMonday(new Date(row.clockInAt));
       const t = mon.getTime();
       if (!byWeek.has(t)) byWeek.set(t, []);
       byWeek.get(t)!.push(row);
     }
-    const weekBlocks: WeekBlock[] = [...byWeek.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([t, rs]) => ({ monday: new Date(t), rows: rs }));
+    const weekEntries = [...byWeek.entries()].sort((a, b) =>
+      sortDir === "asc" ? a[0] - b[0] : b[0] - a[0],
+    );
+    const weekBlocks: WeekBlock[] = weekEntries.map(([t, rs]) => ({
+      monday: new Date(t),
+      rows: sortDir === "asc" ? rs : [...rs].reverse(),
+    }));
 
     const periodStart = new Date(first.clockInAt).toLocaleDateString(undefined, {
       month: "2-digit",
@@ -310,11 +399,13 @@ export function EmployeeTimecardModal({
       weekBlocks,
       totalVariance,
       varianceCount,
+      totalRowCount: sorted.length,
+      displayRowCount: displayRows.length,
       periodLabel: `${periodStart} - ${periodEnd}`,
       timeOffPaidM,
       timeOffUnpaidM,
     };
-  }, [rows, timeOffRecords, stableNowMs]);
+  }, [rows, timeOffRecords, stableNowMs, typeFilter, sortDir]);
 
   const [jobOverrides, setJobOverrides] = useState<Record<string, PositionRoleValue | undefined>>(
     {},
@@ -345,7 +436,180 @@ export function EmployeeTimecardModal({
     weekBlocks,
     periodLabel,
     timeOffPaidM,
+    totalRowCount,
+    displayRowCount,
   } = meta;
+
+  // Aggregate timesheet status used for the header pill. Order of precedence:
+  // open shifts first (most urgent), then pending leave, then approved.
+  const openShiftsCount = rows.filter((r) => !r.clockOutAt).length;
+  const pendingLeaveCount = pendingTimeOffRequests.filter(
+    (p) => p.employeeId === first.employeeId,
+  ).length;
+  const closedRows = rows.filter((r) => r.clockOutAt);
+  const allApproved =
+    closedRows.length > 0 && closedRows.every((r) => r.reviewStatus === "approved");
+  type StatusPill = { label: string; tone: "open" | "pending" | "approved" | "neutral" };
+  const statusPill: StatusPill | null = (() => {
+    if (openShiftsCount > 0) {
+      return {
+        label: `${openShiftsCount} open shift${openShiftsCount === 1 ? "" : "s"}`,
+        tone: "open",
+      };
+    }
+    if (pendingLeaveCount > 0) {
+      return {
+        label: `${pendingLeaveCount} pending leave`,
+        tone: "pending",
+      };
+    }
+    if (pendingApprovalCount > 0) {
+      return {
+        label: `${pendingApprovalCount} pending review`,
+        tone: "pending",
+      };
+    }
+    if (allApproved) {
+      return { label: "Approved", tone: "approved" };
+    }
+    return null;
+  })();
+  const statusPillClass = (() => {
+    switch (statusPill?.tone) {
+      case "open":
+        return "bg-sky-50 text-sky-900 ring-sky-200/80";
+      case "pending":
+        return "bg-orange-50 text-orange-900 ring-orange-200/80";
+      case "approved":
+        return "bg-emerald-50 text-emerald-900 ring-emerald-200/80";
+      default:
+        return "bg-slate-100 text-slate-700 ring-slate-200/80";
+    }
+  })();
+
+  const filterActive = typeFilter !== "all";
+  const visiblePeriodLabel = periodLabelOverride ?? periodLabel;
+  const periodNavEnabled = canNavigatePeriod && Boolean(onPrevPeriod || onNextPeriod);
+  const canPickPeriodRange = Boolean(onPickPeriodRange);
+  // Default highlighted month for the calendar = the first clock-in date in
+  // the period. Falls back to today if the period somehow has no rows.
+  const periodAnchorDate = (() => {
+    const firstIso = first.clockInAt;
+    const d = firstIso ? new Date(firstIso) : new Date();
+    return Number.isNaN(d.getTime()) ? new Date() : d;
+  })();
+
+  // Draft range while the user is choosing inside the popover. We only fire
+  // `onPickPeriodRange` when they hit "Apply" (or a preset) so half-finished
+  // clicks don't churn the parent's URL / data.
+  const [draftRange, setDraftRange] = useState<{ from?: Date; to?: Date }>({});
+  useEffect(() => {
+    if (periodPickerOpen) {
+      setDraftRange({});
+    }
+  }, [periodPickerOpen]);
+
+  const startOfDay = (d: Date) => {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  };
+  const addDays = (d: Date, n: number) => {
+    const x = startOfDay(d);
+    x.setDate(x.getDate() + n);
+    return x;
+  };
+  const startOfWeekMondayLocal = (d: Date) => {
+    const x = startOfDay(d);
+    const wd = (x.getDay() + 6) % 7;
+    x.setDate(x.getDate() - wd);
+    return x;
+  };
+  const presets: { id: string; label: string; range: () => [Date, Date] }[] = [
+    {
+      id: "today",
+      label: "Today",
+      range: () => {
+        const t = startOfDay(new Date());
+        return [t, t];
+      },
+    },
+    {
+      id: "yesterday",
+      label: "Yesterday",
+      range: () => {
+        const y = addDays(new Date(), -1);
+        return [y, y];
+      },
+    },
+    {
+      id: "this-week",
+      label: "This week",
+      range: () => {
+        const s = startOfWeekMondayLocal(new Date());
+        return [s, addDays(s, 6)];
+      },
+    },
+    {
+      id: "last-week",
+      label: "Last week",
+      range: () => {
+        const s = addDays(startOfWeekMondayLocal(new Date()), -7);
+        return [s, addDays(s, 6)];
+      },
+    },
+    {
+      id: "last-7",
+      label: "Last 7 days",
+      range: () => {
+        const today = startOfDay(new Date());
+        return [addDays(today, -6), today];
+      },
+    },
+    {
+      id: "last-14",
+      label: "Last 14 days",
+      range: () => {
+        const today = startOfDay(new Date());
+        return [addDays(today, -13), today];
+      },
+    },
+    {
+      id: "last-30",
+      label: "Last 30 days",
+      range: () => {
+        const today = startOfDay(new Date());
+        return [addDays(today, -29), today];
+      },
+    },
+    {
+      id: "this-month",
+      label: "This month",
+      range: () => {
+        const now = new Date();
+        const s = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+        const e = new Date(now.getFullYear(), now.getMonth() + 1, 0, 0, 0, 0, 0);
+        return [s, e];
+      },
+    },
+    {
+      id: "last-month",
+      label: "Last month",
+      range: () => {
+        const now = new Date();
+        const s = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+        const e = new Date(now.getFullYear(), now.getMonth(), 0, 0, 0, 0, 0);
+        return [s, e];
+      },
+    },
+  ];
+
+  function applyRange(from: Date, to: Date) {
+    setPeriodPickerOpen(false);
+    setDraftRange({});
+    const [a, b] = from.getTime() <= to.getTime() ? [from, to] : [to, from];
+    onPickPeriodRange?.(startOfDay(a), startOfDay(b));
+  }
 
   /** Roomier cells / type — legacy LaMa-style tables used more padding than compact data grids. */
   const theadCls =
@@ -372,34 +636,6 @@ export function EmployeeTimecardModal({
     };
   })();
 
-  const nextCashout =
-    ptoBalances?.vacationCashoutEnabled && !ptoBalancesLoading
-      ? {
-          at: ptoBalances?.nextVacationCashoutAt ?? null,
-          hours:
-            typeof ptoBalances?.nextVacationCashoutHours === "number" &&
-            Number.isFinite(ptoBalances.nextVacationCashoutHours)
-              ? ptoBalances.nextVacationCashoutHours
-              : ptoStrip.vacH,
-        }
-      : null;
-
-  const ptoPayouts = (() => {
-    if (ptoBalancesLoading) return null;
-    const ytdUsed =
-      typeof ptoBalances?.ytdVacationUsedHours === "number" &&
-      Number.isFinite(ptoBalances.ytdVacationUsedHours)
-        ? Math.max(0, ptoBalances.ytdVacationUsedHours)
-        : null;
-    const lastAt = ptoBalances?.lastVacationCashoutAt ?? null;
-    const lastHours =
-      typeof ptoBalances?.lastVacationCashoutHours === "number" &&
-      Number.isFinite(ptoBalances.lastVacationCashoutHours)
-        ? Math.max(0, ptoBalances.lastVacationCashoutHours)
-        : null;
-    return { ytdUsed, lastAt, lastHours };
-  })();
-
   return (
     <div
       className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-900/50"
@@ -417,8 +653,19 @@ export function EmployeeTimecardModal({
         className="relative flex h-[90vh] max-h-[90vh] w-[98%] max-w-none flex-col overflow-hidden rounded-t-xl border border-slate-300 bg-white shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* LaMa-style top Close */}
-        <div className="flex shrink-0 justify-center border-b border-slate-200 bg-slate-50 py-2">
+        {/* Top strip: prev/next user nav flank the centered Close. */}
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-1.5">
+          <button
+            type="button"
+            onClick={onPrevUser}
+            disabled={!hasPrevUser || !onPrevUser}
+            aria-label="Previous user"
+            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+            <span className="hidden sm:inline">Previous user</span>
+            <span className="sm:hidden">Prev</span>
+          </button>
           <button
             type="button"
             onClick={onClose}
@@ -426,10 +673,21 @@ export function EmployeeTimecardModal({
           >
             Close
           </button>
+          <button
+            type="button"
+            onClick={onNextUser}
+            disabled={!hasNextUser || !onNextUser}
+            aria-label="Next user"
+            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent"
+          >
+            <span className="hidden sm:inline">Next user</span>
+            <span className="sm:hidden">Next</span>
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+          </button>
         </div>
 
-        {/* Identity + period + actions */}
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
+        {/* Identity + period nav + filter/sort + balance chips + actions */}
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-3">
           <div className="flex min-w-0 items-center gap-3">
             <span
               className="flex h-12 w-12 shrink-0 items-center justify-center rounded border border-slate-200 bg-slate-100 text-sm font-bold text-slate-800"
@@ -441,108 +699,259 @@ export function EmployeeTimecardModal({
               <h2 id="timecard-title" className="truncate text-base font-bold text-slate-900">
                 {first.employeeName}
               </h2>
-              <div className="mt-1 flex items-center gap-1.5 text-sm text-slate-600">
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-slate-600">
                 <button
                   type="button"
-                  disabled
-                  title="Period navigation — coming soon"
-                  className="rounded p-0.5 text-slate-400 disabled:cursor-not-allowed"
+                  onClick={onPrevPeriod}
+                  disabled={!periodNavEnabled || !onPrevPeriod}
+                  title={periodNavEnabled ? "Previous period" : "Period navigation unavailable here"}
+                  className="rounded p-0.5 text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent"
                   aria-label="Previous period"
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
-                <span className="min-w-[8.5rem] tabular-nums text-center font-medium text-slate-800">
-                  {periodLabel}
-                </span>
+                {canPickPeriodRange ? (
+                  <div className="relative" ref={periodPickerRef}>
+                    <button
+                      type="button"
+                      onClick={() => setPeriodPickerOpen((o) => !o)}
+                      aria-expanded={periodPickerOpen}
+                      aria-haspopup="dialog"
+                      title="Pick a date range to view"
+                      className={`inline-flex min-w-[10rem] items-center justify-center gap-1.5 rounded-md border px-2.5 py-1 tabular-nums text-center text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/50 ${
+                        periodPickerOpen
+                          ? "border-orange-300 bg-orange-50 text-orange-900 shadow-sm"
+                          : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
+                      }`}
+                    >
+                      <CalendarDays
+                        className={`h-3.5 w-3.5 ${
+                          periodPickerOpen ? "text-orange-600" : "text-slate-500"
+                        }`}
+                        aria-hidden
+                      />
+                      {visiblePeriodLabel}
+                      <ChevronDown
+                        className={`h-3 w-3 transition ${
+                          periodPickerOpen
+                            ? "rotate-180 text-orange-600"
+                            : "text-slate-500"
+                        }`}
+                        aria-hidden
+                      />
+                    </button>
+                    {periodPickerOpen ? (
+                      <div
+                        role="dialog"
+                        aria-label="Pick date range"
+                        className="absolute left-1/2 top-full z-[110] mt-2 flex -translate-x-1/2 overflow-hidden rounded-xl border border-slate-200 bg-white text-xs shadow-xl"
+                        style={{
+                          // Tighten react-day-picker's defaults so the popover
+                          // doesn't take half the screen.
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          ["--rdp-cell-size" as any]: "30px",
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          ["--rdp-accent-color" as any]: "#ea580c",
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          ["--rdp-accent-background-color" as any]:
+                            "rgb(255 237 213 / 0.6)",
+                        }}
+                      >
+                        {/* Left rail: quick presets */}
+                        <div className="flex w-[8.5rem] flex-col gap-0.5 border-r border-slate-100 bg-slate-50/60 p-2">
+                          <div className="px-1.5 pb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                            Quick ranges
+                          </div>
+                          {presets.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => {
+                                const [a, b] = p.range();
+                                applyRange(a, b);
+                              }}
+                              className="rounded px-2 py-1 text-left text-[11px] font-medium text-slate-700 hover:bg-white hover:shadow-sm"
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Right side: calendar + apply/clear */}
+                        <div className="flex flex-col p-2">
+                          <DayPicker
+                            mode="range"
+                            selected={
+                              draftRange.from
+                                ? { from: draftRange.from, to: draftRange.to }
+                                : undefined
+                            }
+                            defaultMonth={periodAnchorDate}
+                            onSelect={(r) => {
+                              setDraftRange({ from: r?.from, to: r?.to });
+                            }}
+                            weekStartsOn={1}
+                            showOutsideDays={false}
+                            numberOfMonths={1}
+                            className="text-xs"
+                          />
+                          <div className="mt-1 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const t = startOfDay(new Date());
+                                applyRange(t, t);
+                              }}
+                              className="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                              title="Clear history view; return to live data"
+                            >
+                              Clear / Today
+                            </button>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPeriodPickerOpen(false);
+                                  setDraftRange({});
+                                }}
+                                className="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!draftRange.from}
+                                onClick={() => {
+                                  if (!draftRange.from) return;
+                                  const to = draftRange.to ?? draftRange.from;
+                                  applyRange(draftRange.from, to);
+                                }}
+                                className="rounded-md bg-orange-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
+                              >
+                                Apply
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <span className="min-w-[8.5rem] tabular-nums text-center font-medium text-slate-800">
+                    {visiblePeriodLabel}
+                  </span>
+                )}
                 <button
                   type="button"
-                  disabled
-                  title="Period navigation — coming soon"
-                  className="rounded p-0.5 text-slate-400 disabled:cursor-not-allowed"
+                  onClick={onNextPeriod}
+                  disabled={!periodNavEnabled || !onNextPeriod}
+                  title={periodNavEnabled ? "Next period" : "Period navigation unavailable here"}
+                  className="rounded p-0.5 text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent"
                   aria-label="Next period"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>
+
+                {/* Type filter (funnel) */}
+                <div className="relative ml-1" ref={filterMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setFilterMenuOpen((o) => !o)}
+                    aria-expanded={filterMenuOpen}
+                    aria-haspopup="menu"
+                    title="Filter entries"
+                    className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-semibold transition ${
+                      filterActive
+                        ? "border-orange-200 bg-orange-50 text-orange-900"
+                        : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    <Filter className="h-3.5 w-3.5" aria-hidden />
+                    <span>
+                      {typeFilter === "all"
+                        ? "All"
+                        : typeFilter === "shift"
+                          ? "Shifts only"
+                          : "Time off only"}
+                    </span>
+                    <ChevronDown className="h-3 w-3 opacity-70" aria-hidden />
+                  </button>
+                  {filterMenuOpen ? (
+                    <div
+                      role="menu"
+                      className="absolute left-0 z-[105] mt-1 min-w-[10rem] rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+                    >
+                      {[
+                        { id: "all", label: "All entries" },
+                        { id: "shift", label: "Shifts only" },
+                        { id: "timeoff", label: "Time off only" },
+                      ].map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={typeFilter === opt.id}
+                          className={`block w-full px-3 py-1.5 text-left text-xs font-medium ${
+                            typeFilter === opt.id
+                              ? "bg-orange-50 text-orange-900"
+                              : "text-slate-700 hover:bg-slate-50"
+                          }`}
+                          onClick={() => {
+                            setTypeFilter(opt.id as typeof typeFilter);
+                            setFilterMenuOpen(false);
+                          }}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* Sort toggle (date asc / desc) */}
+                <button
+                  type="button"
+                  onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                  title={`Sort by date — ${sortDir === "asc" ? "newest last" : "newest first"}`}
+                  aria-label="Toggle sort direction"
+                  className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  {sortDir === "asc" ? (
+                    <ArrowUp01 className="h-3.5 w-3.5" aria-hidden />
+                  ) : (
+                    <ArrowDown01 className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                  <span className="hidden sm:inline">
+                    {sortDir === "asc" ? "Oldest first" : "Newest first"}
+                  </span>
+                </button>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <div
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-800"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] font-semibold text-slate-800"
                   aria-label="Vacation balance"
-                  title={`Vacation balance · ${ptoStrip.vacH.toFixed(1)}h (${ptoStrip.vacD.toFixed(1)}d @ ${ptoStrip.dayHours}h/day)`}
+                  title={`Vacation balance · ${formatHoursMinutes(Math.round(ptoStrip.vacH * 60))} (${ptoStrip.vacD.toFixed(1)} days @ ${ptoStrip.dayHours}h/day)`}
                 >
                   <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" aria-hidden />
                   Vacation
                   <span className="tabular-nums text-slate-700">
-                    {ptoBalancesLoading ? "—" : `${ptoStrip.vacH.toFixed(1)}h`}
-                  </span>
-                  <span className="tabular-nums text-slate-500">
-                    {ptoBalancesLoading ? "" : `(${ptoStrip.vacD.toFixed(1)}d)`}
+                    {ptoBalancesLoading
+                      ? "—"
+                      : formatHoursMinutes(Math.round(ptoStrip.vacH * 60))}
                   </span>
                 </div>
                 <div
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-800"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] font-semibold text-slate-800"
                   aria-label="Sick balance"
-                  title={`Sick balance · ${ptoStrip.sickH.toFixed(1)}h (${ptoStrip.sickD.toFixed(1)}d @ ${ptoStrip.dayHours}h/day)`}
+                  title={`Sick balance · ${formatHoursMinutes(Math.round(ptoStrip.sickH * 60))} (${ptoStrip.sickD.toFixed(1)} days @ ${ptoStrip.dayHours}h/day)`}
                 >
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
                   Sick
                   <span className="tabular-nums text-slate-700">
-                    {ptoBalancesLoading ? "—" : `${ptoStrip.sickH.toFixed(1)}h`}
-                  </span>
-                  <span className="tabular-nums text-slate-500">
-                    {ptoBalancesLoading ? "" : `(${ptoStrip.sickD.toFixed(1)}d)`}
-                  </span>
-                </div>
-                {nextCashout ? (
-                  <div
-                    className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-[11px] font-semibold text-orange-900"
-                    aria-label="Next vacation cash-out"
-                    title={`Next vacation cash-out (estimate) · ${nextCashout.hours.toFixed(1)}h on ${fmtShortDate(nextCashout.at)}`}
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full bg-orange-600" aria-hidden />
-                    Next cash-out
-                    <span className="tabular-nums text-orange-900">
-                      {`${nextCashout.hours.toFixed(1)}h`}
-                    </span>
-                    <span className="tabular-nums text-orange-800/80">
-                      {`(${fmtShortDate(nextCashout.at)})`}
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-              <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                    PTO & payouts
-                  </p>
-                  <p className="mt-1 text-xs font-medium text-slate-700">
-                    Vacation cash-out runs monthly when enabled.
-                  </p>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                    YTD vacation used
-                  </p>
-                  <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
-                    {ptoBalancesLoading || !ptoPayouts || ptoPayouts.ytdUsed === null
-                      ? "—"
-                      : `${ptoPayouts.ytdUsed.toFixed(1)}h`}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                    Last cash-out
-                  </p>
-                  <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
                     {ptoBalancesLoading
                       ? "—"
-                      : ptoPayouts?.lastAt
-                        ? `${(ptoPayouts.lastHours ?? 0).toFixed(1)}h`
-                        : "—"}
-                  </p>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    {ptoBalancesLoading ? "" : fmtShortDate(ptoPayouts?.lastAt ?? null)}
-                  </p>
+                      : formatHoursMinutes(Math.round(ptoStrip.sickH * 60))}
+                  </span>
                 </div>
               </div>
               <Link
@@ -554,6 +963,22 @@ export function EmployeeTimecardModal({
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {statusPill ? (
+              <span
+                className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${statusPillClass}`}
+                title="Timesheet status (aggregate across this period)"
+              >
+                {statusPill.label}
+              </span>
+            ) : null}
+            {filterActive ? (
+              <span
+                className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200/80"
+                title="Filter is active — totals above still reflect the full period"
+              >
+                {displayRowCount} of {totalRowCount}
+              </span>
+            ) : null}
             {canManageTimeEntries && roster.length > 0 ? (
               <div className="relative" ref={addMenuRef}>
                 <button
@@ -628,22 +1053,20 @@ export function EmployeeTimecardModal({
             >
               <Download className="h-4 w-4" />
             </button>
-            {/*
-              Approval column = manager sign-off on completed shifts for payroll (optional policy).
-              Hint only when something needs action — avoids noisy “no pending” copy.
-            */}
-            {canApprovePunches && pendingApprovalCount > 0 ? (
-              <span
-                className="max-w-[14rem] text-right text-xs leading-snug text-slate-600"
-                    title="Managers can mark completed shifts as reviewed before payroll when your company uses that workflow"
-              >
-                <span className="font-semibold text-sky-800">{pendingApprovalCount}</span>{" "}
-                {pendingApprovalCount === 1 ? "entry needs" : "entries need"} review — use the Approval
-                column.
-              </span>
-            ) : null}
           </div>
         </div>
+
+        {historicalNotice ? (
+          <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-5 py-2 text-xs font-medium text-amber-900">
+            <span className="mr-2 inline-flex items-center gap-1.5">
+              <CalendarDays className="h-3.5 w-3.5" aria-hidden />
+              {historicalNotice}
+            </span>
+            <span className="text-amber-800/80">
+              Pick today in the calendar to return to the live view.
+            </span>
+          </div>
+        ) : null}
 
         {/* Exact Top Header Layout (Connecteam-style math) */}
         <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-4 text-sm leading-relaxed">
@@ -694,8 +1117,7 @@ export function EmployeeTimecardModal({
                 <col className="w-[7.5rem]" />
                 <col className="w-[7.5rem]" />
                 <col className="w-[7.5rem]" />
-                <col className="w-[9.5rem]" />
-                <col className="w-[10.5rem]" />
+                <col className="w-[14rem]" />
                 <col className="w-[16rem]" />
                 <col className="w-[16rem]" />
               </colgroup>
@@ -711,12 +1133,28 @@ export function EmployeeTimecardModal({
                 <th className={`${thPad} ${cellBorder}`}>Weekly total</th>
                 <th className={`${thPad} ${cellBorder}`}>Leave Hours</th>
                 <th className={`${thPad} ${cellBorder}`}>Leave Type</th>
-                <th className={`${thPad} ${cellBorder}`}>Manager Approval</th>
                 <th className={`${thPad} ${cellBorder}`}>Employee Notes</th>
                 <th className={`${thPad} ${cellBorder}`}>Manager Notes</th>
               </tr>
               </thead>
               <tbody>
+              {weekBlocks.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={12}
+                    className="px-5 py-10 text-center text-sm text-slate-500"
+                  >
+                    No entries match the current filter.{" "}
+                    <button
+                      type="button"
+                      onClick={() => setTypeFilter("all")}
+                      className="font-semibold text-orange-700 underline-offset-2 hover:underline"
+                    >
+                      Clear filter
+                    </button>
+                  </td>
+                </tr>
+              ) : null}
               {weekBlocks.map((block) => {
                 const sunday = new Date(block.monday);
                 sunday.setDate(sunday.getDate() + 6);
@@ -725,7 +1163,7 @@ export function EmployeeTimecardModal({
                 return (
                   <Fragment key={block.monday.getTime()}>
                     <tr className="bg-slate-200/90">
-                      <td colSpan={13} className="px-5 py-2.5 text-center text-sm font-bold text-slate-800">
+                      <td colSpan={12} className="px-5 py-2.5 text-center text-sm font-bold text-slate-800">
                         {weekLabel}
                       </td>
                     </tr>
@@ -835,38 +1273,36 @@ export function EmployeeTimecardModal({
                             />
                           </td>
                           <td className={`${cellBorder} ${tdPad}`}>
-                            <select
-                              value={leaveTypeByEntryId[r.id] ?? ""}
-                              onChange={(e) =>
-                                setLeaveTypeByEntryId((prev) => ({
-                                  ...prev,
-                                  [r.id]: (e.target.value as "Vacation" | "Sick" | ""),
-                                }))
-                              }
-                              className="h-10 w-full rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-900"
-                            >
-                              <option value="">—</option>
-                              <option value="Vacation">Vacation</option>
-                              <option value="Sick">Sick</option>
-                            </select>
-                          </td>
-                          <td className={`${cellBorder} ${tdPad}`}>
-                            <div className="flex min-w-0 flex-col gap-1.5">
+                            <div className="flex flex-col gap-1.5">
+                              <select
+                                value={leaveTypeByEntryId[r.id] ?? ""}
+                                onChange={(e) =>
+                                  setLeaveTypeByEntryId((prev) => ({
+                                    ...prev,
+                                    [r.id]: (e.target.value as "Vacation" | "Sick" | ""),
+                                  }))
+                                }
+                                className="h-10 w-full rounded-md border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-900"
+                              >
+                                <option value="">—</option>
+                                <option value="Vacation">Vacation</option>
+                                <option value="Sick">Sick</option>
+                              </select>
                               {approvedLeave ? (
-                                <span className="inline-flex w-fit items-center justify-center rounded-md bg-emerald-600 px-2 py-1 text-xs font-semibold text-white">
+                                <span className="inline-flex w-fit items-center justify-center rounded-md bg-emerald-600 px-2 py-0.5 text-[11px] font-semibold text-white">
                                   Approved
                                 </span>
                               ) : pendingLeave ? (
-                                <>
-                                  <span className="inline-flex w-fit items-center justify-center rounded-md bg-orange-100 px-2 py-1 text-xs font-semibold text-orange-900 ring-1 ring-orange-200">
+                                <div className="flex flex-col gap-1">
+                                  <span className="inline-flex w-fit items-center justify-center rounded-md bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-900 ring-1 ring-orange-200">
                                     Pending
                                   </span>
                                   {canManageTimeEntries && locationId ? (
-                                    <div className="flex flex-wrap gap-2">
+                                    <div className="flex flex-wrap gap-1.5">
                                       <button
                                         type="button"
                                         disabled={leaveActionPending}
-                                        className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                        className="rounded-md bg-emerald-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                                         onClick={async () => {
                                           setLeaveActionErr(null);
                                           setLeaveActionPending(true);
@@ -884,7 +1320,7 @@ export function EmployeeTimecardModal({
                                       <button
                                         type="button"
                                         disabled={leaveActionPending}
-                                        className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                                        className="rounded-md border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
                                         onClick={async () => {
                                           setLeaveActionErr(null);
                                           setLeaveActionPending(true);
@@ -901,12 +1337,12 @@ export function EmployeeTimecardModal({
                                       </button>
                                     </div>
                                   ) : null}
-                                </>
+                                </div>
                               ) : isSelf && dk ? (
                                 <button
                                   type="button"
                                   disabled={leaveActionPending}
-                                  className="w-fit rounded-md bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white hover:bg-slate-950 disabled:opacity-50"
+                                  className="w-fit rounded-md bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-slate-950 disabled:opacity-50"
                                   onClick={async () => {
                                     setLeaveActionErr(null);
                                     const rawH = (leaveHoursByEntryId[r.id] ?? "").trim();
@@ -953,13 +1389,11 @@ export function EmployeeTimecardModal({
                                 >
                                   Request
                                 </button>
-                              ) : (
-                                <span className="text-xs text-slate-400">—</span>
-                              )}
+                              ) : null}
+                              {leaveActionErr ? (
+                                <p className="text-[11px] text-red-700">{leaveActionErr}</p>
+                              ) : null}
                             </div>
-                            {leaveActionErr ? (
-                              <p className="mt-1 text-xs text-red-700">{leaveActionErr}</p>
-                            ) : null}
                           </td>
                           <td
                             className={`${cellBorder} ${tdPad} border-l-4 border-slate-300`}

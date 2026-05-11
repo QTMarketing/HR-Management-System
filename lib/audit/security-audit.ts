@@ -19,6 +19,7 @@ export const SECURITY_AUDIT_ACTIONS = {
   PAY_PERIOD_UNLOCKED: "pay_period_unlocked",
   PAYROLL_POLICY_UPDATED: "payroll_policy_updated",
   PTO_BALANCE_ADJUSTED: "pto_balance_adjusted",
+  CHAIN_PAYROLL_DEFAULTS_UPDATED: "chain_payroll_defaults_updated",
 } as const;
 
 export type SecurityAuditAction =

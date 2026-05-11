@@ -27,6 +27,12 @@ type Props = {
   viewerOpenEntryClockInAt?: string | null;
   /** Open break id on that punch (Phase 2), if any. */
   viewerOpenBreakId?: string | null;
+  /**
+   * Set when the viewer's open punch is at a *different* store than this
+   * portal (typically: prior store was archived after a reassignment). The
+   * UI surfaces a self-heal banner explaining what's about to happen.
+   */
+  viewerOpenEntryForeignLocationName?: string | null;
   /** Location has geofence columns set — clock-in requires GPS. */
   geofenceActive: boolean;
   /** Connecteam-like setting: capture GPS at punch time (off / in-out / future breadcrumbs). */
@@ -70,6 +76,7 @@ export function TimeClockSelfServe({
   viewerOpenEntryId,
   viewerOpenEntryClockInAt = null,
   viewerOpenBreakId = null,
+  viewerOpenEntryForeignLocationName = null,
   geofenceActive,
   locationTrackingMode,
   requireLocationForPunch,
@@ -378,6 +385,19 @@ export function TimeClockSelfServe({
           </div>
         )}
       </div>
+
+      {/* Self-heal hint: viewer is still clocked in at a different store. */}
+      {isClockedIn && viewerOpenEntryForeignLocationName ? (
+        <div
+          className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+          role="status"
+        >
+          You&rsquo;re still clocked in at{" "}
+          <span className="font-semibold">{viewerOpenEntryForeignLocationName}</span>.
+          Tap <span className="font-semibold">Out</span> below to clock out —
+          then you can clock in here.
+        </div>
+      ) : null}
 
       {/* Optional required code picker (minimal, only when it blocks clock-in). */}
       {!isClockedIn && categorizationMode !== "none" ? (

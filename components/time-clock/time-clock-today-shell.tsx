@@ -58,6 +58,7 @@ type Props = {
   viewerOpenEntryId: string | null;
   viewerOpenEntryClockInAt: string | null;
   viewerOpenBreakId: string | null;
+  viewerOpenEntryForeignLocationName?: string | null;
 
   todayMetrics: TimeClockTodayMetrics | null;
   latestRows: EnrichedPunchRow[];
@@ -194,6 +195,7 @@ export function TimeClockTodayShell(props: Props) {
         viewerOpenEntryId={props.viewerOpenEntryId}
         viewerOpenEntryClockInAt={props.viewerOpenEntryClockInAt}
         viewerOpenBreakId={props.viewerOpenBreakId}
+        viewerOpenEntryForeignLocationName={props.viewerOpenEntryForeignLocationName ?? null}
         geofenceActive={props.geofenceActive}
         locationTrackingMode={props.locationTrackingMode}
         requireLocationForPunch={props.requireLocationForPunch}
