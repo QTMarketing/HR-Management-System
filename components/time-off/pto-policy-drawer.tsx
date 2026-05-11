@@ -1,6 +1,6 @@
 "use client";
 
-import { Info, Plus, Trash2, X } from "lucide-react";
+import { Briefcase, Info, Plus, Store, Trash2, X } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 import {
   replaceEntitlementTiers,
@@ -25,26 +25,73 @@ type DraftTier = {
   annualHours: number;
 };
 
-type Ladder = {
+/**
+ * Linear ladder: starts at `startYears` with `startDays`, climbs linearly
+ * to `maxDays` at `maxYears`. Used for the store manager / store
+ * employee cohorts, whose policy text reads "5 days at 1 year, +1 day
+ * per year up to 10 days at 6 years".
+ */
+type LinearLadder = {
   cohort: PtoCohort;
-  startYears: number; // earliest year of service that earns leave
-  startDays: number; // days/year at startYears
-  maxYears: number; // year where leave reaches its maximum
-  maxDays: number; // days/year at maxYears
+  startYears: number;
+  startDays: number;
+  maxYears: number;
+  maxDays: number;
 };
 
+/**
+ * Stepped ladder: explicit breakpoints. Used for the office cohort,
+ * whose policy is non-linear (1y→5d, 2y→10d, 5y→15d, 10y→20d) and can't
+ * be expressed as a single linear slope.
+ */
+type SteppedLadder = {
+  cohort: PtoCohort;
+  kind: "stepped";
+  steps: Array<{ uid: string; years: number; days: number }>;
+};
+
+type Ladder =
+  | (LinearLadder & { kind: "linear" })
+  | SteppedLadder;
+
 const COHORT_LABEL: Record<PtoCohort, string> = {
-  employee: "Employees",
-  manager: "Managers",
+  office: "Office",
+  manager: "Store managers",
+  employee: "Store employees",
   all: "All staff",
 };
-const COHORT_ORDER: ReadonlyArray<PtoCohort> = ["manager", "employee", "all"];
+const COHORT_BLURB: Record<PtoCohort, string> = {
+  office:
+    "Head-office / HR / Accounting / corporate roles. Non-linear ladder with custom year breakpoints.",
+  manager: "Anyone with a manager-level title at a store.",
+  employee: "Hourly / part-time / full-time store staff.",
+  all: "Applies to every active employee.",
+};
+const COHORT_ICON: Record<PtoCohort, React.ComponentType<{ className?: string }>> = {
+  office: Briefcase,
+  manager: Store,
+  employee: Store,
+  all: Store,
+};
+const COHORT_ORDER: ReadonlyArray<PtoCohort> = ["office", "manager", "employee", "all"];
+
+/** Cohorts whose ladder is naturally non-linear (= stepped editor). */
+const STEPPED_COHORTS: ReadonlySet<PtoCohort> = new Set(["office"]);
 
 function uniqueId(): string {
   return `t_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** Reduce a list of per-year tiers into one ladder per cohort. */
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+/**
+ * Reduce a list of per-year tiers into one ladder per cohort.
+ *
+ * Stepped cohorts (office) keep their explicit breakpoints — collapsing
+ * them to a linear startDays/maxDays summary would lossily smooth a
+ * non-linear policy. Linear cohorts (manager/employee) get reduced to
+ * (startYears, startDays) → (maxYears, maxDays) and re-expanded on save.
+ */
 function tiersToLadders(tiers: PtoEntitlementTier[], dayHrs: number): Ladder[] {
   const byCohort = new Map<PtoCohort, PtoEntitlementTier[]>();
   for (const t of tiers) {
@@ -57,10 +104,22 @@ function tiersToLadders(tiers: PtoEntitlementTier[], dayHrs: number): Ladder[] {
     const list = byCohort.get(cohort);
     if (!list || list.length === 0) continue;
     const sorted = [...list].sort((a, b) => a.minYearsOfService - b.minYearsOfService);
+    if (STEPPED_COHORTS.has(cohort)) {
+      ladders.push({
+        cohort,
+        kind: "stepped",
+        steps: sorted.map((t) => ({
+          uid: uniqueId(),
+          years: t.minYearsOfService,
+          days: round1((t.annualHours || 0) / Math.max(1, dayHrs)),
+        })),
+      });
+      continue;
+    }
     const first = sorted[0];
     const last = sorted[sorted.length - 1];
-    const round1 = (n: number) => Math.round(n * 10) / 10;
     ladders.push({
+      kind: "linear",
       cohort,
       startYears: first.minYearsOfService,
       startDays: round1((first.annualHours || 0) / Math.max(1, dayHrs)),
@@ -71,8 +130,21 @@ function tiersToLadders(tiers: PtoEntitlementTier[], dayHrs: number): Ladder[] {
   return ladders;
 }
 
-/** Expand a ladder into per-year tiers (linear, +step / year). */
+/** Expand a ladder into per-year tier rows. */
 function ladderToTiers(ladder: Ladder, dayHrs: number): DraftTier[] {
+  // Stepped: one tier row per explicit breakpoint. The DB picks the
+  // highest row with min_years_of_service <= yos, so 1y→5, 2y→10, 5y→15,
+  // 10y→20 produces the right entitlement for every year in between.
+  if (ladder.kind === "stepped") {
+    return ladder.steps.map((s) => ({
+      uid: uniqueId(),
+      cohort: ladder.cohort,
+      minYears: Math.max(0, Math.floor(s.years)),
+      annualHours: Math.round(Math.max(0, s.days) * dayHrs * 100) / 100,
+    }));
+  }
+
+  // Linear: one tier row per year in [startYears, maxYears].
   const startY = Math.max(0, Math.floor(ladder.startYears));
   const maxY = Math.max(startY, Math.floor(ladder.maxYears));
   const startD = Math.max(0, Number(ladder.startDays) || 0);
@@ -116,12 +188,47 @@ function laddersToTiers(ladders: Ladder[], dayHrs: number): DraftTier[] {
 /** Default ladder used when adding a new cohort row. */
 function defaultLadderForBucket(bucket: PtoBucket, cohort: PtoCohort): Ladder {
   if (bucket === "sick") {
-    return { cohort, startYears: 2, startDays: 5, maxYears: 2, maxDays: 5 };
+    // Sick is flat across all cohorts: 5 days/yr after 2 years.
+    return {
+      kind: "linear",
+      cohort,
+      startYears: 2,
+      startDays: 5,
+      maxYears: 2,
+      maxDays: 5,
+    };
+  }
+  if (cohort === "office") {
+    // HR's office vacation policy — exact breakpoints.
+    return {
+      cohort,
+      kind: "stepped",
+      steps: [
+        { uid: uniqueId(), years: 1, days: 5 },
+        { uid: uniqueId(), years: 2, days: 10 },
+        { uid: uniqueId(), years: 5, days: 15 },
+        { uid: uniqueId(), years: 10, days: 20 },
+      ],
+    };
   }
   if (cohort === "manager") {
-    return { cohort, startYears: 1, startDays: 5, maxYears: 6, maxDays: 10 };
+    return {
+      kind: "linear",
+      cohort,
+      startYears: 1,
+      startDays: 5,
+      maxYears: 6,
+      maxDays: 10,
+    };
   }
-  return { cohort, startYears: 2, startDays: 5, maxYears: 7, maxDays: 10 };
+  return {
+    kind: "linear",
+    cohort,
+    startYears: 2,
+    startDays: 5,
+    maxYears: 7,
+    maxDays: 10,
+  };
 }
 
 function isPositive(n: number | null): n is number {
@@ -212,9 +319,14 @@ export function PtoPolicyDrawer({ open, bucket, policy, onClose }: Props) {
 
   const dayHrs = standardDayHours > 0 ? standardDayHours : 8;
 
-  // Cohorts not yet present in the ladder list (so we know which can be added).
+  // Which cohorts are allowed for this bucket. Vacation differentiates
+  // office / store managers / store employees; sick is flat across the
+  // whole company.
+  const validForBucket: PtoCohort[] = isVacation
+    ? ["office", "manager", "employee"]
+    : ["all"];
   const usedCohorts = new Set(ladders.map((l) => l.cohort));
-  const addableCohorts: PtoCohort[] = COHORT_ORDER.filter(
+  const addableCohorts: PtoCohort[] = validForBucket.filter(
     (c) => !usedCohorts.has(c),
   );
 
@@ -222,8 +334,11 @@ export function PtoPolicyDrawer({ open, bucket, policy, onClose }: Props) {
     setLadders((prev) => [...prev, defaultLadderForBucket(bucket, cohort)]);
   }
 
+  // Shape-agnostic merge — works for both linear and stepped ladders.
   function updateLadder(cohort: PtoCohort, patch: Partial<Ladder>) {
-    setLadders((prev) => prev.map((l) => (l.cohort === cohort ? { ...l, ...patch } : l)));
+    setLadders((prev) =>
+      prev.map((l) => (l.cohort === cohort ? ({ ...l, ...patch } as Ladder) : l)),
+    );
   }
 
   function removeLadder(cohort: PtoCohort) {
@@ -375,15 +490,24 @@ export function PtoPolicyDrawer({ open, bucket, policy, onClose }: Props) {
                 </p>
               ) : null}
 
-              {ladders.map((l) => (
-                <LadderCard
-                  key={l.cohort}
-                  ladder={l}
-                  isVacation={isVacation}
-                  onChange={(patch) => updateLadder(l.cohort, patch)}
-                  onRemove={() => removeLadder(l.cohort)}
-                />
-              ))}
+              {ladders.map((l) =>
+                l.kind === "stepped" ? (
+                  <SteppedLadderCard
+                    key={l.cohort}
+                    ladder={l}
+                    onChange={(next) => updateLadder(l.cohort, next)}
+                    onRemove={() => removeLadder(l.cohort)}
+                  />
+                ) : (
+                  <LinearLadderCard
+                    key={l.cohort}
+                    ladder={l}
+                    isVacation={isVacation}
+                    onChange={(patch) => updateLadder(l.cohort, patch)}
+                    onRemove={() => removeLadder(l.cohort)}
+                  />
+                ),
+              )}
 
               {addableCohorts.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
@@ -640,31 +764,39 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function LadderCard({
+function LinearLadderCard({
   ladder,
   isVacation,
   onChange,
   onRemove,
 }: {
-  ladder: Ladder;
+  ladder: LinearLadder & { kind: "linear" };
   isVacation: boolean;
-  onChange: (patch: Partial<Ladder>) => void;
+  onChange: (patch: Partial<LinearLadder & { kind: "linear" }>) => void;
   onRemove: () => void;
 }) {
   const span = Math.max(0, Math.floor(ladder.maxYears) - Math.floor(ladder.startYears));
   const stepPerYear = span > 0 ? (ladder.maxDays - ladder.startDays) / span : 0;
   const flat = span === 0 || stepPerYear === 0;
+  const Icon = COHORT_ICON[ladder.cohort];
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold text-slate-900">{COHORT_LABEL[ladder.cohort]}</p>
-          <p className="text-[11px] text-slate-500">
-            {flat
-              ? `${ladder.startDays} day${ladder.startDays === 1 ? "" : "s"} a year after ${ladder.startYears} year${ladder.startYears === 1 ? "" : "s"} of work.`
-              : `Starts at ${ladder.startDays} days, grows to ${ladder.maxDays} days a year, +${stepPerYear === 1 ? "1" : stepPerYear.toFixed(2)} day per year between year ${ladder.startYears} and year ${ladder.maxYears}.`}
-          </p>
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5">
+          <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
+            <Icon className="h-3.5 w-3.5" />
+          </span>
+          <div>
+            <p className="text-sm font-semibold text-slate-900">
+              {COHORT_LABEL[ladder.cohort]}
+            </p>
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              {flat
+                ? `${ladder.startDays} day${ladder.startDays === 1 ? "" : "s"} a year after ${ladder.startYears} year${ladder.startYears === 1 ? "" : "s"} of work.`
+                : `Starts at ${ladder.startDays} days, grows to ${ladder.maxDays} days a year, +${stepPerYear === 1 ? "1" : stepPerYear.toFixed(2)} day per year between year ${ladder.startYears} and year ${ladder.maxYears}.`}
+            </p>
+          </div>
         </div>
         <button
           type="button"
@@ -714,6 +846,158 @@ function LadderCard({
           </>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Stepped editor for non-linear ladders (currently office vacation).
+ * Renders an explicit table of (year, days/yr) breakpoints. The DB
+ * picks the highest breakpoint whose `min_years_of_service <= yos`, so
+ * an office employee with 4 years of service gets the value from the
+ * "After 2 years" row, and at 5 years the value from the "After 5 years"
+ * row, etc.
+ */
+function SteppedLadderCard({
+  ladder,
+  onChange,
+  onRemove,
+}: {
+  ladder: SteppedLadder;
+  onChange: (patch: Partial<SteppedLadder>) => void;
+  onRemove: () => void;
+}) {
+  const Icon = COHORT_ICON[ladder.cohort];
+  // Sort copy for display so HR sees breakpoints in service-year order,
+  // even if a new row was just appended out-of-order.
+  const sortedSteps = [...ladder.steps].sort((a, b) => a.years - b.years);
+
+  function updateStep(uid: string, patch: { years?: number; days?: number }) {
+    onChange({
+      steps: ladder.steps.map((s) =>
+        s.uid === uid
+          ? {
+              ...s,
+              years: patch.years != null ? Math.max(0, Math.floor(patch.years)) : s.years,
+              days: patch.days != null ? Math.max(0, patch.days) : s.days,
+            }
+          : s,
+      ),
+    });
+  }
+
+  function addStep() {
+    const lastYear = sortedSteps.length
+      ? sortedSteps[sortedSteps.length - 1].years
+      : 0;
+    const lastDays = sortedSteps.length
+      ? sortedSteps[sortedSteps.length - 1].days
+      : 5;
+    onChange({
+      steps: [
+        ...ladder.steps,
+        { uid: uniqueId(), years: lastYear + 1, days: lastDays },
+      ],
+    });
+  }
+
+  function removeStep(uid: string) {
+    if (ladder.steps.length <= 1) return; // keep at least one row
+    onChange({ steps: ladder.steps.filter((s) => s.uid !== uid) });
+  }
+
+  return (
+    <div className="rounded-xl border border-amber-200/80 bg-gradient-to-br from-amber-50/70 to-white p-4 shadow-sm">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5">
+          <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-800">
+            <Icon className="h-3.5 w-3.5" />
+          </span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-semibold text-slate-900">
+                {COHORT_LABEL[ladder.cohort]}
+              </p>
+              <span className="inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-800 ring-1 ring-amber-200/80">
+                Custom steps
+              </span>
+            </div>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">
+              {COHORT_BLURB[ladder.cohort]}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+          aria-label={`Remove ${COHORT_LABEL[ladder.cohort]}`}
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        <div className="grid grid-cols-[1fr_1fr_auto] gap-2 px-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+          <span>After working for</span>
+          <span>Receives</span>
+          <span className="w-8" aria-hidden />
+        </div>
+        {sortedSteps.map((s) => (
+          <div
+            key={s.uid}
+            className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5"
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={s.years}
+                onChange={(e) => updateStep(s.uid, { years: Number(e.target.value) || 0 })}
+                className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-900 tabular-nums focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+                aria-label="Years of service"
+              />
+              <span className="shrink-0 text-[11px] text-slate-500">yr</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                value={s.days}
+                onChange={(e) => updateStep(s.uid, { days: Number(e.target.value) || 0 })}
+                className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-900 tabular-nums focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+                aria-label="Days per year"
+              />
+              <span className="shrink-0 text-[11px] text-slate-500">days/yr</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => removeStep(s.uid)}
+              disabled={ladder.steps.length <= 1}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400"
+              aria-label="Remove breakpoint"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={addStep}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:border-amber-400 hover:bg-amber-50"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add breakpoint
+        </button>
+      </div>
+
+      <p className="mt-3 rounded-md border border-amber-200/70 bg-amber-50/70 px-2 py-1.5 text-[11px] leading-relaxed text-amber-900">
+        Each row says &ldquo;after working <strong>this many years</strong>, the
+        employee receives <strong>this many days</strong> per year.&rdquo; The
+        value stays the same until the next breakpoint is reached.
+      </p>
     </div>
   );
 }

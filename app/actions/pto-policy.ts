@@ -5,7 +5,20 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getRbacContext } from "@/lib/rbac/context";
 
 export type PtoBucket = "vacation" | "sick";
-export type PtoCohort = "employee" | "manager" | "all";
+/**
+ * PTO cohort. Maps 1:1 to the values allowed by the
+ * `pto_entitlement_tiers_cohort_check` constraint (see migrations 054 +
+ * 076). The `office` cohort was added in 076 to model HR's office vacation
+ * ladder, which is non-linear (1y→5d, 2y→10d, 5y→15d, 10y→20d).
+ */
+export type PtoCohort = "employee" | "manager" | "office" | "all";
+
+const ALL_COHORTS: ReadonlyArray<PtoCohort> = ["employee", "manager", "office", "all"];
+function toCohort(value: unknown): PtoCohort {
+  return ALL_COHORTS.includes(value as PtoCohort)
+    ? (value as PtoCohort)
+    : "employee";
+}
 
 export type PtoEntitlementTier = {
   bucket: PtoBucket;
@@ -182,9 +195,7 @@ export async function getPtoPolicySummary(): Promise<Result> {
 
   const tiers: PtoEntitlementTier[] = (tierRows ?? []).map((r) => ({
     bucket: (r.bucket === "sick" ? "sick" : "vacation") as PtoBucket,
-    cohort: ((r.cohort === "manager" || r.cohort === "all"
-      ? r.cohort
-      : "employee") as PtoCohort),
+    cohort: toCohort(r.cohort),
     minYearsOfService: toNum(r.min_years_of_service, 0),
     annualHours: toNum(r.annual_hours, 0),
   }));
@@ -378,8 +389,7 @@ export async function replaceEntitlementTiers(
   }> = [];
 
   for (const t of input.tiers) {
-    const cohort: PtoCohort =
-      t.cohort === "manager" || t.cohort === "all" ? t.cohort : "employee";
+    const cohort: PtoCohort = toCohort(t.cohort);
     const minY = Math.max(0, Math.floor(Number(t.minYearsOfService) || 0));
     const annual = Math.max(0, Number(t.annualHours) || 0);
     if (annual <= 0) continue; // skip empty rows

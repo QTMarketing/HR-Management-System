@@ -21,7 +21,41 @@ export type EmployeeProfilePayload = {
   direct_manager_id: string;
   birth_date: string;
   employee_code: string;
+  /**
+   * Optional PTO classification override. "" / null = auto-detect from
+   * role. Drives which vacation ladder applies (office vs. store
+   * manager vs. store employee). Owner-only.
+   */
+  pto_cohort?: PtoCohortInput;
+  /**
+   * When set together, marking the employee as `inactive` will trigger
+   * the termination payout / forfeit ledger entry via the SQL trigger
+   * added in migration 077. Owner-only.
+   */
+  termination_reason?: TerminationReason | "";
+  /** ISO date or empty. Defaults to "now" inside the trigger when unset. */
+  termination_at?: string;
 };
+
+export type PtoCohortInput = "office" | "manager" | "employee" | "";
+export type TerminationReason =
+  | "resignation"
+  | "layoff"
+  | "retirement"
+  | "for_cause";
+
+const TERMINATION_REASONS: ReadonlyArray<TerminationReason> = [
+  "resignation",
+  "layoff",
+  "retirement",
+  "for_cause",
+];
+const PTO_COHORTS: ReadonlyArray<PtoCohortInput> = [
+  "office",
+  "manager",
+  "employee",
+  "",
+];
 
 export type ProfileActionResult = { ok: true } | { ok: false; error: string };
 
@@ -126,24 +160,75 @@ export async function updateEmployeeProfile(
     return { ok: false, error: "Standard hours per week must be a non-negative number." };
   }
 
+  // -- Owner-only PTO + termination fields --------------------------------
+  // Non-Owners are forbidden from touching these fields server-side; the
+  // form hides the controls for them, but defence in depth.
+  const isOwner = hasPermission(ctx0, PERMISSIONS.ORG_OWNER);
+
+  // pto_cohort: only set when the caller is Owner AND sent the field
+  // explicitly. "" means "auto-detect" (clears the override).
+  let ptoCohort: string | null | undefined = undefined;
+  if (isOwner && payload.pto_cohort !== undefined) {
+    const raw = payload.pto_cohort.trim();
+    if (raw === "") {
+      ptoCohort = null;
+    } else if (PTO_COHORTS.includes(raw as PtoCohortInput)) {
+      ptoCohort = raw;
+    } else {
+      return { ok: false, error: "Invalid PTO classification." };
+    }
+  }
+
+  // termination_reason: same shape. "" clears it, valid keyword sets it.
+  let terminationReason: string | null | undefined = undefined;
+  if (isOwner && payload.termination_reason !== undefined) {
+    const raw = payload.termination_reason.trim();
+    if (raw === "") {
+      terminationReason = null;
+    } else if (TERMINATION_REASONS.includes(raw as TerminationReason)) {
+      terminationReason = raw;
+    } else {
+      return { ok: false, error: "Invalid termination reason." };
+    }
+  }
+
+  // termination_at: only meaningful alongside a reason. Stored as
+  // end-of-day UTC for the supplied calendar date.
+  let terminationAt: string | null | undefined = undefined;
+  if (isOwner && payload.termination_at !== undefined) {
+    const raw = payload.termination_at.trim();
+    if (raw === "") {
+      terminationAt = null;
+    } else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      terminationAt = `${raw}T23:59:59Z`;
+    } else {
+      return { ok: false, error: "Termination date must be a valid calendar date." };
+    }
+  }
+
+  const patch: Record<string, unknown> = {
+    full_name,
+    first_name: first,
+    last_name: last,
+    mobile_phone,
+    email,
+    title: positionLabel,
+    role: positionLabel,
+    location_id: locationId,
+    direct_manager_id: directManagerId,
+    birth_date,
+    employment_start_date,
+    employee_code,
+    fte: fteParsed,
+    standard_hours_per_week: standardHoursParsed,
+  };
+  if (ptoCohort !== undefined) patch.pto_cohort = ptoCohort;
+  if (terminationReason !== undefined) patch.termination_reason = terminationReason;
+  if (terminationAt !== undefined) patch.termination_at = terminationAt;
+
   const { error } = await supabase
     .from("employees")
-    .update({
-      full_name,
-      first_name: first,
-      last_name: last,
-      mobile_phone,
-      email,
-      title: positionLabel,
-      role: positionLabel,
-      location_id: locationId,
-      direct_manager_id: directManagerId,
-      birth_date,
-      employment_start_date,
-      employee_code,
-      fte: fteParsed,
-      standard_hours_per_week: standardHoursParsed,
-    })
+    .update(patch)
     .eq("id", id);
 
   if (error) return { ok: false, error: error.message };

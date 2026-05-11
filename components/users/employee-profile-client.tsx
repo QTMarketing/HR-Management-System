@@ -12,10 +12,13 @@ import {
   Hash,
   IdCard,
   KeyRound,
+  LogOut,
   Mail,
   MapPin,
+  Palmtree,
   Phone,
   Smartphone,
+  Sparkles,
   UserRound,
   Users as UsersIcon,
 } from "lucide-react";
@@ -56,6 +59,14 @@ export type EmployeeProfileInitial = {
   birth_date: string;
   employee_code: string;
   kiosk_code: string;
+  /** Lifecycle: active / inactive / archived (from `employees.status`). */
+  status?: string;
+  /** Optional PTO classification override ("" = auto). */
+  pto_cohort?: string;
+  /** Termination reason ("" = none / still employed). */
+  termination_reason?: string;
+  /** Termination effective date (YYYY-MM-DD, "" = none). */
+  termination_at?: string;
 };
 
 function toInputDate(iso: string | null | undefined): string {
@@ -163,6 +174,15 @@ export function EmployeeProfileClient({
   const [direct_manager_id, setDirectManagerId] = useState(initial.direct_manager_id);
   const [birth_date, setBirthDate] = useState(toInputDate(initial.birth_date));
   const [employee_code, setEmployeeCode] = useState(initial.employee_code);
+  // PTO policy + termination (Owner-only fields; we always carry the state
+  // even for non-owners so the readout reflects the saved value).
+  const [pto_cohort, setPtoCohort] = useState(initial.pto_cohort ?? "");
+  const [termination_reason, setTerminationReason] = useState(
+    initial.termination_reason ?? "",
+  );
+  const [termination_at, setTerminationAt] = useState(
+    toInputDate(initial.termination_at),
+  );
 
   const [orgOwnerLocal, setOrgOwnerLocal] = useState(isOrgOwner);
   useEffect(() => {
@@ -194,6 +214,11 @@ export function EmployeeProfileClient({
         direct_manager_id,
         birth_date,
         employee_code,
+        // Owner-only fields. Server ignores when caller lacks ORG_OWNER.
+        pto_cohort: pto_cohort as EmployeeProfilePayload["pto_cohort"],
+        termination_reason:
+          termination_reason as EmployeeProfilePayload["termination_reason"],
+        termination_at,
       };
       startTransition(async () => {
         const res = await updateEmployeeProfile(initial.id, payload);
@@ -219,6 +244,9 @@ export function EmployeeProfileClient({
       direct_manager_id,
       birth_date,
       employee_code,
+      pto_cohort,
+      termination_reason,
+      termination_at,
       router,
     ],
   );
@@ -678,6 +706,22 @@ export function EmployeeProfileClient({
             </div>
           </div>
 
+          {canSetOrgOwner ? (
+            <PtoLifecycleSection
+              canEdit={canEdit}
+              pending={pending}
+              ptoCohort={pto_cohort}
+              onChangePtoCohort={setPtoCohort}
+              terminationReason={termination_reason}
+              onChangeTerminationReason={setTerminationReason}
+              terminationAt={termination_at}
+              onChangeTerminationAt={setTerminationAt}
+              inputCls={inputCls}
+              labelCls={labelCls}
+              sectionCard={sectionCard}
+            />
+          ) : null}
+
           {canArchiveUser && !isArchivedProfile ? (
             <div className={sectionCard}>
               <h2 className="text-sm font-semibold text-slate-900">Archive user</h2>
@@ -1059,6 +1103,243 @@ export function EmployeeProfileClient({
           </div>
 
         </aside>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PTO classification + termination workflow (Owner-only section)
+// ---------------------------------------------------------------------------
+// HR's PTO policy needs two extra pieces of data per employee that don't
+// belong in the main "personal details" grid:
+//
+//   1. **PTO classification** — does this person follow the Office, Store
+//      Manager, or Store Employee vacation ladder? Leave on Auto to let
+//      the system infer from their job title.
+//   2. **Termination reason** — when an Owner moves the employee to
+//      inactive with a reason, the SQL trigger from migration 077
+//      automatically writes the right `termination_payout` or
+//      `termination_forfeit` ledger row.
+//
+// Both are sensitive enough that we hide the section from non-Owners
+// (defence in depth — the server action also ignores the fields).
+
+const PTO_COHORT_OPTIONS: Array<{
+  value: string;
+  label: string;
+  hint: string;
+}> = [
+  {
+    value: "",
+    label: "Auto-detect from role",
+    hint: "Default. The system infers Office / Store manager / Store employee from the job title.",
+  },
+  {
+    value: "office",
+    label: "Office",
+    hint: "Non-linear ladder: 1y→5d, 2y→10d, 5y→15d, 10y→20d. Vacation usable after the first year.",
+  },
+  {
+    value: "manager",
+    label: "Store manager",
+    hint: "5 days a year at 1y, +1 per year up to 10 days at 6y.",
+  },
+  {
+    value: "employee",
+    label: "Store employee",
+    hint: "5 days a year at 2y, +1 per year up to 10 days at 7y.",
+  },
+];
+
+const TERMINATION_REASON_OPTIONS: Array<{
+  value: string;
+  label: string;
+  hint: string;
+  payout: boolean;
+}> = [
+  {
+    value: "",
+    label: "Still employed",
+    hint: "Leave blank while the employee is active.",
+    payout: false,
+  },
+  {
+    value: "resignation",
+    label: "Resignation",
+    hint: "Voluntary departure — unused vacation is paid out.",
+    payout: true,
+  },
+  {
+    value: "layoff",
+    label: "Layoff",
+    hint: "Position eliminated — unused vacation is paid out.",
+    payout: true,
+  },
+  {
+    value: "retirement",
+    label: "Retirement",
+    hint: "Voluntary — unused vacation is paid out.",
+    payout: true,
+  },
+  {
+    value: "for_cause",
+    label: "Termination for cause",
+    hint: "Dismissed — unused vacation is forfeited per policy.",
+    payout: false,
+  },
+];
+
+function PtoLifecycleSection({
+  canEdit,
+  pending,
+  ptoCohort,
+  onChangePtoCohort,
+  terminationReason,
+  onChangeTerminationReason,
+  terminationAt,
+  onChangeTerminationAt,
+  inputCls,
+  labelCls,
+  sectionCard,
+}: {
+  canEdit: boolean;
+  pending: boolean;
+  ptoCohort: string;
+  onChangePtoCohort: (v: string) => void;
+  terminationReason: string;
+  onChangeTerminationReason: (v: string) => void;
+  terminationAt: string;
+  onChangeTerminationAt: (v: string) => void;
+  inputCls: string;
+  labelCls: string;
+  sectionCard: string;
+}) {
+  const selectedCohort = PTO_COHORT_OPTIONS.find((o) => o.value === ptoCohort) ?? PTO_COHORT_OPTIONS[0];
+  const selectedReason =
+    TERMINATION_REASON_OPTIONS.find((o) => o.value === terminationReason) ??
+    TERMINATION_REASON_OPTIONS[0];
+  const hasReason = Boolean(terminationReason);
+
+  return (
+    <div className={sectionCard}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5">
+          <span className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/70">
+            <Palmtree className="h-4 w-4" aria-hidden />
+          </span>
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">PTO &amp; lifecycle</h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Controls which vacation ladder this person earns on, and what
+              happens to their unused vacation if they leave.
+            </p>
+          </div>
+        </div>
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900 ring-1 ring-amber-200/80">
+          <Sparkles className="h-3 w-3" aria-hidden />
+          Owners only
+        </span>
+      </div>
+
+      <div className="mt-5 space-y-5">
+        {/* PTO classification */}
+        <div>
+          <label className={labelCls} htmlFor="pto_cohort">
+            <Briefcase className="h-3.5 w-3.5" aria-hidden />
+            PTO classification
+          </label>
+          <select
+            id="pto_cohort"
+            className={inputCls}
+            value={ptoCohort}
+            onChange={(e) => onChangePtoCohort(e.target.value)}
+            disabled={!canEdit || pending}
+          >
+            {PTO_COHORT_OPTIONS.map((o) => (
+              <option key={o.value || "auto"} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
+            {selectedCohort.hint}
+          </p>
+        </div>
+
+        <div className="border-t border-slate-100 pt-5">
+          {/* Termination reason */}
+          <div className="flex items-start gap-2.5">
+            <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
+              <LogOut className="h-3.5 w-3.5" aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-slate-900">
+                When this person leaves
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Setting a reason and marking the employee inactive will
+                automatically settle their unused vacation per policy.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className={labelCls} htmlFor="termination_reason">
+                Reason
+              </label>
+              <select
+                id="termination_reason"
+                className={inputCls}
+                value={terminationReason}
+                onChange={(e) => onChangeTerminationReason(e.target.value)}
+                disabled={!canEdit || pending}
+              >
+                {TERMINATION_REASON_OPTIONS.map((o) => (
+                  <option key={o.value || "none"} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls} htmlFor="termination_at">
+                <CalendarDays className="h-3.5 w-3.5" aria-hidden />
+                Effective date
+              </label>
+              <input
+                id="termination_at"
+                type="date"
+                className={inputCls}
+                value={terminationAt}
+                onChange={(e) => onChangeTerminationAt(e.target.value)}
+                disabled={!canEdit || pending || !hasReason}
+                placeholder="—"
+              />
+              {!hasReason ? (
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Pick a reason first.
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          {hasReason ? (
+            <div
+              className={`mt-3 rounded-lg border px-3 py-2 text-[11px] leading-relaxed ${
+                selectedReason.payout
+                  ? "border-emerald-200 bg-emerald-50/70 text-emerald-900"
+                  : "border-amber-200 bg-amber-50/70 text-amber-900"
+              }`}
+            >
+              <span className="font-semibold">
+                {selectedReason.payout ? "Pay-out: " : "Forfeit: "}
+              </span>
+              {selectedReason.hint}
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );

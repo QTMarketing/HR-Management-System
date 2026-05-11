@@ -36,6 +36,10 @@ const PROFILE_SELECT = [
   "employee_code",
   "archived_at",
   "rehired_at",
+  // PTO policy fields (Owner-only edit; safe to read for all viewers).
+  "pto_cohort",
+  "termination_reason",
+  "termination_at",
 ].join(",");
 
 type ProfileRow = {
@@ -61,6 +65,9 @@ type ProfileRow = {
   employee_code: string | null;
   archived_at: string | null;
   rehired_at: string | null;
+  pto_cohort: string | null;
+  termination_reason: string | null;
+  termination_at: string | null;
 };
 
 /** Compact numeric id for display (Connecteam-style), derived from UUID. */
@@ -193,6 +200,10 @@ export default async function EmployeeProfilePage({
     birth_date: rec.birth_date ? String(rec.birth_date) : "",
     employee_code: rec.employee_code ?? "",
     kiosk_code: rec.kiosk_code ?? "",
+    status: employeeStatus,
+    pto_cohort: rec.pto_cohort ?? "",
+    termination_reason: rec.termination_reason ?? "",
+    termination_at: rec.termination_at ? String(rec.termination_at).slice(0, 10) : "",
   };
 
   const [ptoBalances, ptoLedger] = await Promise.all([
