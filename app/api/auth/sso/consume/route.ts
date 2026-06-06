@@ -85,9 +85,8 @@ export async function GET(request: NextRequest) {
   });
 
   const { error: otpErr } = await supabase.auth.verifyOtp({
-    type: "email",
-    email,
-    token: hashedToken,
+    type: "magiclink",
+    token_hash: hashedToken,
   });
 
   if (otpErr) {
