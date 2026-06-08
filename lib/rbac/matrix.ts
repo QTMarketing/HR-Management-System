@@ -22,16 +22,17 @@ export function normalizeRoleLabel(raw: string | null | undefined): AppRoleKey {
   return "employee";
 }
 
+/** Base employee: self-serve dashboard, clock in/out, and read-only schedule — no team ops feed or labor KPIs. */
 const employee: Permission[] = [
   PERMISSIONS.DASHBOARD_VIEW,
-  PERMISSIONS.ACTIVITY_VIEW,
   PERMISSIONS.TIME_CLOCK_VIEW,
   PERMISSIONS.SCHEDULE_VIEW,
-  PERMISSIONS.LABOR_REPORT_VIEW,
 ];
 
 const shiftLead: Permission[] = [
   ...employee,
+  PERMISSIONS.ACTIVITY_VIEW,
+  PERMISSIONS.LABOR_REPORT_VIEW,
   PERMISSIONS.TIME_CLOCK_MANAGE,
   PERMISSIONS.SCHEDULE_EDIT,
 ];

@@ -5,6 +5,9 @@ import { usePathname } from "next/navigation";
 import { X } from "lucide-react";
 import { AppHeader } from "@/components/dashboard/app-header";
 import { AppSidebar } from "@/components/dashboard/app-sidebar";
+import { EmployeeBottomNav } from "@/components/dashboard/employee-bottom-nav";
+import { EmployeePortalHeader } from "@/components/dashboard/employee-portal-header";
+import { EmployeePortalNav } from "@/components/dashboard/employee-portal-nav";
 import { CommandPalette } from "@/components/dashboard/command-palette";
 import { DashboardNavList, type DashboardNavItem } from "@/components/dashboard/dashboard-nav-list";
 import { SidebarAccountFooter } from "@/components/dashboard/sidebar-account-footer";
@@ -35,6 +38,8 @@ type Props = {
   userEmail: string;
   header: HeaderProps;
   mvpDemoRibbon?: boolean;
+  /** Frontline employee: bottom nav, no sidebar, simplified header. */
+  employeePortalMode?: boolean;
 };
 
 export function DashboardShell({
@@ -46,6 +51,7 @@ export function DashboardShell({
   userEmail,
   header,
   mvpDemoRibbon = false,
+  employeePortalMode = false,
 }: Props) {
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -54,33 +60,63 @@ export function DashboardShell({
     setMobileNavOpen(false);
   }, [pathname]);
 
+  const mainPadding = employeePortalMode
+    ? "mx-auto w-full max-w-lg px-4 pb-24 pt-4 sm:max-w-3xl sm:px-6 md:pb-8"
+    : "mx-auto w-full max-w-[1600px] px-4 sm:px-6 lg:px-8";
+
   return (
     <>
       <div className="flex min-h-screen bg-slate-50">
-        <AppSidebar
-          navItems={navItems}
-          signedIn={signedIn}
-          myProfileHref={myProfileHref}
-          profileUnlinked={profileUnlinked}
-          userEmail={userEmail}
-        />
+        {employeePortalMode ? null : (
+          <AppSidebar
+            navItems={navItems}
+            signedIn={signedIn}
+            myProfileHref={myProfileHref}
+            profileUnlinked={profileUnlinked}
+            userEmail={userEmail}
+          />
+        )}
         <div className="flex min-w-0 flex-1 flex-col">
           {mvpDemoRibbon ? (
             <div className="border-b border-amber-500/50 bg-amber-950 px-4 py-1.5 text-center text-[11px] font-semibold tracking-wide text-amber-50">
               Preview build — relaxed access controls; not for production or sensitive data
             </div>
           ) : null}
-          <AppHeader
-            {...header}
-            onMobileNavOpen={() => setMobileNavOpen(true)}
-          />
+          {employeePortalMode ? (
+            <>
+              <EmployeePortalHeader
+                userEmail={header.userEmail}
+                displayName={header.displayName}
+                signedIn={header.signedIn}
+                myProfileHref={header.myProfileHref}
+                profileUnlinked={header.profileUnlinked}
+                rbacProfileHint={header.rbacProfileHint}
+                notifications={header.notifications}
+                unreadNotificationCount={header.unreadNotificationCount}
+              />
+              <EmployeePortalNav
+                links={navItems.map((n) => ({ href: n.href, label: n.label }))}
+              />
+            </>
+          ) : (
+            <AppHeader
+              {...header}
+              onMobileNavOpen={() => setMobileNavOpen(true)}
+            />
+          )}
           <main className="flex-1 py-6">
-            <div className="mx-auto w-full max-w-[1600px] px-4 sm:px-6 lg:px-8">{children}</div>
+            <div className={mainPadding}>{children}</div>
           </main>
         </div>
       </div>
 
-      {mobileNavOpen ? (
+      {employeePortalMode ? (
+        <EmployeeBottomNav
+          links={navItems.map((n) => ({ href: n.href, label: n.label }))}
+        />
+      ) : null}
+
+      {!employeePortalMode && mobileNavOpen ? (
         <div className="fixed inset-0 z-[60] md:hidden">
           <button
             type="button"
@@ -122,7 +158,7 @@ export function DashboardShell({
         </div>
       ) : null}
 
-      <CommandPalette />
+      {employeePortalMode ? null : <CommandPalette />}
     </>
   );
 }

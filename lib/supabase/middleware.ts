@@ -57,7 +57,8 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/api/auth/sso/consume") ||
     pathname === "/set-password" ||
     pathname === "/forgot-password" ||
-    pathname.startsWith("/api/internal/assistant/");
+    pathname.startsWith("/api/internal/assistant/") ||
+    pathname.startsWith("/api/cron/");
 
   if (!user && !isPublic) {
     const loginUrl = request.nextUrl.clone();

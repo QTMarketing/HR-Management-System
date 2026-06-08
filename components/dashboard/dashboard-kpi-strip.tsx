@@ -88,7 +88,7 @@ const SHEET_COPY: Record<
   avg_weekly_hours: {
     title: "Average weekly hours",
     description: "Per-employee averages roll up from time logs.",
-    empty: "Open the labor report for a downloadable breakdown by employee.",
+    empty: "Open Employee records for a downloadable breakdown by employee.",
   },
 };
 
@@ -308,10 +308,10 @@ export function DashboardKpiStrip({
               <BarChart3 className="h-10 w-10 text-violet-500" aria-hidden />
               <p className="text-sm font-medium text-slate-800">{copy.empty}</p>
               <Link
-                href="/reports/labor"
+                href="/reports/employee-records"
                 className="text-sm font-semibold text-orange-600 underline-offset-2 hover:underline"
               >
-                Open labor report →
+                Open employee records →
               </Link>
             </div>
           ) : (

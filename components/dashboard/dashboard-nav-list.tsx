@@ -26,6 +26,7 @@ const ICONS: Record<string, ComponentType<{ className?: string; "aria-hidden"?: 
   "/activity": Activity,
   "/time-clock": Clock,
   "/schedule": CalendarRange,
+  "/reports/employee-records": BarChart2,
   "/reports/labor": BarChart2,
 };
 

@@ -19,6 +19,7 @@
 import { ChevronDown, Globe2, Loader2, Save, Store } from "lucide-react";
 import { useCallback, useId, useMemo, useState, useTransition } from "react";
 import {
+  clearLocationPayrollPolicy,
   getLocationPayrollPolicy,
   saveLocationPayrollPolicy,
   updateGlobalPayrollPolicy,
@@ -39,6 +40,11 @@ export type PayrollRulesLocationOption = {
 
 const GLOBAL_VALUE = "__global__";
 
+const FIELD_INPUT_CLASS =
+  "h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500";
+
+const FIELD_LABEL_CLASS = "mb-1.5 block min-h-10 text-xs font-semibold leading-snug text-slate-700";
+
 type Baseline = PayrollRulesCardInitial & {
   /** "location" = explicit override row exists; "global" = falling back. */
   source: "location" | "global" | "fallback";
@@ -50,6 +56,8 @@ type Props = {
   canEdit: boolean;
   /** Locations available for per-store overrides. Empty = no selector rendered. */
   locations?: PayrollRulesLocationOption[];
+  /** Store ids that already have an explicit override row. */
+  overrideLocationIds?: string[];
 };
 
 function parseNumber(raw: string): number | null {
@@ -65,7 +73,13 @@ function eqNum(a: number | null, b: number | null): boolean {
   return a === b;
 }
 
-export function PayrollRulesCard({ initial, canEdit, locations = [] }: Props) {
+export function PayrollRulesCard({
+  initial,
+  canEdit,
+  locations = [],
+  overrideLocationIds = [],
+}: Props) {
+  const overrideSet = useMemo(() => new Set(overrideLocationIds), [overrideLocationIds]);
   const [scope, setScope] = useState<string>(GLOBAL_VALUE);
   const [scopeLoading, setScopeLoading] = useState(false);
 
@@ -194,8 +208,8 @@ export function PayrollRulesCard({ initial, canEdit, locations = [] }: Props) {
       setSavedAt(updatedAt);
       setSuccess(
         isLocationScope
-          ? `Saved override for ${selectedLocationName ?? "this store"}.`
-          : "Saved global rules. They apply to all stores without an override.",
+          ? `Custom rules saved for ${selectedLocationName ?? "this store"}.`
+          : "Company-wide rules saved. They apply to every store without custom rules.",
       );
     });
   }
@@ -203,6 +217,25 @@ export function PayrollRulesCard({ initial, canEdit, locations = [] }: Props) {
   const inputsDisabled = !canEdit || pending || scopeLoading;
   const saveDisabled = inputsDisabled || !isDirty;
   const showFallbackHint = isLocationScope && baseline.source !== "location";
+  const hasExplicitOverride = isLocationScope && baseline.source === "location";
+
+  function clearOverride() {
+    if (!canEdit || !isLocationScope || pending) return;
+    setError(null);
+    setSuccess(null);
+    startTransition(async () => {
+      const r = await clearLocationPayrollPolicy(scope);
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      const globalBaseline: Baseline = { ...initial, source: "global" };
+      applyBaseline(globalBaseline);
+      setSuccess(
+        `Custom rules removed for ${selectedLocationName ?? "this store"}. Company-wide rules apply now.`,
+      );
+    });
+  }
 
   return (
     <section className="rounded-2xl border border-slate-200/80 bg-white shadow-sm">
@@ -211,17 +244,17 @@ export function PayrollRulesCard({ initial, canEdit, locations = [] }: Props) {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <h2 className="text-base font-semibold text-slate-900">
-                Payroll &amp; Overtime Rules
+                Payroll &amp; overtime
               </h2>
               <p className="mt-1 max-w-2xl text-sm text-slate-600">
-                Set how regular and overtime hours are calculated in the timesheet and payroll exports.
-                Pick <strong>All Locations (Default)</strong> to edit the company-wide rules, or pick a
-                specific store to add an override.
+                Define when regular hours become overtime in timesheets and payroll exports. Use{" "}
+                <strong>All locations</strong> for company-wide rules, or choose a store to apply custom
+                rules for that location only.
               </p>
             </div>
             {savedAt ? (
-              <p className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                Updated {new Date(savedAt).toLocaleString()}
+              <p className="shrink-0 text-xs text-slate-500">
+                Last saved {new Date(savedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
               </p>
             ) : null}
           </div>
@@ -229,7 +262,7 @@ export function PayrollRulesCard({ initial, canEdit, locations = [] }: Props) {
           {locations.length > 0 ? (
             <div className="mt-4">
               <label htmlFor={scopeId} className="text-xs font-semibold text-slate-700">
-                Select Location to Edit Policy
+                Apply rules to
               </label>
               <div className="relative mt-1.5 max-w-md">
                 <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
@@ -246,10 +279,11 @@ export function PayrollRulesCard({ initial, canEdit, locations = [] }: Props) {
                   disabled={inputsDisabled}
                   className="h-10 w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white pl-9 pr-10 text-sm text-slate-900 shadow-sm focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                 >
-                  <option value={GLOBAL_VALUE}>All Locations (Default)</option>
+                  <option value={GLOBAL_VALUE}>All locations (default)</option>
                   {locations.map((l) => (
                     <option key={l.id} value={l.id}>
                       {l.name}
+                      {overrideSet.has(l.id) ? " · Custom rules" : ""}
                     </option>
                   ))}
                 </select>
@@ -259,9 +293,9 @@ export function PayrollRulesCard({ initial, canEdit, locations = [] }: Props) {
                 />
               </div>
               {showFallbackHint ? (
-                <p className="mt-2 text-[11px] text-slate-500">
-                  No override yet for <strong>{selectedLocationName}</strong> — you&apos;re viewing the
-                  global defaults. Save to create a store-specific policy.
+                <p className="mt-2 text-xs text-slate-500">
+                  <strong>{selectedLocationName}</strong> uses company-wide rules today. Save changes here
+                  to create store-specific rules.
                 </p>
               ) : null}
             </div>
@@ -269,7 +303,7 @@ export function PayrollRulesCard({ initial, canEdit, locations = [] }: Props) {
 
           {!canEdit ? (
             <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-              You can view these settings, but only Organization Owners can change them.
+              View only. Organization owners can edit these settings.
             </p>
           ) : null}
 
@@ -290,11 +324,11 @@ export function PayrollRulesCard({ initial, canEdit, locations = [] }: Props) {
         </div>
 
         <div className="border-t border-slate-100 bg-slate-50/40 px-5 py-4 sm:px-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:flex-wrap lg:items-end lg:justify-end">
-            <label htmlFor={weeklyId} className="flex w-full flex-col gap-1.5 lg:w-44">
-              <span className="text-xs font-semibold text-slate-700">
-                Weekly OT threshold (h)
-              </span>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12 lg:items-end">
+            <div className="sm:col-span-1 lg:col-span-3">
+              <label htmlFor={weeklyId} className={FIELD_LABEL_CLASS}>
+                Weekly overtime after (hours)
+              </label>
               <input
                 id={weeklyId}
                 type="number"
@@ -305,19 +339,16 @@ export function PayrollRulesCard({ initial, canEdit, locations = [] }: Props) {
                 value={weekly}
                 onChange={(e) => setWeekly(e.target.value)}
                 disabled={inputsDisabled}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                className={FIELD_INPUT_CLASS}
                 placeholder="40"
                 aria-describedby={`${weeklyId}-help`}
               />
-              <span id={`${weeklyId}-help`} className="text-[11px] text-slate-500">
-                Standard weekly threshold is 40 hours.
-              </span>
-            </label>
+            </div>
 
-            <label htmlFor={dailyId} className="flex w-full flex-col gap-1.5 lg:w-48">
-              <span className="text-xs font-semibold text-slate-700">
-                Daily OT threshold (h, optional)
-              </span>
+            <div className="sm:col-span-1 lg:col-span-3">
+              <label htmlFor={dailyId} className={FIELD_LABEL_CLASS}>
+                Daily overtime after (hours)
+              </label>
               <input
                 id={dailyId}
                 type="number"
@@ -328,17 +359,16 @@ export function PayrollRulesCard({ initial, canEdit, locations = [] }: Props) {
                 value={daily}
                 onChange={(e) => setDaily(e.target.value)}
                 disabled={inputsDisabled}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
-                placeholder="(blank = none)"
+                className={FIELD_INPUT_CLASS}
+                placeholder="Not used"
                 aria-describedby={`${dailyId}-help`}
               />
-              <span id={`${dailyId}-help`} className="text-[11px] text-slate-500">
-                Leave blank to disable.
-              </span>
-            </label>
+            </div>
 
-            <label htmlFor={multId} className="flex w-full flex-col gap-1.5 lg:w-40">
-              <span className="text-xs font-semibold text-slate-700">OT multiplier</span>
+            <div className="sm:col-span-1 lg:col-span-3">
+              <label htmlFor={multId} className={FIELD_LABEL_CLASS}>
+                Overtime rate
+              </label>
               <input
                 id={multId}
                 type="number"
@@ -349,20 +379,17 @@ export function PayrollRulesCard({ initial, canEdit, locations = [] }: Props) {
                 value={mult}
                 onChange={(e) => setMult(e.target.value)}
                 disabled={inputsDisabled}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                className={FIELD_INPUT_CLASS}
                 placeholder="1.5"
                 aria-describedby={`${multId}-help`}
               />
-              <span id={`${multId}-help`} className="text-[11px] text-slate-500">
-                1.5 = time-and-a-half.
-              </span>
-            </label>
+            </div>
 
-            <div className="flex items-end pb-[1.4rem] lg:pb-[1.4rem]">
+            <div className="flex flex-wrap items-end justify-start gap-2 sm:col-span-2 lg:col-span-3 lg:justify-end">
               <button
                 type="submit"
                 disabled={saveDisabled}
-                className={`${PRIMARY_ORANGE_CTA} inline-flex min-w-[8.5rem] items-center justify-center gap-2 px-4 py-2 text-sm`}
+                className={`${PRIMARY_ORANGE_CTA} inline-flex h-10 min-w-[8.5rem] items-center justify-center gap-2 px-4 text-sm`}
                 title={
                   !isDirty && canEdit && !pending
                     ? "Make a change first to enable saving."
@@ -377,17 +404,39 @@ export function PayrollRulesCard({ initial, canEdit, locations = [] }: Props) {
                 ) : (
                   <>
                     <Save className="h-4 w-4" aria-hidden />
-                    {isLocationScope ? "Save store rules" : "Save global rules"}
+                    {isLocationScope ? "Save store rules" : "Save company rules"}
                   </>
                 )}
               </button>
+              {isLocationScope && hasExplicitOverride && canEdit ? (
+                <button
+                  type="button"
+                  disabled={pending || scopeLoading}
+                  onClick={clearOverride}
+                  className="inline-flex h-10 min-w-[8.5rem] items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Use company rules
+                </button>
+              ) : null}
             </div>
           </div>
 
-          <p className="mt-3 text-[11px] text-slate-500 lg:text-right">
+          <div className="mt-1.5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12">
+            <p id={`${weeklyId}-help`} className="text-xs leading-snug text-slate-500 sm:col-span-1 lg:col-span-3">
+              Most employers use 40 hours per week.
+            </p>
+            <p id={`${dailyId}-help`} className="text-xs leading-snug text-slate-500 sm:col-span-1 lg:col-span-3">
+              Optional. Leave blank if daily overtime does not apply.
+            </p>
+            <p id={`${multId}-help`} className="text-xs leading-snug text-slate-500 sm:col-span-1 lg:col-span-3">
+              1.5 is time-and-a-half pay.
+            </p>
+          </div>
+
+          <p className="mt-4 text-xs text-slate-500">
             {isLocationScope
-              ? `Override applies only to ${selectedLocationName ?? "this store"}. Other stores keep using the global rules.`
-              : "These rules apply to every store that doesn't have its own override."}
+              ? `These rules apply only to ${selectedLocationName ?? "this store"}. All other stores follow company-wide rules.`
+              : "Company-wide rules apply to every store unless that store has custom rules."}
           </p>
         </div>
       </form>

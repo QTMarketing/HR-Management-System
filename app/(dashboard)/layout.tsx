@@ -9,6 +9,10 @@ import {
   type LocationRow,
 } from "@/lib/dashboard/resolve-location";
 import { getRbacContext } from "@/lib/rbac/context";
+import {
+  buildEmployeePortalNav,
+  isEmployeePortalUser,
+} from "@/lib/rbac/employee-portal";
 import { DASHBOARD_NAV, filterNavForRbac } from "@/lib/rbac/nav";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -30,11 +34,30 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
-  const navItems = filterNavForRbac(rbac, DASHBOARD_NAV).map(({ href, label, group }) => ({
-    href,
-    label,
-    group: group ?? "main",
-  }));
+  let profileEmployeeId = rbac.employeeId;
+  const emailNormEarly = user?.email?.trim().toLowerCase() ?? "";
+  if (!profileEmployeeId && emailNormEarly) {
+    const { data: empLinkEarly } = await supabase
+      .from("employees")
+      .select("id")
+      .ilike("email", emailNormEarly)
+      .maybeSingle();
+    profileEmployeeId = (empLinkEarly as { id?: string } | null)?.id ?? null;
+  }
+  const myProfileHrefEarly = profileEmployeeId ? `/users/${profileEmployeeId}` : null;
+
+  const employeePortalMode = isEmployeePortalUser(rbac);
+  const navItems = employeePortalMode
+    ? buildEmployeePortalNav(myProfileHrefEarly).map(({ href, label, group }) => ({
+        href,
+        label,
+        group,
+      }))
+    : filterNavForRbac(rbac, DASHBOARD_NAV).map(({ href, label, group }) => ({
+        href,
+        label,
+        group: group ?? "main",
+      }));
 
   const { data: locRows } = await supabase
     .from("locations")
@@ -49,24 +72,24 @@ export default async function DashboardLayout({
     })),
   );
 
+  let employeeHomeLocationId: string | null = null;
+  if (employeePortalMode && profileEmployeeId) {
+    const { data: empLoc } = await supabase
+      .from("employees")
+      .select("location_id")
+      .eq("id", profileEmployeeId)
+      .maybeSingle();
+    employeeHomeLocationId = (empLoc as { location_id?: string | null } | null)?.location_id ?? null;
+  }
+
   const cookieStore = await cookies();
-  const selectedLocationId = resolveSelectedLocationId(
-    locations,
-    cookieStore.get("hr_location_id")?.value,
-  );
+  const selectedLocationId = employeePortalMode && employeeHomeLocationId
+    ? employeeHomeLocationId
+    : resolveSelectedLocationId(locations, cookieStore.get("hr_location_id")?.value);
 
   let displayName = displayNameFromUser(user);
-  let profileEmployeeId = rbac.employeeId;
+  const myProfileHref = myProfileHrefEarly;
   const emailNorm = user?.email?.trim().toLowerCase() ?? "";
-  if (!profileEmployeeId && emailNorm) {
-    const { data: empLink } = await supabase
-      .from("employees")
-      .select("id")
-      .ilike("email", emailNorm)
-      .maybeSingle();
-    profileEmployeeId = (empLink as { id?: string } | null)?.id ?? null;
-  }
-  const myProfileHref = profileEmployeeId ? `/users/${profileEmployeeId}` : null;
   const profileUnlinked = Boolean(user) && Boolean(emailNorm) && !myProfileHref;
 
   let notificationItems: NotificationBellItem[] = [];
@@ -136,6 +159,7 @@ export default async function DashboardLayout({
       profileUnlinked={profileUnlinked}
       userEmail={user?.email ?? ""}
       mvpDemoRibbon={mvpDemoRibbon}
+      employeePortalMode={employeePortalMode}
       header={{
         userEmail: user?.email ?? "",
         displayName,

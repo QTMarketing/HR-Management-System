@@ -3,6 +3,7 @@
 import { useId, useMemo, useState, useTransition } from "react";
 import { Banknote, Loader2 } from "lucide-react";
 import { runPtoMonthlyVacationCashout } from "@/app/actions/pto-monthly-cashout";
+import { logManualPtoAutomationRun } from "@/app/actions/pto-automation";
 import { PRIMARY_ORANGE_CTA } from "@/lib/ui/primary-orange-cta";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
@@ -44,6 +45,15 @@ type Summary = {
   hours_paid_out: number;
 };
 
+function formatEffectiveAt(iso: string): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  } catch {
+    return iso;
+  }
+}
+
 export function PtoMonthlyCashoutCard() {
   const now = useMemo(() => new Date(), []);
   const [year, setYear] = useState<number>(now.getFullYear());
@@ -68,17 +78,30 @@ export function PtoMonthlyCashoutCard() {
   function runConfirmed() {
     startTransition(async () => {
       const r = await runPtoMonthlyVacationCashout(year, month);
+      const periodKey = `${year}-${String(month).padStart(2, "0")}`;
       if (!r.ok) {
+        await logManualPtoAutomationRun({
+          jobType: "monthly_cashout",
+          periodKey,
+          status: "failed",
+          summary: {},
+          errorMessage: r.error,
+        });
         setError(r.error);
         setConfirmOpen(false);
         return;
       }
+      await logManualPtoAutomationRun({
+        jobType: "monthly_cashout",
+        periodKey,
+        status: "success",
+        summary: r.summary as unknown as Record<string, unknown>,
+      });
       setSummary(r.summary);
       setConfirmOpen(false);
     });
   }
 
-  // 1-indexed month → long-form name for the modal copy.
   const monthLong = MONTHS_LONG[Math.max(0, Math.min(11, month - 1))];
 
   return (
@@ -86,13 +109,10 @@ export function PtoMonthlyCashoutCard() {
       <form onSubmit={onSubmit} noValidate>
         <div className="px-5 pb-5 pt-5 sm:px-6 sm:pt-6">
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-slate-900">
-              Monthly vacation cash-out
-            </h2>
+            <h2 className="text-base font-semibold text-slate-900">Monthly vacation payout</h2>
             <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Convert unused vacation time into a payout entry for the selected month&apos;s payroll.
-              You can safely click this multiple times; it will not duplicate payouts for the same
-              month.
+              Convert unused vacation into a payroll payout for the selected month. Safe to run again —
+              duplicate payouts for the same month are prevented.
             </p>
           </div>
 
@@ -106,40 +126,32 @@ export function PtoMonthlyCashoutCard() {
           ) : null}
 
           {summary ? (
-            <div className="mt-4 grid gap-3 sm:grid-cols-4">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Month
-                </p>
+                <p className="text-xs font-semibold text-slate-500">Pay period</p>
                 <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
-                  {summary.year}-{String(summary.month).padStart(2, "0")}
+                  {MONTHS_LONG[Math.max(0, Math.min(11, summary.month - 1))]} {summary.year}
                 </p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Effective at
-                </p>
+                <p className="text-xs font-semibold text-slate-500">Effective date</p>
                 <p
                   className="mt-1 truncate text-sm font-semibold text-slate-900"
                   title={summary.effective_at}
                 >
-                  {summary.effective_at || "—"}
+                  {formatEffectiveAt(summary.effective_at)}
                 </p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Payout rows inserted
-                </p>
+                <p className="text-xs font-semibold text-slate-500">Employees paid out</p>
                 <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
                   {summary.payouts_inserted}
                 </p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Hours paid out
-                </p>
+                <p className="text-xs font-semibold text-slate-500">Hours paid out</p>
                 <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
-                  {summary.hours_paid_out.toFixed(1)}h
+                  {summary.hours_paid_out.toFixed(1)} h
                 </p>
               </div>
             </div>
@@ -147,9 +159,12 @@ export function PtoMonthlyCashoutCard() {
         </div>
 
         <div className="border-t border-slate-100 bg-slate-50/40 px-5 py-4 sm:px-6">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end">
-            <label htmlFor={yearId} className="flex w-full flex-col gap-1.5 sm:w-32">
-              <span className="text-xs font-semibold text-slate-700">Year</span>
+          <p className="text-xs text-slate-500">
+            Run after your payroll cut-off for the month, once vacation balances are final.
+          </p>
+          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end">
+            <label htmlFor={yearId} className="w-full sm:w-36">
+              <span className="mb-1.5 block text-xs font-semibold text-slate-700">Year</span>
               <input
                 id={yearId}
                 type="number"
@@ -159,50 +174,43 @@ export function PtoMonthlyCashoutCard() {
                 value={year}
                 onChange={(e) => setYear(Number(e.target.value))}
                 disabled={disabled}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
               />
             </label>
-            <label htmlFor={monthId} className="flex w-full flex-col gap-1.5 sm:w-32">
-              <span className="text-xs font-semibold text-slate-700">Month</span>
+            <label htmlFor={monthId} className="w-full sm:w-44">
+              <span className="mb-1.5 block text-xs font-semibold text-slate-700">Month</span>
               <select
                 id={monthId}
                 value={month}
                 onChange={(e) => setMonth(Number(e.target.value))}
                 disabled={disabled}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
               >
                 {MONTHS.map((m, idx) => (
                   <option key={m} value={idx + 1}>
-                    {m}
+                    {MONTHS_LONG[idx]}
                   </option>
                 ))}
               </select>
             </label>
-            <div className="flex items-end pb-[0.05rem]">
-              <button
-                type="submit"
-                disabled={disabled}
-                className={`${PRIMARY_ORANGE_CTA} inline-flex min-w-[10rem] items-center justify-center gap-2 px-4 py-2 text-sm`}
-              >
+            <button
+              type="submit"
+              disabled={disabled}
+              className={`${PRIMARY_ORANGE_CTA} inline-flex h-10 min-w-[10rem] shrink-0 items-center justify-center gap-2 px-4 text-sm`}
+            >
                 {pending ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                    Running…
+                    Processing…
                   </>
                 ) : (
                   <>
                     <Banknote className="h-4 w-4" aria-hidden />
-                    Run cash-out
+                    Process payout
                   </>
                 )}
               </button>
-            </div>
           </div>
-          {!summary && !error ? (
-            <p className="mt-3 text-[11px] text-slate-500 sm:text-right">
-              Tip: Run this right after your payroll cut-off date to cash out any unused vacation time.
-            </p>
-          ) : null}
         </div>
       </form>
 
@@ -213,15 +221,14 @@ export function PtoMonthlyCashoutCard() {
         }}
         onConfirm={runConfirmed}
         pending={pending}
-        title="Confirm Ledger Update"
+        title="Process monthly vacation payout?"
         description={
           <>
-            You are about to process the{" "}
+            This will create payroll payout entries for unused vacation in{" "}
             <strong className="font-semibold">
-              {monthLong} {year} vacation cash-out
-            </strong>
-            . This will permanently update the ledger for all eligible employees. Are you sure you want
-            to proceed?
+              {monthLong} {year}
+            </strong>{" "}
+            for all eligible employees. This cannot be undone from this screen.
           </>
         }
       />

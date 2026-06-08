@@ -3,6 +3,7 @@
 import { useId, useMemo, useState, useTransition } from "react";
 import { Loader2, RefreshCcw } from "lucide-react";
 import { runPtoYearRollover } from "@/app/actions/pto-rollover";
+import { logManualPtoAutomationRun } from "@/app/actions/pto-automation";
 import { PRIMARY_ORANGE_CTA } from "@/lib/ui/primary-orange-cta";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
@@ -12,6 +13,15 @@ type Summary = {
   grants_inserted: number;
   forfeits_inserted: number;
 };
+
+function formatEffectiveAt(iso: string): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  } catch {
+    return iso;
+  }
+}
 
 export function PtoRolloverCard() {
   const thisYear = useMemo(() => new Date().getFullYear(), []);
@@ -27,7 +37,6 @@ export function PtoRolloverCard() {
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (pending) return;
-    // Don't fire the action; show the safety modal first.
     setError(null);
     setSummary(null);
     setConfirmOpen(true);
@@ -37,10 +46,23 @@ export function PtoRolloverCard() {
     startTransition(async () => {
       const r = await runPtoYearRollover(year);
       if (!r.ok) {
+        await logManualPtoAutomationRun({
+          jobType: "year_rollover",
+          periodKey: String(year),
+          status: "failed",
+          summary: {},
+          errorMessage: r.error,
+        });
         setError(r.error);
         setConfirmOpen(false);
         return;
       }
+      await logManualPtoAutomationRun({
+        jobType: "year_rollover",
+        periodKey: String(year),
+        status: "success",
+        summary: r.summary as unknown as Record<string, unknown>,
+      });
       setSummary(r.summary);
       setConfirmOpen(false);
     });
@@ -51,11 +73,11 @@ export function PtoRolloverCard() {
       <form onSubmit={onSubmit} noValidate>
         <div className="px-5 pb-5 pt-5 sm:px-6 sm:pt-6">
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-slate-900">Annual PTO rollover</h2>
+            <h2 className="text-base font-semibold text-slate-900">Year-end time off reset</h2>
             <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Process the end-of-year time off reset. This will forfeit any unused balances from the
-              selected year and issue new grants for the upcoming year. You can safely click this
-              multiple times if needed; the system is smart enough not to duplicate grants or forfeits.
+              Process the annual reset for all eligible employees: clear unused balances from the selected
+              year and grant new time off for the upcoming year. Safe to run again — duplicate entries are
+              prevented.
             </p>
           </div>
 
@@ -69,34 +91,28 @@ export function PtoRolloverCard() {
           ) : null}
 
           {summary ? (
-            <div className="mt-4 grid gap-3 sm:grid-cols-4">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Year</p>
+                <p className="text-xs font-semibold text-slate-500">Plan year</p>
                 <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">{summary.year}</p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Effective at
-                </p>
+                <p className="text-xs font-semibold text-slate-500">Effective date</p>
                 <p
                   className="mt-1 truncate text-sm font-semibold text-slate-900"
                   title={summary.effective_at}
                 >
-                  {summary.effective_at || "—"}
+                  {formatEffectiveAt(summary.effective_at)}
                 </p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Grants inserted
-                </p>
+                <p className="text-xs font-semibold text-slate-500">New grants posted</p>
                 <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
                   {summary.grants_inserted}
                 </p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Forfeits inserted
-                </p>
+                <p className="text-xs font-semibold text-slate-500">Balances reset</p>
                 <p className="mt-1 text-sm font-bold tabular-nums text-slate-900">
                   {summary.forfeits_inserted}
                 </p>
@@ -106,9 +122,13 @@ export function PtoRolloverCard() {
         </div>
 
         <div className="border-t border-slate-100 bg-slate-50/40 px-5 py-4 sm:px-6">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end">
-            <label htmlFor={yearId} className="flex w-full flex-col gap-1.5 sm:w-32">
-              <span className="text-xs font-semibold text-slate-700">Year</span>
+          <p className="text-xs text-slate-500">
+            Run at the start of your new calendar year after you have confirmed your PTO policy for the
+            year.
+          </p>
+          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end">
+            <label htmlFor={yearId} className="w-full sm:w-36">
+              <span className="mb-1.5 block text-xs font-semibold text-slate-700">Plan year</span>
               <input
                 id={yearId}
                 type="number"
@@ -118,34 +138,27 @@ export function PtoRolloverCard() {
                 value={year}
                 onChange={(e) => setYear(Number(e.target.value))}
                 disabled={disabled}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
               />
             </label>
-            <div className="flex items-end pb-[0.05rem]">
-              <button
-                type="submit"
-                disabled={disabled}
-                className={`${PRIMARY_ORANGE_CTA} inline-flex min-w-[10rem] items-center justify-center gap-2 px-4 py-2 text-sm`}
-              >
+            <button
+              type="submit"
+              disabled={disabled}
+              className={`${PRIMARY_ORANGE_CTA} inline-flex h-10 min-w-[10rem] shrink-0 items-center justify-center gap-2 px-4 text-sm`}
+            >
                 {pending ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                    Running…
+                    Processing…
                   </>
                 ) : (
                   <>
                     <RefreshCcw className="h-4 w-4" aria-hidden />
-                    Run rollover
+                    Process year-end reset
                   </>
                 )}
               </button>
-            </div>
           </div>
-          {!summary && !error ? (
-            <p className="mt-3 text-[11px] text-slate-500 sm:text-right">
-              Tip: Run this at the start of your new calendar year to reset balances.
-            </p>
-          ) : null}
         </div>
       </form>
 
@@ -156,12 +169,12 @@ export function PtoRolloverCard() {
         }}
         onConfirm={runConfirmed}
         pending={pending}
-        title="Confirm Ledger Update"
+        title="Process year-end time off reset?"
         description={
           <>
-            You are about to process the <strong className="font-semibold">{year} annual rollover</strong>.
-            This will permanently update the ledger for all eligible employees. Are you sure you want to
-            proceed?
+            This will update time off balances for all eligible employees for plan year{" "}
+            <strong className="font-semibold">{year}</strong>. Unused balances will be cleared and new
+            grants will be posted. This cannot be undone from this screen.
           </>
         }
       />

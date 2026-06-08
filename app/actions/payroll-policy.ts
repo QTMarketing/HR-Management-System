@@ -250,3 +250,58 @@ export async function getLocationPayrollPolicy(
 
   return { ok: true, source: "fallback", row: null };
 }
+
+export type ClearLocationPayrollPolicyResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+/** Remove a store-specific override so the location falls back to global rules. */
+export async function clearLocationPayrollPolicy(
+  locationId: string,
+): Promise<ClearLocationPayrollPolicyResult> {
+  const id = locationId?.trim();
+  if (!id) return { ok: false, error: "Missing location id." };
+
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const ctx = await getRbacContext(supabase, user);
+  if (ctx.enabled && !hasPermission(ctx, PERMISSIONS.ORG_OWNER)) {
+    return { ok: false, error: "Only Organization Owners can edit payroll rules." };
+  }
+
+  const before = await getLocationPayrollPolicyRow(supabase, id);
+  if (!before) {
+    return { ok: false, error: "This store has no override to remove." };
+  }
+
+  const { error } = await supabase.from("payroll_policies").delete().eq("id", before.id);
+  if (error) return { ok: false, error: error.message };
+
+  const actorId = await resolveActorEmployeeId(supabase);
+  await insertSecurityAudit(supabase, {
+    actorEmployeeId: actorId,
+    action: SECURITY_AUDIT_ACTIONS.PAYROLL_POLICY_UPDATED,
+    locationId: id,
+    metadata: {
+      payroll_policy_id: before.id,
+      scope: "location",
+      location_id: id,
+      action: "cleared_override",
+      before: {
+        weekly_ot_threshold: before.weekly_ot_threshold,
+        daily_ot_threshold: before.daily_ot_threshold,
+        ot_multiplier: before.ot_multiplier,
+      },
+      after: null,
+    },
+  });
+
+  revalidatePath("/pto-admin");
+  revalidatePath("/time-clock");
+  updateTag(payrollPolicyTag(id));
+  updateTag(PAYROLL_POLICIES_TAG);
+
+  return { ok: true };
+}

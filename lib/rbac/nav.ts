@@ -46,9 +46,9 @@ export const DASHBOARD_NAV: NavItemWithGroup[] = [
   { href: "/time-off", label: "Time Off", permission: PERMISSIONS.TIME_CLOCK_MANAGE, group: "operations" },
   { href: "/schedule", label: "Schedule", permission: PERMISSIONS.SCHEDULE_VIEW, group: "operations" },
   {
-    href: "/reports/labor",
-    label: "Labor report",
-    permission: PERMISSIONS.LABOR_REPORT_VIEW,
+    href: "/reports/employee-records",
+    label: "Employee records",
+    permission: PERMISSIONS.USERS_VIEW,
     group: "operations",
   },
 ];

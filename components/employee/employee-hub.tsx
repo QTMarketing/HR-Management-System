@@ -1,6 +1,7 @@
 "use client";
 
-import { CalendarClock, CalendarPlus, Palmtree, Thermometer } from "lucide-react";
+import { CalendarClock, CalendarPlus, ChevronRight, Palmtree, Thermometer } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { getPtoBalancesForEmployee, type GetPtoBalancesResult } from "@/app/actions/pto-balances";
@@ -122,21 +123,35 @@ export function EmployeeHub({
   return (
     <div className="mx-auto max-w-lg space-y-5 pb-8 md:max-w-3xl md:space-y-6">
       <header className="space-y-1">
-        <h1 className="text-xl font-bold tracking-tight text-slate-900 md:text-2xl">My portal</h1>
-        <p className="text-sm text-slate-600">Clock in, see your next shift, and manage time off.</p>
+        <h1 className="text-xl font-bold tracking-tight text-slate-900 md:text-2xl">Home</h1>
+        <p className="text-sm text-slate-600">Clock in or out, then check your shifts and time off.</p>
       </header>
 
-      {/* Section 1 — Clock */}
-      <section className="space-y-2" aria-labelledby="emp-hub-clock-heading">
-        <h2 id="emp-hub-clock-heading" className="sr-only">
-          Time clock
-        </h2>
+      {/* Section 1 — Clock (primary action) */}
+      <section
+        className="space-y-2 rounded-2xl border-2 border-orange-200/90 bg-gradient-to-b from-orange-50/80 to-white p-1 shadow-sm"
+        aria-labelledby="emp-hub-clock-heading"
+      >
+        <div className="flex items-center justify-between gap-2 px-3 pt-3">
+          <h2 id="emp-hub-clock-heading" className="text-sm font-semibold text-slate-900">
+            Time clock
+          </h2>
+          <Link
+            href="/my-punches"
+            className="inline-flex items-center gap-0.5 text-xs font-semibold text-orange-800 hover:text-orange-950"
+          >
+            My punches
+            <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+          </Link>
+        </div>
         {hub.clockMissingMessage ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-950">
+          <div className="mx-1 mb-1 rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-950">
             {hub.clockMissingMessage}
           </div>
         ) : selfServeProps ? (
-          <TimeClockSelfServe {...selfServeProps} />
+          <div className="px-1 pb-1">
+            <TimeClockSelfServe {...selfServeProps} />
+          </div>
         ) : null}
       </section>
 

@@ -33,7 +33,7 @@ export function AppSidebar({
           { href: "/activity", label: "Activity", group: "operations" },
           { href: "/time-clock", label: "Time Clock", group: "operations" },
           { href: "/schedule", label: "Schedule", group: "operations" },
-          { href: "/reports/labor", label: "Labor report", group: "operations" },
+          { href: "/reports/employee-records", label: "Employee records", group: "operations" },
         ];
 
   return (
