@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/pto-automation",
+      "schedule": "0 12 * * *"
+    }
+  ]
+}
