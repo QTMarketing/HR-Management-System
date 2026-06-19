@@ -70,7 +70,15 @@ async function main() {
     process.exit(1);
   }
   if (loc.includes("error=sso_no_employee")) {
-    process.stdout.write("result=FAIL employee not in HR directory\n");
+    process.stdout.write("result=FAIL no linked HR account / employee not in directory\n");
+    process.exit(1);
+  }
+  if (loc.includes("error=sso_account_ambiguous")) {
+    process.stdout.write("result=FAIL multiple employees match email\n");
+    process.exit(1);
+  }
+  if (loc.includes("error=sso_account_conflict")) {
+    process.stdout.write("result=FAIL hub account link conflict\n");
     process.exit(1);
   }
   if (res.status === 307 || res.status === 302) {

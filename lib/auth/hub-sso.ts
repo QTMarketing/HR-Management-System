@@ -60,7 +60,7 @@ export function verifyHubSsoToken(token: string, secret: string): HubSsoPayload 
 
   if (payload.iss !== "quicktrack-hub") return null;
   if (payload.aud !== "staff-operations") return null;
-  if (!payload.email?.trim()) return null;
+  if (!payload.sub?.trim() || !payload.email?.trim()) return null;
 
   const now = Math.floor(Date.now() / 1000);
   if (typeof payload.exp !== "number" || payload.exp < now) return null;

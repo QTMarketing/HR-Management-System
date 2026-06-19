@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { LoginForm } from "./login-form";
 import { authEnabled } from "@/lib/auth/config";
+import { formatSsoLoginError } from "@/lib/auth/sso-login-errors";
 
 export default async function LoginPage({
   searchParams,
@@ -13,6 +14,7 @@ export default async function LoginPage({
   }
 
   const { error, next } = await searchParams;
+  const loginError = formatSsoLoginError(typeof error === "string" ? error : null);
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-white px-4">
       <div className="mb-8 flex items-center gap-2">
@@ -22,7 +24,10 @@ export default async function LoginPage({
         <span className="text-lg font-semibold text-slate-800">Retail HR</span>
       </div>
       <Suspense fallback={<p className="text-sm text-slate-500">Loading…</p>}>
-        <LoginForm initialError={error} nextPath={typeof next === "string" ? next : undefined} />
+        <LoginForm
+          initialError={loginError}
+          nextPath={typeof next === "string" ? next : undefined}
+        />
       </Suspense>
     </div>
   );

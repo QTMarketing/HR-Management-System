@@ -2,10 +2,11 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { ensureHubAuthUser } from "@/lib/auth/ensure-hub-auth-user";
 import { verifyHubSsoToken } from "@/lib/auth/hub-sso";
+import { resolveHubSsoAccount } from "@/lib/auth/resolve-hub-sso-account";
 import { safeNextPath } from "@/lib/auth/safe-next-path";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
-/** Hub SSO handoff — verify JWT and mint Supabase session cookies. */
+/** Hub SSO handoff — verify JWT, resolve HubAccountLink, mint Supabase session. */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = request.nextUrl;
   const token = searchParams.get("token");
@@ -36,34 +37,47 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/login?error=sso_not_configured`);
   }
 
-  const email = payload.email.trim().toLowerCase();
+  let sessionEmail = payload.email.trim().toLowerCase();
 
   if (process.env.RBAC_ENABLED === "true") {
-    const { data: employee, error: empErr } = await admin
-      .from("employees")
-      .select("id, status")
-      .ilike("email", email)
-      .maybeSingle();
+    const resolved = await resolveHubSsoAccount(admin, {
+      sub: payload.sub,
+      email: payload.email,
+    });
 
-    if (empErr || !employee || employee.status !== "active") {
-      return NextResponse.redirect(`${origin}/login?error=sso_no_employee`);
+    if (!resolved.ok) {
+      return NextResponse.redirect(`${origin}/login?error=${resolved.code}`);
     }
+
+    sessionEmail = resolved.account.email;
+    console.log("[HR_SSO] Account resolved", {
+      hubUserId: payload.sub,
+      employeeId: resolved.account.employeeId,
+      linkedVia: resolved.account.linkedVia,
+      email: sessionEmail,
+    });
   }
 
-  const ensured = await ensureHubAuthUser(admin, email);
+  const ensured = await ensureHubAuthUser(admin, sessionEmail);
   if (!ensured.ok) {
-    console.error("[HR_SSO] ensure auth user failed", { email, message: ensured.message });
+    console.error("[HR_SSO] ensure auth user failed", {
+      email: sessionEmail,
+      message: ensured.message,
+    });
     return NextResponse.redirect(`${origin}/login?error=sso_auth_user`);
   }
 
   const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
     type: "magiclink",
-    email,
+    email: sessionEmail,
   });
 
   const hashedToken = linkData?.properties?.hashed_token;
   if (linkErr || !hashedToken) {
-    console.error("[HR_SSO] generateLink failed", { email, error: linkErr?.message });
+    console.error("[HR_SSO] generateLink failed", {
+      email: sessionEmail,
+      error: linkErr?.message,
+    });
     return NextResponse.redirect(`${origin}/login?error=sso_session_failed`);
   }
 
@@ -90,10 +104,16 @@ export async function GET(request: NextRequest) {
   });
 
   if (otpErr) {
-    console.error("[HR_SSO] verifyOtp failed", { email, error: otpErr.message });
+    console.error("[HR_SSO] verifyOtp failed", {
+      email: sessionEmail,
+      error: otpErr.message,
+    });
     return NextResponse.redirect(`${origin}/login?error=sso_session_failed`);
   }
 
-  console.log("[HR_SSO] Session established", { email, sub: payload.sub });
+  console.log("[HR_SSO] Session established", {
+    email: sessionEmail,
+    sub: payload.sub,
+  });
   return response;
 }
