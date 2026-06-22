@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { EmployeeProfileClient } from "@/components/users/employee-profile-client";
 import { locationsForSession } from "@/lib/dashboard/locations-for-session";
 import {
@@ -10,7 +10,6 @@ import {
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getRbacContext, hasPermission } from "@/lib/rbac/context";
 import { normalizeRoleLabel } from "@/lib/rbac/matrix";
-import { requirePermission } from "@/lib/rbac/guard";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { getPtoBalancesForEmployee } from "@/app/actions/pto-balances";
 
@@ -84,8 +83,6 @@ export default async function EmployeeProfilePage({
 }: {
   params: Promise<{ employeeId: string }>;
 }) {
-  await requirePermission(PERMISSIONS.USERS_VIEW);
-
   const { employeeId } = await params;
   const id = employeeId?.trim();
   if (!id) notFound();
@@ -95,6 +92,12 @@ export default async function EmployeeProfilePage({
     data: { user },
   } = await supabase.auth.getUser();
   const rbac = await getRbacContext(supabase, user);
+
+  const canViewDirectory = hasPermission(rbac, PERMISSIONS.USERS_VIEW);
+  const isSelf = Boolean(rbac.employeeId && rbac.employeeId === id);
+  if (rbac.enabled && !canViewDirectory && !isSelf) {
+    redirect("/forbidden");
+  }
   const canEdit = hasPermission(rbac, PERMISSIONS.USERS_MANAGE);
   const canSetOrgOwner = hasPermission(rbac, PERMISSIONS.ORG_OWNER);
 
