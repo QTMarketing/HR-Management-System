@@ -38,11 +38,14 @@
  *
  * Dry run (no writes):
  *   ... npx tsx scripts/import/employees_from_csv.ts --csv "/path/to/employees.csv" --dry-run
+ *
+ * Enrich existing rows only (no inserts; match email or kiosk code; patch dates/phone/kiosk):
+ *   ... npx tsx scripts/import/employees_from_csv.ts --csv "/path/to/employees.csv" --enrich-only
  */
 
 import fs from "node:fs";
 import path from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseScriptEnv } from "./load-supabase-env";
 
 type Loc = { id: string; name: string; slug: string };
@@ -166,6 +169,11 @@ function tryResolveStoreSegment(
   const byN = byName.get(s.toLowerCase());
   if (byN) return byN.id;
 
+  // Connecteam uses "HQ"; locations seed uses "HQ--Time Clock" (slug hq-time-clock).
+  if (s.toLowerCase() === "hq") {
+    return bySlug.get("hq-time-clock")?.id ?? null;
+  }
+
   const hyphenSlug = s.toLowerCase().replace(/\s+/g, "-");
   return (
     bySlug.get(hyphenSlug)?.id ??
@@ -259,12 +267,61 @@ function resolveLocationId(
   return { id: null, reason: "unresolved" };
 }
 
+async function findEmployeeId(
+  supabase: SupabaseClient,
+  email: string,
+  kioskCode: string,
+): Promise<string | null> {
+  if (email) {
+    const { data, error } = await supabase
+      .from("employees")
+      .select("id")
+      .ilike("email", email)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    if (data?.id) return data.id;
+  }
+  if (kioskCode) {
+    const { data, error } = await supabase
+      .from("employees")
+      .select("id")
+      .eq("kiosk_code", kioskCode)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    if (data?.id) return data.id;
+  }
+  return null;
+}
+
+function parseEmploymentStart(rec: Record<string, string>): string {
+  const employmentStartRaw = pick(rec, [
+    "employment_start_date",
+    "start_date",
+    "hire_date",
+  ]);
+  return (
+    parseFlexibleDate(employmentStartRaw) ??
+    (/^\d{4}-\d{2}-\d{2}$/.test(employmentStartRaw.trim()) ? employmentStartRaw.trim() : "")
+  );
+}
+
+function parseBirthDate(rec: Record<string, string>): string {
+  const birthRaw = pick(rec, ["birth_date", "birthday", "dob"]);
+  return (
+    parseFlexibleDate(birthRaw) ??
+    (/^\d{4}-\d{2}-\d{2}$/.test(birthRaw.trim()) ? birthRaw.trim() : "")
+  );
+}
+
 async function main() {
   const csvPath = argValue("--csv");
   if (!csvPath) {
     throw new Error('Missing --csv "/path/to/file.csv"');
   }
   const dryRun = hasFlag("--dry-run");
+  const enrichOnly = hasFlag("--enrich-only");
 
   const { url, serviceKey } = getSupabaseScriptEnv();
 
@@ -298,10 +355,65 @@ async function main() {
   let updated = 0;
   let skipped = 0;
   let failed = 0;
+  let enrichNoMatch = 0;
+  let enrichNoFields = 0;
 
   for (let i = 0; i < rows.length; i++) {
     const rec = rows[i];
     const email = pick(rec, ["email", "work_email", "work_email_address"]).toLowerCase();
+    const kioskCode = pick(rec, ["kiosk_code", "kiosk"]);
+    const employmentStart = parseEmploymentStart(rec);
+    const mobileRaw = pick(rec, ["mobile_phone", "phone", "mobile"]);
+    const mobile =
+      normalizePhone(mobileRaw) ?? (mobileRaw.trim() ? mobileRaw.trim() : "");
+    const birth = parseBirthDate(rec);
+
+    if (enrichOnly) {
+      if (!email && !kioskCode) {
+        skipped++;
+        continue;
+      }
+
+      let employeeId: string | null = null;
+      try {
+        employeeId = await findEmployeeId(supabase, email, kioskCode);
+      } catch {
+        failed++;
+        continue;
+      }
+
+      if (!employeeId) {
+        enrichNoMatch++;
+        skipped++;
+        continue;
+      }
+
+      const patch: Record<string, unknown> = {};
+      if (employmentStart) patch.employment_start_date = employmentStart;
+      if (mobile) patch.mobile_phone = mobile;
+      if (birth) patch.birth_date = birth;
+      if (kioskCode) patch.kiosk_code = kioskCode;
+
+      if (Object.keys(patch).length === 0) {
+        enrichNoFields++;
+        skipped++;
+        continue;
+      }
+
+      if (dryRun) {
+        updated++;
+        continue;
+      }
+
+      const { error: upErr } = await supabase
+        .from("employees")
+        .update(patch)
+        .eq("id", employeeId);
+      if (upErr) failed++;
+      else updated++;
+      continue;
+    }
+
     if (!email) {
       skipped++;
       continue;
@@ -331,30 +443,12 @@ async function main() {
     const role = position || titleField || "Employee";
     const title = titleField || position || role;
 
-    const employmentStartRaw = pick(rec, [
-      "employment_start_date",
-      "start_date",
-      "hire_date",
-    ]);
-    const employmentStart =
-      parseFlexibleDate(employmentStartRaw) ??
-      (/^\d{4}-\d{2}-\d{2}$/.test(employmentStartRaw.trim())
-        ? employmentStartRaw.trim()
-        : "");
-    const mobileRaw = pick(rec, ["mobile_phone", "phone", "mobile"]);
-    const mobile =
-      normalizePhone(mobileRaw) ?? (mobileRaw.trim() ? mobileRaw.trim() : "");
-    const birthRaw = pick(rec, ["birth_date", "birthday", "dob"]);
-    const birth =
-      parseFlexibleDate(birthRaw) ??
-      (/^\d{4}-\d{2}-\d{2}$/.test(birthRaw.trim()) ? birthRaw.trim() : "");
     const statusRaw = pick(rec, ["status", "employment_status"]);
     const status =
       statusRaw && ["active", "inactive", "archived"].includes(statusRaw.toLowerCase())
         ? statusRaw.toLowerCase()
         : "active";
     const employeeCode = pick(rec, ["employee_code", "employee_id", "payroll_id"]);
-    const kioskCode = pick(rec, ["kiosk_code", "kiosk"]);
     const fteRaw = pick(rec, ["fte_ratio", "fte", "part_time_ratio"]);
     const fte = parseFte(fteRaw);
 
@@ -407,8 +501,11 @@ async function main() {
     }
   }
 
+  const enrichSuffix = enrichOnly
+    ? ` enrich_no_match=${enrichNoMatch} enrich_no_fields=${enrichNoFields}`
+    : "";
   process.stdout.write(
-    `done: dry_run=${dryRun} inserted=${inserted} updated=${updated} skipped=${skipped} failed=${failed} total_rows=${rows.length}\n`,
+    `done: dry_run=${dryRun} enrich_only=${enrichOnly} inserted=${inserted} updated=${updated} skipped=${skipped} failed=${failed} total_rows=${rows.length}${enrichSuffix}\n`,
   );
 }
 
