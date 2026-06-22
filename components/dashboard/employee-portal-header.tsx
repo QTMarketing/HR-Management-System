@@ -5,6 +5,7 @@ import {
   NotificationBell,
   type NotificationBellItem,
 } from "@/components/layout/notification-bell";
+import { employeePortalShellClass } from "@/lib/ui/employee-portal-shell";
 
 type Props = {
   userEmail: string;
@@ -35,7 +36,7 @@ export function EmployeePortalHeader({
           {rbacProfileHint}
         </div>
       ) : null}
-      <div className="mx-auto flex h-14 w-full max-w-lg items-center justify-between gap-3 px-4 sm:max-w-3xl sm:px-6">
+      <div className={`flex h-14 w-full items-center justify-between gap-3 ${employeePortalShellClass}`}>
         <div className="flex min-w-0 items-center gap-2">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-orange-400 to-orange-600 text-sm font-bold text-white shadow-sm">
             HR

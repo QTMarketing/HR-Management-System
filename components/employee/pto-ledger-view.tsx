@@ -9,7 +9,7 @@
  * approved or a manager logs an adjustment.
  */
 
-import { History, Loader2, Minus, Palmtree, Plus, RefreshCcw, Thermometer } from "lucide-react";
+import { Loader2, Minus, Palmtree, Plus, RefreshCcw, Thermometer } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 import { getPtoLedger } from "@/app/actions/pto-ledger";
 import type { PtoLedgerEntry } from "@/lib/pto/ledger-types";
@@ -70,122 +70,119 @@ export function PtoLedgerView({ employeeId, initialEntries, initialError = null 
 
   return (
     <section
-      className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm md:p-5"
+      className="overflow-hidden rounded-lg border border-slate-200/90 bg-white shadow-sm ring-1 ring-slate-900/[0.04]"
       aria-labelledby="emp-hub-ledger-heading"
     >
-      <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-900 ring-1 ring-violet-200/80">
-          <History className="h-5 w-5" aria-hidden />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div className="min-w-0">
-              <h2 id="emp-hub-ledger-heading" className="text-sm font-semibold text-slate-900">
-                Time off history
-              </h2>
-              <p className="mt-1 text-xs text-slate-500">
-                Every accrual, request, adjustment, and payout that affected your balances.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={refresh}
-              disabled={pending}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-            >
-              {pending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-              ) : (
-                <RefreshCcw className="h-3.5 w-3.5" aria-hidden />
-              )}
-              {pending ? "Refreshing…" : "Refresh"}
-            </button>
-          </div>
-
-          {error ? (
-            <p
-              className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
-              role="alert"
-            >
-              {error}
-            </p>
-          ) : null}
-
-          {entries.length === 0 ? (
-            <p className="mt-4 rounded-lg border border-slate-100 bg-slate-50 px-3 py-3 text-xs text-slate-600">
-              No ledger activity yet. Once you earn time off or get a request approved, it will show up
-              here.
-            </p>
-          ) : (
-            <div className="mt-4 overflow-hidden rounded-xl border border-slate-100">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                    <th className="px-3 py-2">Date</th>
-                    <th className="px-3 py-2">Type</th>
-                    <th className="px-3 py-2 text-right">Change</th>
-                    <th className="hidden px-3 py-2 sm:table-cell">Description</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {visible.map((e) => {
-                    const positive = e.changeAmount > 0;
-                    const badgeClass = positive
-                      ? "bg-emerald-50 text-emerald-900 ring-emerald-200/80"
-                      : "bg-rose-50 text-rose-900 ring-rose-200/80";
-                    const Icon = positive ? Plus : Minus;
-                    return (
-                      <tr key={e.id} className="text-slate-800">
-                        <td className="whitespace-nowrap px-3 py-2.5 text-slate-600 tabular-nums">
-                          {fmtWhen(e.effectiveAt)}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200/80">
-                            {bucketIcon(e.bucket)}
-                            {e.typeLabel}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 text-right">
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums ring-1 ${badgeClass}`}
-                          >
-                            <Icon className="h-3 w-3" aria-hidden />
-                            {fmtHours(e.changeAmount)}
-                          </span>
-                        </td>
-                        <td className="hidden truncate px-3 py-2.5 text-slate-600 sm:table-cell">
-                          {e.description}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {hiddenCount > 0 ? (
-                <div className="border-t border-slate-100 bg-slate-50/60 px-3 py-2 text-center">
-                  <button
-                    type="button"
-                    onClick={() => setShowAll(true)}
-                    className="text-xs font-semibold text-orange-700 hover:text-orange-900"
-                  >
-                    Show {hiddenCount} more
-                  </button>
-                </div>
-              ) : null}
-              {showAll && entries.length > PAGE_SIZE ? (
-                <div className="border-t border-slate-100 bg-slate-50/60 px-3 py-2 text-center">
-                  <button
-                    type="button"
-                    onClick={() => setShowAll(false)}
-                    className="text-xs font-semibold text-slate-600 hover:text-slate-900"
-                  >
-                    Show less
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          )}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-5">
+        <div className="min-w-0">
+          <h2 id="emp-hub-ledger-heading" className="text-base font-bold text-slate-900">
+            Time off history
+          </h2>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Accruals, requests, adjustments, and payouts.
+          </p>
         </div>
+        <button
+          type="button"
+          onClick={refresh}
+          disabled={pending}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
+        >
+          {pending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          ) : (
+            <RefreshCcw className="h-3.5 w-3.5" aria-hidden />
+          )}
+          {pending ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+
+      <div className="p-4 sm:p-5">
+        {error ? (
+          <p
+            className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
+            role="alert"
+          >
+            {error}
+          </p>
+        ) : null}
+
+        {!error && entries.length === 0 ? (
+          <p className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+            No ledger activity yet. Once you earn time off or get a request approved, it will show up
+            here.
+          </p>
+        ) : null}
+
+        {!error && entries.length > 0 ? (
+          <div className="overflow-hidden rounded-lg border border-slate-100">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="px-3 py-2">Date</th>
+                  <th className="px-3 py-2">Type</th>
+                  <th className="px-3 py-2 text-right">Change</th>
+                  <th className="hidden px-3 py-2 sm:table-cell">Description</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {visible.map((e) => {
+                  const positive = e.changeAmount > 0;
+                  const badgeClass = positive
+                    ? "bg-emerald-50 text-emerald-900 ring-emerald-200/80"
+                    : "bg-rose-50 text-rose-900 ring-rose-200/80";
+                  const Icon = positive ? Plus : Minus;
+                  return (
+                    <tr key={e.id} className="text-slate-800">
+                      <td className="whitespace-nowrap px-3 py-2.5 text-slate-600 tabular-nums">
+                        {fmtWhen(e.effectiveAt)}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200/80">
+                          {bucketIcon(e.bucket)}
+                          {e.typeLabel}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums ring-1 ${badgeClass}`}
+                        >
+                          <Icon className="h-3 w-3" aria-hidden />
+                          {fmtHours(e.changeAmount)}
+                        </span>
+                      </td>
+                      <td className="hidden truncate px-3 py-2.5 text-slate-600 sm:table-cell">
+                        {e.description}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {hiddenCount > 0 ? (
+              <div className="border-t border-slate-100 bg-slate-50/60 px-3 py-2 text-center">
+                <button
+                  type="button"
+                  onClick={() => setShowAll(true)}
+                  className="text-xs font-semibold text-orange-700 hover:text-orange-900"
+                >
+                  Show {hiddenCount} more
+                </button>
+              </div>
+            ) : null}
+            {showAll && entries.length > PAGE_SIZE ? (
+              <div className="border-t border-slate-100 bg-slate-50/60 px-3 py-2 text-center">
+                <button
+                  type="button"
+                  onClick={() => setShowAll(false)}
+                  className="text-xs font-semibold text-slate-600 hover:text-slate-900"
+                >
+                  Show less
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </section>
   );

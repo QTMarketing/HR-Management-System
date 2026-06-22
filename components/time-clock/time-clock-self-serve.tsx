@@ -55,6 +55,8 @@ type Props = {
   allowPaidBreaks?: boolean;
   /** Archived clock — hide widget. */
   disabled?: boolean;
+  /** Hub dashboard: no outer card chrome, status header, or duplicate time-off CTA. */
+  embedded?: boolean;
 };
 
 function resolvePunchSource(): "mobile" | "web" {
@@ -87,6 +89,7 @@ export function TimeClockSelfServe({
   breaksEnabled = true,
   allowPaidBreaks: _allowPaidBreaks = true,
   disabled = false,
+  embedded = false,
 }: Props) {
   void _allowPaidBreaks;
   const router = useRouter();
@@ -290,7 +293,8 @@ export function TimeClockSelfServe({
             <p className="text-xs font-semibold uppercase tracking-wide text-amber-800/80">Self-serve</p>
             <p className="mt-1 text-sm font-semibold text-amber-950">{who}</p>
             <p className="mt-1 text-sm text-amber-900">
-              Switch to this store (top header). If it’s wrong, ask HR to update your assignment.
+              This clock is for a different store than your home assignment. Ask HR to update your store if
+              that looks wrong.
             </p>
           </div>
           </div>
@@ -349,105 +353,60 @@ export function TimeClockSelfServe({
   const blockTitle = "text-xl font-black tracking-tight";
   const blockHint = "mt-1 text-xs font-semibold uppercase tracking-wide opacity-85";
 
-  return (
-    <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">{displayName}</p>
-          <p className="mt-1 text-xs text-slate-500">
-            {gpsRequired ? "GPS required for this clock." : "GPS optional."}
+  const shellClass = embedded
+    ? ""
+    : "rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm";
+
+  const codePicker =
+    !isClockedIn && categorizationMode !== "none" ? (
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            {categorizationMode === "job" ? "Job" : "Location"}
+            {requireCategorization ? " · Required" : ""}
+          </p>
+          <p className="text-xs text-slate-500">
+            {categorizationMode === "job" ? "Payroll coding" : "Costing tag"}
           </p>
         </div>
-        {isClockedIn ? (
-          <div
-            className={`rounded-xl border px-4 py-2 ${
-              isOnBreak
-                ? "border-amber-200 bg-amber-50 text-amber-950"
-                : "border-emerald-200 bg-emerald-50 text-emerald-950"
-            }`}
-            role="status"
-            aria-live="polite"
-          >
-            <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
-              {isOnBreak ? "On break" : "Clocked in"}
-            </p>
-            <p className="mt-1 font-mono text-sm font-bold tabular-nums">
-              {clockInTimeLabel ? `Since ${clockInTimeLabel}` : "—"}
-            </p>
-          </div>
-        ) : (
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-              Status
-            </p>
-            <p className="mt-1 text-sm font-bold text-slate-900">Clocked out</p>
-          </div>
-        )}
+        <div className="mt-3 max-w-sm">
+          {categorizationMode === "job" ? (
+            <select
+              value={jobCodeId}
+              onChange={(e) => setJobCodeId(e.target.value)}
+              disabled={pending}
+              className="h-12 w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/15 disabled:opacity-60"
+              aria-label="Pick job"
+            >
+              <option value="">Select…</option>
+              {jobCodes.map((j) => (
+                <option key={j.id} value={j.id}>
+                  {j.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select
+              value={locationCodeId}
+              onChange={(e) => setLocationCodeId(e.target.value)}
+              disabled={pending}
+              className="h-12 w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/15 disabled:opacity-60"
+              aria-label="Pick location code"
+            >
+              <option value="">Select…</option>
+              {locationCodes.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
       </div>
+    ) : null;
 
-      {/* Self-heal hint: viewer is still clocked in at a different store. */}
-      {isClockedIn && viewerOpenEntryForeignLocationName ? (
-        <div
-          className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
-          role="status"
-        >
-          You&rsquo;re still clocked in at{" "}
-          <span className="font-semibold">{viewerOpenEntryForeignLocationName}</span>.
-          Tap <span className="font-semibold">Out</span> below to clock out —
-          then you can clock in here.
-        </div>
-      ) : null}
-
-      {/* Optional required code picker (minimal, only when it blocks clock-in). */}
-      {!isClockedIn && categorizationMode !== "none" ? (
-        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-              {categorizationMode === "job" ? "Job" : "Location"}
-              {requireCategorization ? " · Required" : ""}
-            </p>
-            <p className="text-xs text-slate-500">
-              {categorizationMode === "job" ? "Payroll coding" : "Costing tag"}
-            </p>
-          </div>
-          <div className="mt-3 max-w-sm">
-            {categorizationMode === "job" ? (
-              <select
-                value={jobCodeId}
-                onChange={(e) => setJobCodeId(e.target.value)}
-                disabled={pending}
-                className="h-12 w-full cursor-pointer appearance-none rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/15 disabled:opacity-60"
-                aria-label="Pick job"
-              >
-                <option value="">Select…</option>
-                {jobCodes.map((j) => (
-                  <option key={j.id} value={j.id}>
-                    {j.label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <select
-                value={locationCodeId}
-                onChange={(e) => setLocationCodeId(e.target.value)}
-                disabled={pending}
-                className="h-12 w-full cursor-pointer appearance-none rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm focus:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-500/15 disabled:opacity-60"
-                aria-label="Pick location code"
-              >
-                <option value="">Select…</option>
-                {locationCodes.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.label}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
-      ) : null}
-
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+  const punchGrid = (
+    <div className="grid gap-3 sm:grid-cols-2">
         {/* CLOCK IN — vibrant emerald gradient (semantic green for "go"). */}
         {!isClockedIn ? (
           <button
@@ -550,28 +509,93 @@ export function TimeClockSelfServe({
             </div>
           </button>
         ) : null}
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
-        <button
-          type="button"
-          onClick={() => setTimeOffOpen(true)}
-          disabled={pending}
-          aria-haspopup="dialog"
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
-        >
-          <Pause className="h-4 w-4 text-orange-700" aria-hidden />
-          Time off
-        </button>
-      </div>
-
-      <EmployeeTimeOffRequestModal
-        open={timeOffOpen}
-        onClose={() => setTimeOffOpen(false)}
-        locationId={locationId}
-        employeeId={viewerEmployeeId}
-        onSaved={() => router.refresh()}
-      />
-    </section>
+    </div>
   );
+
+  const body = (
+    <>
+      {!embedded ? (
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">{displayName}</p>
+            <p className="mt-1 text-xs text-slate-500">
+              {gpsRequired ? "GPS required for this clock." : "GPS optional."}
+            </p>
+          </div>
+          {isClockedIn ? (
+            <div
+              className={`rounded-xl border px-4 py-2 ${
+                isOnBreak
+                  ? "border-amber-200 bg-amber-50 text-amber-950"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-950"
+              }`}
+              role="status"
+              aria-live="polite"
+            >
+              <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">
+                {isOnBreak ? "On break" : "Clocked in"}
+              </p>
+              <p className="mt-1 font-mono text-sm font-bold tabular-nums">
+                {clockInTimeLabel ? `Since ${clockInTimeLabel}` : "—"}
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Status
+              </p>
+              <p className="mt-1 text-sm font-bold text-slate-900">Clocked out</p>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {isClockedIn && viewerOpenEntryForeignLocationName ? (
+        <div
+          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+          role="status"
+        >
+          You&rsquo;re still clocked in at{" "}
+          <span className="font-semibold">{viewerOpenEntryForeignLocationName}</span>. Tap{" "}
+          <span className="font-semibold">Out</span> below to clock out — then you can clock in here.
+        </div>
+      ) : null}
+
+      {codePicker ? <div className={embedded ? "" : "mt-4"}>{codePicker}</div> : null}
+
+      <div className={embedded ? "" : "mt-5"}>{punchGrid}</div>
+
+      {!embedded ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+          <button
+            type="button"
+            onClick={() => setTimeOffOpen(true)}
+            disabled={pending}
+            aria-haspopup="dialog"
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <Pause className="h-4 w-4 text-orange-700" aria-hidden />
+            Time off
+          </button>
+        </div>
+      ) : null}
+
+      {!embedded ? (
+        <EmployeeTimeOffRequestModal
+          open={timeOffOpen}
+          onClose={() => setTimeOffOpen(false)}
+          locationId={locationId}
+          employeeId={viewerEmployeeId}
+          onSaved={() => router.refresh()}
+        />
+      ) : null}
+    </>
+  );
+
+  if (embedded) {
+    return <div className="space-y-4">{body}</div>;
+  }
+
+  return <section className={shellClass}>{body}</section>;
 }

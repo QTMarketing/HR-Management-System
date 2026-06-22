@@ -18,7 +18,7 @@ export function buildEmployeePortalNav(profileHref: string | null): EmployeePort
   const items: EmployeePortalNavItem[] = [
     { href: "/", label: "Home", group: "main" },
     { href: "/my-punches", label: "My punches", group: "main" },
-    { href: "/schedule", label: "Schedule", group: "main" },
+    { href: "/schedule/board", label: "Schedule", group: "main" },
   ];
   if (profileHref) {
     items.push({ href: profileHref, label: "Profile", group: "main" });

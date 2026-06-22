@@ -1,9 +1,20 @@
 "use client";
 
-import { CalendarClock, CalendarPlus, ChevronRight, Palmtree, Thermometer } from "lucide-react";
+import {
+  ArrowUpRight,
+  CalendarClock,
+  CalendarDays,
+  CalendarPlus,
+  ChevronRight,
+  Clock,
+  Palmtree,
+  RefreshCcw,
+  Thermometer,
+  User,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition, type ReactNode } from "react";
 import { getPtoBalancesForEmployee, type GetPtoBalancesResult } from "@/app/actions/pto-balances";
 import { PtoLedgerView } from "@/components/employee/pto-ledger-view";
 import type { PtoLedgerEntry } from "@/lib/pto/ledger-types";
@@ -11,28 +22,26 @@ import { EmployeeTimeOffRequestModal } from "@/components/time-clock/employee-ti
 import { TimeClockSelfServe } from "@/components/time-clock/time-clock-self-serve";
 import type {
   EmployeeHubSelfServeProps,
-  EmployeeNextShift,
   LoadEmployeeHubDataResult,
 } from "@/lib/employee/load-employee-hub-data";
 import {
   consumeRequestTimeOffFlag,
   REQUEST_TIME_OFF_EVENT,
 } from "@/lib/ui/request-time-off-signal";
+import { employeePortalRevealClass } from "@/lib/ui/employee-portal-shell";
 
 type Props = {
-  /** `employees.id` for the signed-in person (not auth user id). */
   employeeId: string;
+  displayName?: string;
   hub: LoadEmployeeHubDataResult;
   initialPto: GetPtoBalancesResult;
-  /** Pre-loaded ledger entries (newest first). Empty array when none / on error. */
   initialLedger: PtoLedgerEntry[];
-  /** Server-side error from the ledger load, if any. */
   initialLedgerError?: string | null;
 };
 
 function fmtHours(n: number): string {
   if (!Number.isFinite(n)) return "—";
-  return `${n.toFixed(1)} hrs`;
+  return n.toFixed(1);
 }
 
 function fmtShiftRange(startIso: string, endIso: string): string {
@@ -55,8 +64,66 @@ function fmtShiftRange(startIso: string, endIso: string): string {
   return `${s.toLocaleString(undefined, { ...dateOpts, ...timeOpts })} → ${e.toLocaleString(undefined, { ...dateOpts, ...timeOpts })}`;
 }
 
+function firstNameFrom(raw: string | null | undefined): string {
+  const t = raw?.trim() ?? "";
+  if (!t) return "there";
+  return t.split(/\s+/)[0] ?? "there";
+}
+
+function greetingForHour(h: number): string {
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function todayLabel(): string {
+  return new Date().toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+type ClockStatus = "out" | "in" | "break";
+
+function clockStatusFrom(self: EmployeeHubSelfServeProps | null): ClockStatus {
+  if (!self?.viewerOpenEntryId) return "out";
+  if (self.viewerOpenBreakId) return "break";
+  return "in";
+}
+
+function clockStatusMeta(status: ClockStatus, clockInAt?: string | null) {
+  if (status === "break") {
+    return {
+      label: "On break",
+      detail: clockInAt
+        ? `Shift since ${new Date(clockInAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
+        : "Paused",
+      className: "border-amber-200/80 bg-amber-50 text-amber-950 ring-amber-200/60",
+      dot: "bg-amber-500",
+    };
+  }
+  if (status === "in") {
+    return {
+      label: "On shift",
+      detail: clockInAt
+        ? `Since ${new Date(clockInAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
+        : "Clocked in",
+      className: "border-emerald-200/80 bg-emerald-50 text-emerald-950 ring-emerald-200/60",
+      dot: "bg-emerald-500",
+    };
+  }
+  return {
+    label: "Off shift",
+    detail: "Ready to clock in",
+    className: "border-slate-200 bg-white text-slate-800 ring-slate-200/80",
+    dot: "bg-slate-300",
+  };
+}
+
 export function EmployeeHub({
   employeeId,
+  displayName,
   hub,
   initialPto,
   initialLedger,
@@ -74,14 +141,8 @@ export function EmployeeHub({
     });
   }, [employeeId]);
 
-  // Open the time-off modal when triggered from outside the hub
-  // (Cmd+K command palette → "Request Time Off"). Two channels:
-  //  1) sessionStorage flag set before navigating to "/" from another route.
-  //  2) Custom event for when the user is already on "/".
   useEffect(() => {
-    if (consumeRequestTimeOffFlag()) {
-      setTimeOffOpen(true);
-    }
+    if (consumeRequestTimeOffFlag()) setTimeOffOpen(true);
     function onOpen() {
       setTimeOffOpen(true);
     }
@@ -89,164 +150,210 @@ export function EmployeeHub({
     return () => window.removeEventListener(REQUEST_TIME_OFF_EVENT, onOpen);
   }, []);
 
+  const selfServe = hub.selfServe;
+  const firstName = firstNameFrom(displayName ?? selfServe?.viewerEmployeeName);
+  const greeting = greetingForHour(new Date().getHours());
+  const clockStatus = clockStatusFrom(selfServe);
+  const statusMeta = clockStatusMeta(clockStatus, selfServe?.viewerOpenEntryClockInAt);
+
   const vacationHours = pto.ok ? pto.vacationHours : null;
   const sickHours = pto.ok ? pto.sickHours : null;
 
-  const nextShiftCard = useMemo(() => {
-    const s: EmployeeNextShift | null = hub.nextShift;
-    if (!s) {
-      return (
-        <p className="text-sm text-slate-600">
-          No upcoming shifts on your schedule. Check back later or ask your manager if something looks wrong.
-        </p>
-      );
-    }
-    return (
-      <div className="space-y-3">
-        <p className="text-sm font-semibold text-slate-900">{fmtShiftRange(s.shiftStart, s.shiftEnd)}</p>
-        {s.locationName ? (
-          <p className="text-sm text-slate-600">
-            <span className="font-medium text-slate-800">Store:</span> {s.locationName}
-          </p>
-        ) : null}
-        {s.notes?.trim() ? (
-          <p className="rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-xs text-slate-700">
-            {s.notes.trim()}
-          </p>
-        ) : null}
-      </div>
-    );
-  }, [hub.nextShift]);
+  const nextShift = hub.nextShift;
+  const profileHref = `/users/${employeeId}`;
 
-  const selfServeProps: EmployeeHubSelfServeProps | null = hub.selfServe;
+  const quickLinks = useMemo(
+    () => [
+      { href: "/my-punches", label: "My punches", icon: Clock },
+      { href: "/schedule", label: "Schedule", icon: CalendarDays },
+      { href: profileHref, label: "Profile", icon: User },
+    ],
+    [profileHref],
+  );
 
   return (
-    <div className="mx-auto max-w-lg space-y-5 pb-8 md:max-w-3xl md:space-y-6">
-      <header className="space-y-1">
-        <h1 className="text-xl font-bold tracking-tight text-slate-900 md:text-2xl">Home</h1>
-        <p className="text-sm text-slate-600">Clock in or out, then check your shifts and time off.</p>
+    <div className="relative pb-10">
+      <div
+        className="pointer-events-none absolute inset-x-0 -top-4 h-56 bg-[radial-gradient(ellipse_80%_60%_at_50%_-10%,rgba(251,146,60,0.18),transparent)]"
+        aria-hidden
+      />
+
+      {/* —— Tier 1: greeting + live status —— */}
+      <header
+        className={`relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between ${employeePortalRevealClass}`}
+      >
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-orange-700/90">
+            {todayLabel()}
+          </p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl lg:text-[2rem] lg:leading-tight">
+            {greeting}, {firstName}
+          </h1>
+          <p className="mt-1.5 max-w-xl text-sm text-slate-600 sm:text-[15px]">
+            Punch in, review your week, and manage time off from one place.
+          </p>
+        </div>
+        <div
+          className={`inline-flex shrink-0 items-center gap-3 rounded-lg border px-4 py-3 shadow-sm ring-1 ${statusMeta.className}`}
+          role="status"
+          aria-live="polite"
+        >
+          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusMeta.dot} motion-safe:animate-pulse`} />
+          <div className="min-w-0">
+            <p className="text-xs font-bold uppercase tracking-wide">{statusMeta.label}</p>
+            <p className="mt-0.5 text-sm font-medium tabular-nums">{statusMeta.detail}</p>
+          </div>
+        </div>
       </header>
 
-      {/* Section 1 — Clock (primary action) */}
-      <section
-        className="space-y-2 rounded-2xl border-2 border-orange-200/90 bg-gradient-to-b from-orange-50/80 to-white p-1 shadow-sm"
-        aria-labelledby="emp-hub-clock-heading"
+      {/* —— Tier 2: bento — clock + metrics —— */}
+      <div
+        className={`relative mt-6 grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-5 ${employeePortalRevealClass}`}
+        style={{ animationDelay: "80ms" }}
       >
-        <div className="flex items-center justify-between gap-2 px-3 pt-3">
-          <h2 id="emp-hub-clock-heading" className="text-sm font-semibold text-slate-900">
-            Time clock
-          </h2>
-          <Link
-            href="/my-punches"
-            className="inline-flex items-center gap-0.5 text-xs font-semibold text-orange-800 hover:text-orange-950"
-          >
-            My punches
-            <ChevronRight className="h-3.5 w-3.5" aria-hidden />
-          </Link>
-        </div>
-        {hub.clockMissingMessage ? (
-          <div className="mx-1 mb-1 rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-950">
-            {hub.clockMissingMessage}
-          </div>
-        ) : selfServeProps ? (
-          <div className="px-1 pb-1">
-            <TimeClockSelfServe {...selfServeProps} />
-          </div>
-        ) : null}
-      </section>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5">
-        {/* Section 2 — Next shift */}
+        {/* Primary: time clock */}
         <section
-          className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm md:p-5"
-          aria-labelledby="emp-hub-shift-heading"
+          className="overflow-hidden rounded-lg border border-slate-200/90 bg-white shadow-sm ring-1 ring-slate-900/[0.04] lg:col-span-7 xl:col-span-8"
+          aria-labelledby="emp-hub-clock-heading"
         >
-          <div className="flex items-start gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-800 ring-1 ring-sky-200/80">
-              <CalendarClock className="h-5 w-5" aria-hidden />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h2 id="emp-hub-shift-heading" className="text-sm font-semibold text-slate-900">
-                Next shift
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-orange-50/90 via-white to-white px-4 py-4 sm:px-5">
+            <div>
+              <h2 id="emp-hub-clock-heading" className="text-base font-bold text-slate-900">
+                Time clock
               </h2>
-              <p className="mt-1 text-xs text-slate-500">Your next scheduled start time.</p>
-              <div className="mt-4">{nextShiftCard}</div>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {selfServe?.viewerEmployeeName?.trim() ?? "You"} ·{" "}
+                {selfServe && (selfServe.geofenceActive || selfServe.requireLocationForPunch)
+                  ? "GPS required"
+                  : "GPS optional"}
+              </p>
             </div>
+            <Link
+              href="/my-punches"
+              className="inline-flex items-center gap-1 rounded-lg border border-orange-200/80 bg-white px-3 py-1.5 text-xs font-semibold text-orange-800 shadow-sm transition hover:border-orange-300 hover:bg-orange-50"
+            >
+              Punch history
+              <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+            </Link>
           </div>
-        </section>
-
-        {/* Section 3 — Time off */}
-        <section
-          className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm md:p-5"
-          aria-labelledby="emp-hub-pto-heading"
-        >
-          <div className="flex items-start gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200/80">
-              <Palmtree className="h-5 w-5" aria-hidden />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h2 id="emp-hub-pto-heading" className="text-sm font-semibold text-slate-900">
-                Time off balances
-              </h2>
-              <p className="mt-1 text-xs text-slate-500">Available hours from your ledger.</p>
-
-              {!pto.ok ? (
-                <p className="mt-3 text-sm text-red-700">{pto.error}</p>
-              ) : (
-                <ul className="mt-4 space-y-3">
-                  <li className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
-                    <span className="flex items-center gap-2 text-sm font-medium text-slate-800">
-                      <Palmtree className="h-4 w-4 text-emerald-700" aria-hidden />
-                      Vacation
-                    </span>
-                    <span className="font-mono text-sm font-bold tabular-nums text-slate-900">
-                      {fmtHours(vacationHours ?? 0)}
-                    </span>
-                  </li>
-                  <li className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
-                    <span className="flex items-center gap-2 text-sm font-medium text-slate-800">
-                      <Thermometer className="h-4 w-4 text-sky-700" aria-hidden />
-                      Sick
-                    </span>
-                    <span className="font-mono text-sm font-bold tabular-nums text-slate-900">
-                      {fmtHours(sickHours ?? 0)}
-                    </span>
-                  </li>
-                </ul>
-              )}
-
-              <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
-                <button
-                  type="button"
-                  disabled={!hub.timeOffLocationId || ptoPending}
-                  onClick={() => setTimeOffOpen(true)}
-                  className="inline-flex w-full items-center justify-center rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-                >
-                  Request time off
-                </button>
-                <button
-                  type="button"
-                  disabled={ptoPending}
-                  onClick={() => refreshPto()}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50 sm:w-auto"
-                >
-                  {ptoPending ? "Refreshing…" : "Refresh balances"}
-                </button>
+          <div className="p-4 sm:p-5">
+            {hub.clockMissingMessage ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-950">
+                {hub.clockMissingMessage}
               </div>
-              {!hub.timeOffLocationId ? (
-                <p className="mt-2 text-xs text-amber-800">Time off requests need a home store on your profile.</p>
-              ) : null}
-            </div>
+            ) : selfServe ? (
+              <TimeClockSelfServe {...selfServe} embedded />
+            ) : null}
           </div>
         </section>
+
+        {/* Secondary rail: shift + PTO metrics */}
+        <div className="grid gap-4 lg:col-span-5 lg:grid-rows-[auto_1fr_auto] xl:col-span-4">
+          <HubPanel title="Next shift" subtitle="Upcoming on your roster">
+            {nextShift ? (
+              <div className="space-y-2">
+                <p className="text-lg font-bold leading-snug text-slate-900">
+                  {fmtShiftRange(nextShift.shiftStart, nextShift.shiftEnd)}
+                </p>
+                {nextShift.locationName ? (
+                  <p className="text-sm text-slate-600">{nextShift.locationName}</p>
+                ) : null}
+                {nextShift.notes?.trim() ? (
+                  <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700 ring-1 ring-slate-100">
+                    {nextShift.notes.trim()}
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-sm leading-relaxed text-slate-600">
+                Nothing scheduled yet. Check{" "}
+                <Link href="/schedule" className="font-semibold text-orange-700 hover:underline">
+                  Schedule
+                </Link>{" "}
+                or ask your manager.
+              </p>
+            )}
+          </HubPanel>
+
+          <div className="grid grid-cols-2 gap-3">
+            <MetricTile
+              label="Vacation"
+              value={pto.ok ? fmtHours(vacationHours ?? 0) : "—"}
+              unit="hrs"
+              icon={Palmtree}
+              accent="text-orange-700"
+            />
+            <MetricTile
+              label="Sick"
+              value={pto.ok ? fmtHours(sickHours ?? 0) : "—"}
+              unit="hrs"
+              icon={Thermometer}
+              accent="text-slate-700"
+            />
+          </div>
+
+          {!pto.ok ? <p className="text-sm text-red-700">{pto.error}</p> : null}
+
+          <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
+            <button
+              type="button"
+              disabled={!hub.timeOffLocationId || ptoPending}
+              onClick={() => setTimeOffOpen(true)}
+              className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-accent px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <CalendarPlus className="h-4 w-4" aria-hidden />
+              Request time off
+            </button>
+            <button
+              type="button"
+              disabled={ptoPending}
+              onClick={() => refreshPto()}
+              className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              <RefreshCcw className={`h-4 w-4 ${ptoPending ? "animate-spin" : ""}`} aria-hidden />
+              {ptoPending ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+          {!hub.timeOffLocationId ? (
+            <p className="text-xs text-amber-800">Assign a home store on your profile to request time off.</p>
+          ) : null}
+        </div>
       </div>
 
-      {/* Section 4 — PTO history / accrual ledger */}
-      <PtoLedgerView
-        employeeId={employeeId}
-        initialEntries={initialLedger}
-        initialError={initialLedgerError}
-      />
+      {/* —— Tier 3: quick navigation —— */}
+      <nav
+        className={`relative mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 ${employeePortalRevealClass}`}
+        style={{ animationDelay: "140ms" }}
+        aria-label="Shortcuts"
+      >
+        {quickLinks.map(({ href, label, icon: Icon }) => (
+          <Link
+            key={href}
+            href={href}
+            className="group flex items-center justify-between rounded-lg border border-slate-200/90 bg-white px-4 py-3.5 shadow-sm ring-1 ring-slate-900/[0.03] transition hover:border-orange-200 hover:shadow-md"
+          >
+            <span className="flex items-center gap-2.5 text-sm font-semibold text-slate-800">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-50 text-orange-700 ring-1 ring-orange-100">
+                <Icon className="h-4 w-4" aria-hidden />
+              </span>
+              {label}
+            </span>
+            <ArrowUpRight
+              className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-orange-600"
+              aria-hidden
+            />
+          </Link>
+        ))}
+      </nav>
+
+      {/* —— Tier 4: ledger —— */}
+      <div className={`relative mt-5 ${employeePortalRevealClass}`} style={{ animationDelay: "200ms" }}>
+        <PtoLedgerView
+          employeeId={employeeId}
+          initialEntries={initialLedger}
+          initialError={initialLedgerError}
+        />
+      </div>
 
       {hub.timeOffLocationId ? (
         <EmployeeTimeOffRequestModal
@@ -261,17 +368,68 @@ export function EmployeeHub({
         />
       ) : null}
 
-      {/* Mobile-only Quick-Action FAB — opens the same modal as the inline button. */}
       <button
         type="button"
         onClick={() => setTimeOffOpen(true)}
         disabled={!hub.timeOffLocationId}
         aria-haspopup="dialog"
         aria-label="Request time off"
-        className="fixed bottom-5 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-orange-600 text-white shadow-xl shadow-orange-600/30 transition active:scale-95 hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50 md:hidden"
+        className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-white shadow-xl shadow-slate-900/20 transition active:scale-95 hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50 md:hidden"
       >
         <CalendarPlus className="h-6 w-6" aria-hidden />
       </button>
+    </div>
+  );
+}
+
+function HubPanel({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border border-slate-200/90 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.04] sm:p-5">
+      <div className="flex items-start gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-orange-50 text-orange-800 ring-1 ring-orange-100">
+          <CalendarClock className="h-4 w-4" aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-bold text-slate-900">{title}</h3>
+          <p className="text-xs text-slate-500">{subtitle}</p>
+          <div className="mt-3">{children}</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function MetricTile({
+  label,
+  value,
+  unit,
+  icon: Icon,
+  accent,
+}: {
+  label: string;
+  value: string;
+  unit: string;
+  icon: typeof Palmtree;
+  accent: string;
+}) {
+  return (
+    <div className="flex flex-col justify-between rounded-lg border border-slate-200/90 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.04]">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+        <Icon className={`h-4 w-4 ${accent}`} aria-hidden />
+      </div>
+      <p className="mt-3 font-mono text-3xl font-bold tabular-nums tracking-tight text-slate-900">
+        {value}
+        <span className="ml-1 text-sm font-semibold text-slate-500">{unit}</span>
+      </p>
     </div>
   );
 }

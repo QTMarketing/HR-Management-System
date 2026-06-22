@@ -2,12 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { employeePortalShellClass } from "@/lib/ui/employee-portal-shell";
 
 type NavLink = { href: string; label: string };
 
 function isActive(pathname: string, href: string): boolean {
-  if (href === "/") return pathname === "/";
-  if (href.startsWith("/users/")) return pathname.startsWith("/users/");
+    if (href === "/") return pathname === "/";
+    if (href.startsWith("/schedule/board")) {
+      return pathname === "/schedule/board" || pathname.startsWith("/schedule/board?");
+    }
+    if (href.startsWith("/users/")) return pathname.startsWith("/users/");
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
@@ -24,7 +28,7 @@ export function EmployeePortalNav({ links }: Props) {
       className="hidden border-b border-slate-200 bg-white md:block"
       aria-label="Employee navigation"
     >
-      <ul className="mx-auto flex max-w-3xl gap-1 px-4 sm:px-6">
+      <ul className={`flex gap-1 ${employeePortalShellClass}`}>
         {links.map((link) => {
           const active = isActive(pathname, link.href);
           return (

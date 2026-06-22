@@ -13,6 +13,7 @@ import { DashboardNavList, type DashboardNavItem } from "@/components/dashboard/
 import { SidebarAccountFooter } from "@/components/dashboard/sidebar-account-footer";
 import type { NotificationBellItem } from "@/components/layout/notification-bell";
 import type { LocationRow } from "@/lib/dashboard/resolve-location";
+import { employeePortalShellClass } from "@/lib/ui/employee-portal-shell";
 
 type HeaderProps = {
   userEmail: string;
@@ -61,12 +62,14 @@ export function DashboardShell({
   }, [pathname]);
 
   const mainPadding = employeePortalMode
-    ? "mx-auto w-full max-w-lg px-4 pb-24 pt-4 sm:max-w-3xl sm:px-6 md:pb-8"
+    ? `${employeePortalShellClass} pb-24 pt-4 md:pb-8`
     : "mx-auto w-full max-w-[1600px] px-4 sm:px-6 lg:px-8";
 
   return (
     <>
-      <div className="flex min-h-screen bg-slate-50">
+      <div
+        className={`flex min-h-screen ${employeePortalMode ? "bg-[#f6f5f3]" : "bg-slate-50"}`}
+      >
         {employeePortalMode ? null : (
           <AppSidebar
             navItems={navItems}

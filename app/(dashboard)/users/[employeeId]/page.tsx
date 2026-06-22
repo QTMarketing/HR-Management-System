@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { EmployeeProfileClient } from "@/components/users/employee-profile-client";
+import { EmployeeSelfProfile } from "@/components/users/employee-self-profile";
 import { locationsForSession } from "@/lib/dashboard/locations-for-session";
 import {
   isAllLocations,
@@ -100,6 +101,7 @@ export default async function EmployeeProfilePage({
   }
   const canEdit = hasPermission(rbac, PERMISSIONS.USERS_MANAGE);
   const canSetOrgOwner = hasPermission(rbac, PERMISSIONS.ORG_OWNER);
+  const isSelfServiceView = isSelf && !canEdit;
 
   const { data: locRows } = await supabase
     .from("locations")
@@ -135,7 +137,7 @@ export default async function EmployeeProfilePage({
   // and the archive section is hidden inline when already archived.
   const canArchiveUser = canEdit;
   const canEditForm = canEdit && !isArchivedProfile;
-  if (!scopeAll && locationId !== selectedLocationId) {
+  if (!scopeAll && locationId !== selectedLocationId && !isSelf) {
     notFound();
   }
 
@@ -242,6 +244,48 @@ export default async function EmployeeProfilePage({
           })),
         }
       : null;
+
+  if (isSelfServiceView) {
+    const storeName =
+      locationId != null
+        ? (locRows ?? []).find((l) => l.id === locationId)?.name ?? null
+        : null;
+    const managerName =
+      rec.direct_manager_id != null
+        ? (mgrRows ?? []).find((m) => (m as { id: string }).id === rec.direct_manager_id)
+        : null;
+    const mgrLabel = managerName
+      ? String(
+          (managerName as { full_name?: string }).full_name ??
+            [
+              (managerName as { first_name?: string | null }).first_name,
+              (managerName as { last_name?: string | null }).last_name,
+            ]
+              .filter(Boolean)
+              .join(" "),
+        ).trim() || null
+      : null;
+
+    return (
+      <EmployeeSelfProfile
+        firstName={initial.first_name}
+        lastName={initial.last_name}
+        fullName={
+          [initial.first_name, initial.last_name].filter(Boolean).join(" ").trim() ||
+          rec.full_name?.trim() ||
+          "—"
+        }
+        email={initial.email}
+        mobilePhone={initial.mobile_phone}
+        role={initial.role}
+        storeName={storeName}
+        managerName={mgrLabel}
+        employmentStartDate={initial.employment_start_date || null}
+        vacationHours={ptoBalances.ok ? ptoBalances.vacationHours : null}
+        sickHours={ptoBalances.ok ? ptoBalances.sickHours : null}
+      />
+    );
+  }
 
   return (
     <EmployeeProfileClient

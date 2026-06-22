@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { CalendarRange, Lock, Users } from "lucide-react";
+import { CalendarRange, Users } from "lucide-react";
 import { setSelectedLocationId } from "@/app/actions/location";
 import { PRIMARY_ORANGE_CTA } from "@/lib/ui/primary-orange-cta";
 
@@ -20,9 +20,11 @@ export type ScheduleStoreCardModel = {
 type Props = {
   weekParam: string;
   stores: ScheduleStoreCardModel[];
+  /** When false, hide manager badges and edit actions (view-only viewers). */
+  canManageSchedule?: boolean;
 };
 
-export function ScheduleStoresList({ weekParam, stores }: Props) {
+export function ScheduleStoresList({ weekParam, stores, canManageSchedule = true }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [query, setQuery] = useState("");
@@ -71,7 +73,9 @@ export function ScheduleStoresList({ weekParam, stores }: Props) {
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-800">Schedule</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">
-              Pick a store to open the week board and manage shifts.
+              {canManageSchedule
+                ? "Pick a store to open the week board and manage shifts."
+                : "Open your store schedule to see upcoming shifts."}
             </p>
           </div>
         </div>
@@ -95,8 +99,12 @@ export function ScheduleStoresList({ weekParam, stores }: Props) {
           />
         </div>
         <span className="text-xs text-slate-500">
-          <Users className="inline h-4 w-4 -translate-y-px text-slate-400" aria-hidden />{" "}
-          {filtered.reduce((n, s) => n + s.employees.length, 0)} employees
+          {canManageSchedule ? (
+            <>
+              <Users className="inline h-4 w-4 -translate-y-px text-slate-400" aria-hidden />{" "}
+              {filtered.reduce((n, s) => n + s.employees.length, 0)} employees
+            </>
+          ) : null}
         </span>
       </div>
 
@@ -130,46 +138,46 @@ export function ScheduleStoresList({ weekParam, stores }: Props) {
                                 {s.locationName}
                               </h3>
                               <p className="mt-1 text-xs text-slate-500">
-                                {s.employees.length} active employees
+                                {canManageSchedule
+                                  ? `${s.employees.length} active employees`
+                                  : "View schedule"}
                               </p>
                             </div>
-                            {!s.canEdit ? (
-                              <span
-                                className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600"
-                                title="Read-only for this store"
-                              >
-                                <Lock className="h-3 w-3" aria-hidden />
-                                Read-only
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200/60">
-                                Manager
-                              </span>
-                            )}
+                            {canManageSchedule ? (
+                              s.canEdit ? (
+                                <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200/60">
+                                  Manager
+                                </span>
+                              ) : null
+                            ) : null}
                           </div>
 
-                          <div className="mt-5 flex flex-1 items-end justify-between gap-2 border-t border-slate-100 pt-4">
+                          <div
+                            className={`mt-5 flex flex-1 items-end border-t border-slate-100 pt-4 ${
+                              canManageSchedule && s.canEdit ? "justify-between gap-2" : ""
+                            }`}
+                          >
                             <button
                               type="button"
-                              className={`${PRIMARY_ORANGE_CTA} inline-flex flex-1 items-center justify-center px-4 py-2.5 text-sm disabled:opacity-50`}
+                              className={`${PRIMARY_ORANGE_CTA} inline-flex items-center justify-center px-4 py-2.5 text-sm disabled:opacity-50 ${
+                                canManageSchedule && s.canEdit ? "flex-1" : "w-full"
+                              }`}
                               disabled={pending}
                               onClick={() => openStore(s.locationId)}
                             >
                               Open
                             </button>
-                            <button
-                              type="button"
-                              className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-                              disabled={pending || !s.canEdit}
-                              title={
-                                s.canEdit
-                                  ? "Add a shift for this store"
-                                  : "Only this store’s manager can edit"
-                              }
-                              onClick={() => openStore(s.locationId, { add: true })}
-                            >
-                              + Shift
-                            </button>
+                            {canManageSchedule && s.canEdit ? (
+                              <button
+                                type="button"
+                                className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                                disabled={pending}
+                                title="Add a shift for this store"
+                                onClick={() => openStore(s.locationId, { add: true })}
+                              >
+                                + Shift
+                              </button>
+                            ) : null}
                           </div>
                         </div>
                       </li>

@@ -34,7 +34,7 @@ export default async function MyPunchesPage() {
   const result = await loadMyPunches(supabase, employeeId);
 
   return (
-    <div className="mx-auto max-w-lg space-y-4 pb-4 sm:max-w-3xl">
+    <div className="space-y-4 pb-4">
       <header className="space-y-1">
         <h1 className="text-xl font-bold tracking-tight text-slate-900 md:text-2xl">My punches</h1>
         <p className="text-sm text-slate-600">

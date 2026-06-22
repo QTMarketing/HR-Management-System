@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { Suspense } from "react";
+import { setSelectedLocationId } from "@/app/actions/location";
 import { ScheduleStoresList, type ScheduleStoreCardModel } from "@/components/schedule/schedule-stores-list";
 import { locationsForSession } from "@/lib/dashboard/locations-for-session";
 import {
@@ -77,6 +79,36 @@ export default async function SchedulePage() {
     });
   }
 
+  const canManageSchedule =
+    !ctx.enabled ||
+    (hasPermission(ctx, PERMISSIONS.SCHEDULE_EDIT) &&
+      (ownerCanEditAll || ctx.roleKey === "store_manager" || ctx.roleKey === "shift_lead"));
+
+  if (!canManageSchedule) {
+    let homeLocationId: string | null = null;
+    if (ctx.employeeId) {
+      const { data: empLoc } = await supabase
+        .from("employees")
+        .select("location_id")
+        .eq("id", ctx.employeeId)
+        .maybeSingle();
+      homeLocationId = (empLoc as { location_id?: string | null } | null)?.location_id ?? null;
+    }
+    if (homeLocationId) {
+      await setSelectedLocationId(homeLocationId);
+      redirect(`/schedule/board?week=${encodeURIComponent(weekParam)}`);
+    }
+    return (
+      <div className="mx-auto max-w-lg rounded-lg border border-amber-200 bg-amber-50 px-5 py-6 text-sm text-amber-950">
+        <p className="font-semibold">Schedule not available</p>
+        <p className="mt-2 text-amber-900/90">
+          Your profile does not have a home store yet. Ask HR to assign a store, then open Schedule
+          again.
+        </p>
+      </div>
+    );
+  }
+
   const stores: ScheduleStoreCardModel[] = visibleLocations.map((l) => {
     const chainId = chainIdByLocation.get(l.id) ?? null;
     const storeSide =
@@ -105,7 +137,11 @@ export default async function SchedulePage() {
         </div>
       }
     >
-      <ScheduleStoresList weekParam={weekParam} stores={stores} />
+      <ScheduleStoresList
+        weekParam={weekParam}
+        stores={stores}
+        canManageSchedule={canManageSchedule}
+      />
     </Suspense>
   );
 }

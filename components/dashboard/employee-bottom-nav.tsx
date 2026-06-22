@@ -8,6 +8,9 @@ type NavLink = { href: string; label: string };
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
+  if (href.startsWith("/schedule/board")) {
+    return pathname === "/schedule/board" || pathname.startsWith("/schedule/board?");
+  }
   if (href.startsWith("/users/")) return pathname.startsWith("/users/");
   return pathname === href || pathname.startsWith(`${href}/`);
 }

@@ -120,6 +120,7 @@ export default async function DashboardPage() {
   return (
     <EmployeeHub
       employeeId={employeeId}
+      displayName={displayNameFromUser(user)}
       hub={hub}
       initialPto={initialPto}
       initialLedger={initialLedger.ok ? initialLedger.data : []}
