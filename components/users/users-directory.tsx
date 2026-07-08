@@ -136,6 +136,8 @@ type Props = {
   canPromoteToAdmin: boolean;
   /** Store Managers (and owners): bulk-add employees from Admins tab shortcut. */
   canBulkAddFromAdminsTab: boolean;
+  /** Store Managers and owners: bulk-add on the Users tab. */
+  canManageUsers: boolean;
   /** Admins + owners: edit job title assignments and create job titles. */
   canEditJobTitles: boolean;
   /** Owners only: grant/revoke organization owner access. */
@@ -152,6 +154,7 @@ export function UsersDirectory({
   canEditAdminAccess,
   canPromoteToAdmin,
   canBulkAddFromAdminsTab,
+  canManageUsers,
   canEditJobTitles,
   canSetOrgOwner,
   initialSearchQuery = "",
@@ -652,7 +655,7 @@ export function UsersDirectory({
                   </div>
                 ) : null}
               </div>
-            ) : tab === "admins" ? null : (
+            ) : tab === "admins" ? null : canManageUsers ? (
               <button
                 type="button"
                 className={`${PRIMARY_ORANGE_CTA} inline-flex px-4 py-2.5 text-sm`}
@@ -661,11 +664,11 @@ export function UsersDirectory({
                   setAddUsersModalKey((k) => k + 1);
                   setAddUsersOpen(true);
                 }}
-                  title="Add multiple users in bulk."
+                title="Add multiple users in bulk."
               >
                 Add users
               </button>
-            )}
+            ) : null}
           </div>
         </div>
 
