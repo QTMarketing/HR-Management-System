@@ -11,7 +11,7 @@ You are touching **Hub ↔ HR connector** code or docs. Stop and read **`docs/HR
 ## Non-negotiables
 
 1. **Pilot uses the HR web app**, not Hub chat. Do not block product work on assistant RBAC unless the task is explicitly Hub AI.
-2. **`/api/internal/assistant/*` is API-key auth today** — that does **not** protect against a Hub user asking the assistant for another employee's PTO. Per-user enforcement belongs in HR services (and Hub should send user context headers).
+2. **Prod (`main`) is still API-key only** until [PR #6](https://github.com/QTMarketing/HR-Management-System/pull/6) merges. Branch `feat/internal-assistant-rbac` enforces per-user tiers; Hub `main` already sends `x-hub-user-email` / `x-hub-user-role`.
 3. **Minimize fields** in assistant JSON — do not return full employee records when a count or name suffices (Store Info audit lesson).
 4. **Never log** emails, PTO balances, or full roster payloads in `[HR][INTERNAL_ASSISTANT]` logs.
 
