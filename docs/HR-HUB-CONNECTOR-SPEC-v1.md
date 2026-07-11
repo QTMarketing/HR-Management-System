@@ -18,7 +18,26 @@
 | Hub env (suggested) | `HR_APP_URL`, `HR_APP_API_KEY` (same secret as HR key) |
 | Disable connector | `HR_ASSISTANT_CONNECTOR_ENABLED=false` on HR → 503 |
 
-Middleware: `/api/internal/assistant/*` skips user login redirect; routes validate API key only.
+### Hub user context (required on data endpoints)
+
+Hub must send the signed-in user on every data request (not required on `/health`):
+
+| Header | Value |
+|--------|--------|
+| `x-hub-user-email` | Hub session email (also accepts `x-user-email`) |
+| `x-hub-user-role` | `ADMIN` or `STAFF` (also accepts `x-user-role`) |
+
+HR resolves the email to an active `employees` row and enforces tiered access in `lib/internal-assistant/access.ts`:
+
+| Tier | Who | Scope |
+|------|-----|--------|
+| **admin** | Hub `ADMIN`, or HR org owner | All stores / employees |
+| **manager** | HR store manager / shift lead with time-clock manage | Assigned `location_id` only |
+| **employee** | Everyone else | Self lookup + own PTO only |
+
+Missing user email → `403`. Hub `STAFF` without a linked HR employee → `403`.
+
+Middleware: `/api/internal/assistant/*` skips user login redirect; routes validate API key + Hub user context.
 
 ---
 

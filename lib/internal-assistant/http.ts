@@ -26,3 +26,7 @@ export function unauthorized(reason: string) {
           : "Invalid internal API key.";
   return jsonError(message, status, { reason });
 }
+
+export function forbidden(message: string, reason?: string) {
+  return jsonError(message, 403, reason ? { reason } : undefined);
+}
