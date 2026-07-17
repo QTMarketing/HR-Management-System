@@ -1,0 +1,59 @@
+---
+description: Two-repo Hub integration — which window, which git, what work goes where
+alwaysApply: true
+---
+
+# QuickTrack Hub + HR — do not forget
+
+## Two repos, two Cursor windows (mandatory split)
+
+| Window | Folder | GitHub | Branch |
+|--------|--------|--------|--------|
+| **HR (this repo)** | `~/Desktop/hr-management-system` | **QTMarketing** / `HR-Management-System` (push via **fork** `Sachit-SG/HR-Management-System` if no org write) | `feature/hr-internal-assistant`, `feature/hub-pilot-integration` |
+| **Hub** | `~/Desktop/quicktrackhub` | **QuicktrackINC** / `quicktrackhub-main` (SSH **Sachit-99**) | `feature/hr-assistant`, `main` |
+
+**Before Hub embed/connector work:** tell the user to use the **Hub Cursor window**, unless they explicitly ask you to edit `quicktrackhub` from here.
+
+## Architecture (agreed — not one database)
+
+- **Hub** = container: login, dashboard, assistant, internal API gateway, tool registry (Prisma Postgres).
+- **HR** = Staff Operations micro-app; **HR Supabase stays separate** — never merge into Hub DB.
+- **Phase 1 (now):** Hub `/hr` links to HR origin (`HR_APP_URL`, often `:3002`); assistant calls HR `/api/internal/assistant/*`. **Port 3000 is often Hub** — do not point `HR_APP_URL` at 3000 unless HR truly runs there.
+- **Phase 2 (later):** optional full embed under Hub `src/app/hr/...` (mirror `/accounting/cheque-printing`); SSO later.
+
+## Integration order (do not reorder casually)
+
+1. **Track A** — Stabilize HR; push to QTMarketing.
+2. **Track C** — Hub assistant connector → HR internal APIs (fastest team win).
+3. **Track B** — Monorepo / full embed (team agreement).
+
+## What belongs in which repo
+
+**HR repo only:** product features, Supabase migrations, `app/api/internal/assistant/*`, `HR_INTERNAL_ASSISTANT_API_KEY`, `docs/HR-HUB-CONNECTOR-SPEC-v1.md`.
+
+**Hub repo only (`feature/hr-embed`):** `/hr` page, tool seed, `connectors/hr.ts`, `tool-schema.ts`, `tool-executor.ts`, `HR_APP_URL`, `HR_APP_API_KEY`, `docs/HR-EMBED-PLAN.md`.
+
+## Env pairing (local smoke test)
+
+| HR `.env.local` | Hub `.env` |
+|-----------------|------------|
+| `HR_INTERNAL_ASSISTANT_API_KEY=<secret>` | `HR_APP_API_KEY=<same secret>` |
+| `NEXT_PUBLIC_SUPABASE_URL=...` | `HR_APP_URL=http://localhost:3002` (match HR dev port) |
+| | `HR_ASSISTANT_CONNECTOR_ENABLED=true` |
+
+## Hub embed status (check before claiming done)
+
+- **Done:** `/hr` placeholder, Operations tool seed, middleware, `.env.example`.
+- **Pending (Hub window):** finish Phase 3 connector + register 5 LLM tools; PR review.
+
+## Docs to read when integration comes up
+
+`HANDOFF.md`, `docs/INTEGRATION-READINESS.md`, `docs/HR-HUB-CONNECTOR-SPEC-v1.md`, Hub `docs/HR-EMBED-PLAN.md`.
+
+## Hub AI / assistant security (do not forget)
+
+Before changing `app/api/internal/assistant/*` or turning on Hub HR chat tools:
+
+**Read `docs/HR-DATA-ACCESS-CAPABILITY-MAP.md`** — staff-safe vs manager vs admin, Store Info audit lessons, implementation checklist.
+
+Pilot = HR **web app** (RBAC in UI). Assistant path still needs per-user enforcement before wide rollout.

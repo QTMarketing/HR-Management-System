@@ -1,0 +1,39 @@
+---
+description: AI assistant + commit/merge guardrails — read before any HR git commit or PR
+alwaysApply: true
+---
+
+# HR AI assistant — commit & merge memory
+
+**Apply this before every commit, PR, or merge in `hr-management-system`.**
+
+## Branch & PR state (July 2026)
+
+| Work | Branch | Prod (`origin/main`) |
+|------|--------|----------------------|
+| Per-user RBAC on internal assistant APIs | `feat/internal-assistant-rbac` | **Not merged** — open [PR #6](https://github.com/QTMarketing/HR-Management-System/pull/6) → QTMarketing `main` |
+| Dashboard UI/color tokens | Same branch, **uncommitted** | **Not deployed** — separate PR later |
+
+**RBAC commit:** `fcdc27f` — only `lib/internal-assistant/*` + `app/api/internal/assistant/*` (+ spec doc). **Do not** bundle UI files into this PR.
+
+## Hub dependency
+
+QuickTrack Hub `main` already sends `x-hub-user-email` and `x-hub-user-role` (PR #11). After HR RBAC merges, assistant calls **require** those headers (403 without them). API-key-only scripts will stop working — intentional.
+
+## Will merges break the pilot?
+
+**No** for SSO, login, dashboard, time clock, schedule. RBAC touches **`/api/internal/assistant/*` only**.
+
+## Before you commit (assistant paths)
+
+- `app/api/internal/assistant/*`, `lib/internal-assistant/*`
+- Enforce tier: `admin` / `manager` (store-scoped) / `employee` (self-only)
+- Read `docs/HR-DATA-ACCESS-CAPABILITY-MAP.md`
+- Never log emails, PTO, or full rosters in `[HR][INTERNAL_ASSISTANT]` logs
+- Never commit `.env` / secrets
+
+## Git conventions (this repo)
+
+- Upstream: **QTMarketing/HR-Management-System** · fork: **Sachit-SG/HR-Management-System**
+- PR to QTMarketing from fork branch; do not merge uncommitted UI with RBAC
+- Pilot = HR **web app**, not Hub chat for all staff
